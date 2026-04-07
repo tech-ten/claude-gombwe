@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>claude-gombwe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="logo">
+        <h1>claude-gombwe</h1>
+        <span class="status-dot" id="statusDot"></span>
+      </div>
+      <div class="header-stats" id="headerStats"></div>
+    </header>
+
+    <nav>
+      <button class="nav-btn active" data-tab="chat">Chat</button>
+      <button class="nav-btn" data-tab="tasks">Tasks</button>
+      <button class="nav-btn" data-tab="jobs">Jobs</button>
+      <button class="nav-btn" data-tab="skills">Skills</button>
+      <button class="nav-btn" data-tab="services">Services</button>
+    </nav>
+
+    <!-- Chat Tab (with sidebar for threads) -->
+    <section id="tab-chat" class="tab-content active">
+      <div class="chat-layout">
+        <!-- Sidebar: conversation list -->
+        <div class="chat-sidebar">
+          <div class="sidebar-header">
+            <span>Conversations</span>
+            <button id="newChatBtn" title="New conversation">+</button>
+          </div>
+          <div class="sidebar-filter">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="web">Web</button>
+            <button class="filter-btn" data-filter="telegram">Telegram</button>
+            <button class="filter-btn" data-filter="discord">Discord</button>
+          </div>
+          <div class="sidebar-list" id="sidebarList"></div>
+        </div>
+
+        <!-- Main chat area -->
+        <div class="chat-main">
+          <div class="chat-thread-header" id="threadHeader">
+            <div class="thread-title" id="threadTitle">New conversation</div>
+            <div class="thread-meta" id="threadMeta">chat mode</div>
+          </div>
+          <div class="chat-messages" id="chatMessages">
+            <div class="system-msg">
+              Type normally to chat (Claude remembers the conversation).<br>
+              Start with <strong>task:</strong> or <strong>build:</strong> for autonomous tasks.<br>
+              Type <strong>/skill-name</strong> to invoke a skill.<br>
+              Type <strong>/help</strong> for all commands.
+            </div>
+          </div>
+          <div class="chat-bar">
+            <div class="chat-mode" id="chatMode">chat mode</div>
+            <div class="autocomplete-container">
+              <div class="autocomplete-list hidden" id="autocompleteList"></div>
+              <form class="chat-input" id="chatForm">
+                <input type="text" id="chatInput" placeholder="Message gombwe... (type / for commands)" autocomplete="off">
+                <button type="submit">Send</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tasks Tab -->
+    <section id="tab-tasks" class="tab-content">
+      <div class="chat-layout">
+        <div class="chat-sidebar">
+          <div class="sidebar-header">
+            <span>Tasks</span>
+            <select id="taskFilter">
+              <option value="">All</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div class="sidebar-list" id="taskSidebarList"></div>
+        </div>
+        <div class="chat-main">
+          <div class="chat-thread-header">
+            <div class="thread-title" id="taskThreadTitle">Select a task</div>
+            <div class="thread-meta" id="taskThreadMeta"></div>
+          </div>
+          <div class="chat-messages" id="taskMessages">
+            <div class="system-msg">Select a task from the sidebar to view its output as a conversation.</div>
+          </div>
+          <div class="chat-bar">
+            <div class="chat-mode">task mode</div>
+            <form class="chat-input" id="taskForm">
+              <input type="text" id="taskInput" placeholder="Send a follow-up to this task..." autocomplete="off">
+              <button type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Jobs Tab (Cron) -->
+    <section id="tab-jobs" class="tab-content">
+      <div class="panel-header">
+        <h2>Scheduled Jobs</h2>
+        <button id="addJobBtn">+ New Job</button>
+      </div>
+      <div id="jobForm" class="job-form hidden">
+        <div class="job-form-row">
+          <select id="jobSchedulePreset">
+            <option value="">Custom cron...</option>
+            <option value="*/30 * * * *">Every 30 minutes</option>
+            <option value="0 * * * *">Every hour</option>
+            <option value="0 8 * * *">Daily at 8am</option>
+            <option value="0 9 * * *">Daily at 9am</option>
+            <option value="0 9,18 * * *">Daily at 9am & 6pm</option>
+            <option value="0 9 * * 1">Every Monday at 9am</option>
+            <option value="0 9 * * 1-5">Weekdays at 9am</option>
+            <option value="0 20 * * 0">Every Sunday at 8pm</option>
+          </select>
+          <input type="text" id="jobCronExpr" placeholder="Cron expression">
+        </div>
+        <div class="job-form-row">
+          <select id="jobSkillSelect">
+            <option value="">Or pick a skill...</option>
+          </select>
+        </div>
+        <textarea id="jobPrompt" rows="3" placeholder="What should gombwe do?"></textarea>
+        <div class="job-form-actions">
+          <button id="saveJob">Create Job</button>
+          <button id="cancelJob" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+      <div class="cron-list" id="jobList"></div>
+    </section>
+
+    <!-- Skills Tab -->
+    <section id="tab-skills" class="tab-content">
+      <div class="panel-header">
+        <h2>Skills</h2>
+        <button id="reloadSkills">Reload</button>
+      </div>
+      <p class="panel-hint">Skills are slash commands. Click one to run it, or schedule it as a job.</p>
+      <div class="skill-list" id="skillList"></div>
+    </section>
+
+    <!-- Services Tab -->
+    <section id="tab-services" class="tab-content">
+      <div class="panel-header">
+        <h2>Connected Services</h2>
+      </div>
+      <p class="panel-hint">Services connect Claude to external apps. Connect via CLI: <code>gombwe connect &lt;service&gt;</code></p>
+      <div class="service-list" id="serviceList"></div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

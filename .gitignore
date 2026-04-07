@@ -1,0 +1,15 @@
+node_modules/
+dist/
+data/
+*.tsbuildinfo
+.DS_Store
+
+# Runtime
+*.log
+*.pid
+
+# Credentials (never commit)
+*.keys.json
+credentials.json
+token.json
+.env
