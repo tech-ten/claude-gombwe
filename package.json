@@ -1,6 +1,6 @@
 {
   "name": "claude-gombwe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autonomous agent control panel powered by Claude Code — OpenClaw capabilities on your Max subscription",
   "type": "module",
   "bin": {
