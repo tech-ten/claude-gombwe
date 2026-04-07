@@ -4,12 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>gombwe</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;1,400&family=Playfair+Display:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
+
     <header>
-      <h1>gombwe</h1>
+      <div class="header-left">
+        <h1>gombwe</h1>
+        <span class="status-indicator" id="statusDot"></span>
+      </div>
       <div class="header-stats" id="headerStats"></div>
     </header>
 
@@ -25,37 +31,36 @@
     <section id="tab-chat" class="tab-content active">
       <div class="chat-layout">
         <div class="chat-sidebar">
-          <div class="sidebar-header">
-            <span>Conversations</span>
-            <button id="newChatBtn" title="New">+</button>
+          <div class="sidebar-top">
+            <span class="sidebar-label">Conversations</span>
+            <button id="newChatBtn">new</button>
           </div>
           <div class="sidebar-filter">
-            <button class="filter-btn active" data-filter="all">All</button>
-            <button class="filter-btn" data-filter="web">Web</button>
-            <button class="filter-btn" data-filter="telegram">Telegram</button>
-            <button class="filter-btn" data-filter="discord">Discord</button>
+            <button class="filter-btn active" data-filter="all">all</button>
+            <button class="filter-btn" data-filter="web">web</button>
+            <button class="filter-btn" data-filter="telegram">telegram</button>
+            <button class="filter-btn" data-filter="discord">discord</button>
           </div>
           <div class="sidebar-list" id="sidebarList"></div>
         </div>
         <div class="chat-main">
-          <div class="chat-thread-header">
+          <div class="thread-header">
             <div class="thread-title" id="threadTitle">New conversation</div>
             <div class="thread-meta" id="threadMeta"></div>
           </div>
           <div class="chat-messages" id="chatMessages">
             <div class="system-msg">
-              Type to chat. Claude remembers the conversation.<br><br>
-              Use <strong>/task</strong> for autonomous work.<br>
-              Use <strong>/</strong> to see all commands.
+              <p class="system-serif">The vessel awaits your instruction.</p>
+              <p>Type to begin a conversation. Use <strong>/task</strong> for autonomous work, or <strong>/</strong> to explore commands.</p>
             </div>
           </div>
-          <div class="chat-bar">
-            <div class="chat-mode" id="chatMode">chat</div>
+          <div class="composer">
+            <div class="composer-mode" id="chatMode">chat</div>
             <div class="autocomplete-container">
               <div class="autocomplete-list hidden" id="autocompleteList"></div>
-              <form class="chat-input" id="chatForm">
-                <input type="text" id="chatInput" placeholder="Message" autocomplete="off">
-                <button type="submit">Send</button>
+              <form class="composer-form" id="chatForm">
+                <input type="text" id="chatInput" placeholder="Say something..." autocomplete="off">
+                <button type="submit">send</button>
               </form>
             </div>
           </div>
@@ -67,31 +72,34 @@
     <section id="tab-tasks" class="tab-content">
       <div class="chat-layout">
         <div class="chat-sidebar">
-          <div class="sidebar-header">
-            <span>Tasks</span>
+          <div class="sidebar-top">
+            <span class="sidebar-label">Tasks</span>
             <select id="taskFilter">
-              <option value="">All</option>
-              <option value="running">Running</option>
-              <option value="completed">Completed</option>
-              <option value="failed">Failed</option>
+              <option value="">all</option>
+              <option value="running">running</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
             </select>
           </div>
           <div class="sidebar-list" id="taskSidebarList"></div>
         </div>
         <div class="chat-main">
-          <div class="chat-thread-header">
+          <div class="thread-header">
             <div class="thread-title" id="taskThreadTitle">Select a task</div>
             <div class="thread-meta" id="taskThreadMeta"></div>
           </div>
           <div class="chat-messages" id="taskMessages">
-            <div class="system-msg">Select a task to view its conversation.</div>
+            <div class="system-msg">
+              <p class="system-serif">No task selected.</p>
+              <p>Choose one from the sidebar to view its progress.</p>
+            </div>
           </div>
-          <div class="chat-bar">
-            <div class="chat-mode">task</div>
+          <div class="composer">
+            <div class="composer-mode">task</div>
             <div class="autocomplete-container">
-              <form class="chat-input" id="taskForm">
-                <input type="text" id="taskInput" placeholder="Follow up" autocomplete="off">
-                <button type="submit">Send</button>
+              <form class="composer-form" id="taskForm">
+                <input type="text" id="taskInput" placeholder="Follow up..." autocomplete="off">
+                <button type="submit">send</button>
               </form>
             </div>
           </div>
@@ -101,59 +109,63 @@
 
     <!-- Jobs -->
     <section id="tab-jobs" class="tab-content">
-      <div class="panel-header">
-        <h2>Scheduled Jobs</h2>
-        <button id="addJobBtn">New job</button>
+      <div class="panel-view">
+        <div class="panel-top">
+          <h2>Scheduled Jobs</h2>
+          <button id="addJobBtn">new job</button>
+        </div>
+        <div id="jobForm" class="job-form hidden">
+          <div class="form-row">
+            <select id="jobSchedulePreset">
+              <option value="">Custom schedule</option>
+              <option value="*/30 * * * *">Every 30 minutes</option>
+              <option value="0 * * * *">Every hour</option>
+              <option value="0 8 * * *">Daily at 8am</option>
+              <option value="0 9 * * *">Daily at 9am</option>
+              <option value="0 9,18 * * *">9am and 6pm</option>
+              <option value="0 9 * * 1">Monday at 9am</option>
+              <option value="0 9 * * 1-5">Weekdays at 9am</option>
+              <option value="0 20 * * 0">Sunday at 8pm</option>
+            </select>
+            <input type="text" id="jobCronExpr" placeholder="cron expression">
+          </div>
+          <div class="form-row">
+            <select id="jobSkillSelect"><option value="">Pick a skill</option></select>
+          </div>
+          <textarea id="jobPrompt" rows="2" placeholder="What should happen"></textarea>
+          <div class="form-actions">
+            <button id="saveJob">create</button>
+            <button id="cancelJob" class="muted">cancel</button>
+          </div>
+        </div>
+        <div class="panel-list" id="jobList"></div>
       </div>
-      <div id="jobForm" class="job-form hidden">
-        <div class="job-form-row">
-          <select id="jobSchedulePreset">
-            <option value="">Custom schedule</option>
-            <option value="*/30 * * * *">Every 30 minutes</option>
-            <option value="0 * * * *">Every hour</option>
-            <option value="0 8 * * *">Daily at 8am</option>
-            <option value="0 9 * * *">Daily at 9am</option>
-            <option value="0 9,18 * * *">9am and 6pm</option>
-            <option value="0 9 * * 1">Monday at 9am</option>
-            <option value="0 9 * * 1-5">Weekdays at 9am</option>
-            <option value="0 20 * * 0">Sunday at 8pm</option>
-          </select>
-          <input type="text" id="jobCronExpr" placeholder="Cron expression">
-        </div>
-        <div class="job-form-row">
-          <select id="jobSkillSelect">
-            <option value="">Pick a skill</option>
-          </select>
-        </div>
-        <textarea id="jobPrompt" rows="2" placeholder="What should happen"></textarea>
-        <div class="job-form-actions">
-          <button id="saveJob">Create</button>
-          <button id="cancelJob">Cancel</button>
-        </div>
-      </div>
-      <div class="cron-list" id="jobList"></div>
     </section>
 
     <!-- Skills -->
     <section id="tab-skills" class="tab-content">
-      <div class="panel-header">
-        <h2>Skills</h2>
-        <button id="reloadSkills">Reload</button>
+      <div class="panel-view">
+        <div class="panel-top">
+          <h2>Skills</h2>
+          <button id="reloadSkills">reload</button>
+        </div>
+        <p class="panel-hint">Type <em>/name</em> in chat to run a skill, or schedule it as a job.</p>
+        <div class="panel-list" id="skillList"></div>
       </div>
-      <p class="panel-hint">Type /<em>name</em> in chat to run a skill, or schedule it as a job.</p>
-      <div class="skill-list" id="skillList"></div>
     </section>
 
     <!-- Services -->
     <section id="tab-services" class="tab-content">
-      <div class="panel-header">
-        <h2>Services</h2>
+      <div class="panel-view">
+        <div class="panel-top">
+          <h2>Services</h2>
+        </div>
+        <p class="panel-hint">Connect via <code>gombwe connect name</code></p>
+        <div class="panel-list" id="serviceList"></div>
       </div>
-      <p class="panel-hint">Connect via <code>gombwe connect &lt;name&gt;</code></p>
-      <div class="service-list" id="serviceList"></div>
     </section>
-  </div>
 
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
