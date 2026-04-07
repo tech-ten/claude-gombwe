@@ -294,14 +294,21 @@ Webhook: POST /api/webhook/github-pr
 ## Quick Start
 
 ```bash
-# Install
-git clone https://github.com/yourusername/claude-gombwe.git
+# Install globally from npm
+npm install -g claude-gombwe
+
+# Start
+gombwe start
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/tech-ten/claude-gombwe.git
 cd claude-gombwe
 npm install
 npm run build
 npm link
-
-# Start
 gombwe start
 ```
 

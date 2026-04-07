@@ -14,11 +14,17 @@ gombwe runs an OpenAI-compatible API server that routes all LLM calls through
 
 ---
 
+## Install
+
+```bash
+npm install -g claude-gombwe
+```
+
 ## Quick Start (Option A — standalone)
 
 ```bash
 # 1. Start everything
-gombwe up
+gombwe start
 
 # 2. Open dashboard
 open http://127.0.0.1:18790/ui
