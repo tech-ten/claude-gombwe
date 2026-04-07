@@ -69,7 +69,7 @@ Every step uses `--resume` with the same session ID. This means Claude has:
 - Every decision it made
 - The full tool call history
 
-This is fundamentally better than OpenClaw, which uses the stateless API and has to resend conversation history (losing internal tool state). With `--resume`, Claude's internal context is preserved — including things that never appear in the output.
+With `--resume`, Claude's full internal context is preserved across steps — including tool results that never appear in the output. There's no need to resend conversation history or manage token budgets. Claude simply picks up where it left off.
 
 ## Configuration
 

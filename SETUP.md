@@ -1,114 +1,81 @@
 # claude-gombwe Setup Guide
 
-## What is this?
-
-claude-gombwe gives you OpenClaw-like capabilities using your Claude Max subscription.
-Zero API costs. Two ways to use it:
-
-### Option A: Use gombwe standalone (simpler)
-The built-in dashboard, Telegram/Discord bots, cron scheduler, multi-agent task runner.
-
-### Option B: Use OpenClaw through gombwe's proxy (full OpenClaw experience)
-gombwe runs an OpenAI-compatible API server that routes all LLM calls through
-`claude -p` (your subscription). OpenClaw sees it as a normal LLM API.
-
----
-
 ## Install
 
 ```bash
 npm install -g claude-gombwe
 ```
 
-## Quick Start (Option A — standalone)
+## Quick Start
 
 ```bash
-# 1. Start everything
+# Start gombwe (interactive terminal + dashboard + channels)
 gombwe start
 
-# 2. Open dashboard
-open http://127.0.0.1:18790/ui
+# Open dashboard
+open http://127.0.0.1:18790
 
-# 3. Send tasks from CLI
+# Or send tasks from another terminal
 gombwe run "build me a React landing page"
-gombwe run "clean up all TODO comments in this project"
 gombwe tasks
-```
-
-## Quick Start (Option B — with OpenClaw)
-
-```bash
-# 1. Start gombwe (includes the API proxy)
-gombwe up
-
-# 2. Install OpenClaw
-npm install -g openclaw
-
-# 3. Configure OpenClaw to use the proxy instead of Anthropic API
-openclaw config set ai.provider "openai"
-openclaw config set ai.model "claude-via-subscription"
-openclaw config set ai.baseURL "http://127.0.0.1:18791/v1"
-openclaw config set ai.apiKey "not-needed"
-
-# 4. Start OpenClaw — it now uses your Max subscription
-openclaw start
+gombwe status
 ```
 
 ---
 
-## Adding Telegram (control from your phone)
-
-```bash
-# 1. Create a bot: message @BotFather on Telegram, send /newbot
-# 2. Copy the bot token
-# 3. Configure:
-gombwe config --set channels.telegram.botToken=YOUR_BOT_TOKEN
-
-# 4. Restart:
-gombwe up
-
-# 5. Message your bot on Telegram:
-#    "build me a REST API for managing todos"
-#    It runs autonomously and messages you back when done.
-```
-
 ## Adding Discord
 
+1. Create a bot at https://discord.com/developers/applications
+2. Enable Message Content Intent in the Bot tab
+3. Invite to your server via OAuth2 URL
+4. Configure and restart:
+
 ```bash
-# 1. Create a bot at https://discord.com/developers/applications
-# 2. Copy the bot token
-# 3. Configure:
 gombwe config --set channels.discord.botToken=YOUR_BOT_TOKEN
-
-# 4. Restart:
-gombwe up
 ```
 
-## Scheduling tasks (cron)
+## Adding Telegram
 
-From the dashboard or CLI:
+1. Message @BotFather on Telegram, send /newbot
+2. Copy the bot token
+3. Configure and restart:
 
 ```bash
-# Run tests every morning at 9am
-curl -X POST http://127.0.0.1:18790/api/cron \
-  -H "Content-Type: application/json" \
-  -d '{"expression": "0 9 * * *", "prompt": "run all tests and report failures"}'
-
-# Check for security updates weekly
-curl -X POST http://127.0.0.1:18790/api/cron \
-  -H "Content-Type: application/json" \
-  -d '{"expression": "0 10 * * 1", "prompt": "check for outdated npm packages and update safe ones"}'
+gombwe config --set channels.telegram.botToken=YOUR_BOT_TOKEN
 ```
 
-## Adding skills
+## Connecting Services (MCP)
 
-Create a folder in `~/.claude-gombwe/skills/` with a `SKILL.md` file:
-
+```bash
+gombwe connect github -e GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxx
+gombwe connect gmail
+gombwe connect slack -e SLACK_BOT_TOKEN=xoxb-xxx -e SLACK_TEAM_ID=T0xxx
+gombwe connect brave-search -e BRAVE_API_KEY=BSA_xxx
 ```
-~/.claude-gombwe/skills/my-skill/SKILL.md
+
+## Scheduling Jobs
+
+```bash
+gombwe job "/morning-briefing" --schedule "0 8 * * *"
+gombwe job "/email-digest" --schedule "*/30 * * * *"
+gombwe jobs
 ```
 
-Format:
+## Event Triggers
+
+```bash
+gombwe watch "client-email" \
+  --when "Check inbox for emails from @client.com" \
+  --do "Summarize and draft a reply" \
+  --notify "discord:#alerts"
+
+gombwe triggers
+```
+
+## Adding Skills
+
+Create `~/.claude-gombwe/skills/my-skill/SKILL.md`:
+
 ```yaml
 ---
 name: my-skill
@@ -118,45 +85,48 @@ user-invocable: true
 ---
 
 Instructions for the agent when this skill is invoked.
-Use /my-skill in chat to trigger it.
 ```
 
-## All commands
+## All Commands
 
 ```
-gombwe up                  Start everything (gateway + proxy + channels)
-gombwe start               Start gateway only
-gombwe proxy               Start API proxy only
-gombwe run "prompt"        Send a task
-gombwe tasks               List tasks
-gombwe tasks --status running  Filter tasks
-gombwe status              System status
-gombwe config              Show config
-gombwe config --set key=val  Set config value
+gombwe start                    Interactive terminal + gateway + dashboard
+gombwe start --headless         Daemon mode
+gombwe run "prompt"             Run task, stream output
+gombwe run "prompt" --no-wait   Fire and forget
+gombwe tasks                    List tasks
+gombwe status                   System status
+gombwe config                   Show config
+gombwe config --set key=val     Set config value
+gombwe services                 List available services
+gombwe connect <service>        Connect a service
+gombwe job "prompt" --schedule  Schedule a recurring job
+gombwe jobs                     List jobs
+gombwe watch <name> --when --do Create event trigger
+gombwe triggers                 List triggers
+gombwe workflow <name>          Create workflow
+gombwe workflows                List workflows
 ```
 
-## How it works
+## How It Works
 
 ```
-You (Telegram / Discord / Web / CLI / Cron / OpenClaw)
+You (Terminal / Discord / Telegram / Web / Cron / Triggers)
     │
     ▼
 ┌──────────────────────────────────────────┐
-│  claude-gombwe gateway (:18790)          │
+│  Gombwe Gateway (:18790)                 │
 │  ├─ Web dashboard                        │
-│  ├─ Task manager (retry + continue +     │
-│  │   verify loop)                        │
+│  ├─ Agent runtime (completion loop)      │
 │  ├─ Channel adapters                     │
-│  ├─ Skill system                         │
+│  ├─ Skill system + native tools          │
 │  ├─ Cron scheduler                       │
-│  └─ Session manager                      │
-├──────────────────────────────────────────┤
-│  claude-gombwe proxy (:18791)            │
-│  └─ OpenAI-compatible API                │
-│     (for OpenClaw / other tools)         │
-└──────────────┬───────────────────────────┘
-               │
-               ▼
-         claude -p "..."
-         (your Max subscription)
+│  ├─ Event trigger engine                 │
+│  ├─ Workflow engine                      │
+│  └─ Session manager (--resume)           │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+             claude -p / claude --resume
+             (your Max subscription)
 ```

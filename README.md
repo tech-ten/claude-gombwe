@@ -1,45 +1,38 @@
 # claude-gombwe
 
-An autonomous agent control panel powered by Claude Code. OpenClaw capabilities on your Claude Max subscription.
+An autonomous agent control panel powered by Claude Code.
+
+*Gombwe (Shona): a guardian spirit medium — the vessel that channels higher powers.*
 
 ---
 
-## The Story
+## The Problem
 
-OpenClaw changed what people expected from AI — not a chatbot you talk to, but a personal assistant that works for you 24/7. It monitors your email, reviews your code, checks your calendar, and messages you on WhatsApp when something needs your attention. All while you sleep.
+Claude Code is the most capable AI coding tool available. But it's session-based — you open a terminal, work with it, close the terminal, and it stops. It can't monitor your email while you sleep. It can't alert you on Discord when your CI breaks. It can't run five tasks simultaneously while you're on the bus.
 
-Then Anthropic blocked subscription access. A single OpenClaw instance could burn $1,000-5,000/day in API costs — far more than the $200/month Max subscription. Overnight, 135,000+ users faced a choice: pay real API costs or lose their assistant.
+What if Claude Code could work for you 24/7 — from your phone, on a schedule, watching for events, retrying until the job is actually done?
 
-**I wanted OpenClaw's capabilities but couldn't afford the API.** I had a Claude Max subscription. I had Claude Code. Could I build the same thing on top of what I was already paying for?
+## The Solution
 
-The answer is **gombwe**.
-
----
-
-## What Claude Code Can and Can't Do
-
-Claude Code is powerful. With MCP servers, it connects to Gmail, GitHub, Slack, and more. But it has gaps:
+Gombwe is an orchestration layer on top of Claude Code. It adds what Claude Code is missing:
 
 ```
-              What I needed             Claude Code alone    With Gombwe
-              ─────────────             ─────────────────    ──────────
-              Always-on daemon                  No              Yes
-              Message from phone                No              Yes
-              Auto-retry on failure             No              Yes
-              Auto-continue if incomplete       No              Yes
-              Verify work when done             No              Yes
-              Event triggers                    No              Yes
-              Multi-step workflows              No              Yes
-              Concurrent tasks                  No              Yes
-              Web dashboard                     No              Yes
-              Native tools (no AI cost)         No              Yes
-              Scheduled jobs                  Partial           Yes
-              MCP servers                      Yes              Yes
-              Tool use                         Yes              Yes
-              Persistent conversations         Yes              Yes
+              The gap                      How gombwe fills it
+              ───────                      ───────────────────
+              Always-on daemon                  Persistent Node.js gateway
+              Phone access                      Discord and Telegram bots
+              Auto-retry on failure             Completion loop (3 retries)
+              Auto-continue incomplete work     Detects and continues (5x)
+              Verify results                    --resume verification pass
+              Event-driven triggers             Poll, webhook, file watch
+              Multi-step workflows              Chained steps with {{previous}}
+              Concurrent tasks                  Configurable parallelism
+              Web dashboard                     Real-time monitoring UI
+              Native tools                      Shell, HTTP, script execution
+              Scheduled automation              Cron-based job scheduler
 ```
 
-Gombwe doesn't replace Claude Code. It sits on top and adds the orchestration layer.
+The intelligence is all Claude. Gombwe just makes it reachable from anywhere and able to run autonomously.
 
 ---
 
@@ -55,26 +48,16 @@ Gombwe doesn't replace Claude Code. It sits on top and adds the orchestration la
                     ┌──────────────────────────────────────────┐
                     │          Gombwe Gateway (:18790)          │
                     │                                          │
-                    │  ┌─────────┐  ┌──────────┐  ┌────────┐  │
-                    │  │ Channel │  │  Message  │  │  REST  │  │
-                    │  │ Adapters│  │  Router   │  │  API   │  │
-                    │  └────┬────┘  └────┬─────┘  └───┬────┘  │
-                    │       │            │            │        │
-                    │  ┌────▼────────────▼────────────▼────┐  │
-                    │  │         Core Services              │  │
-                    │  │  ┌──────────┐  ┌──────────┐       │  │
-                    │  │  │  Agent   │  │ Session  │       │  │
-                    │  │  │ Runtime  │  │ Manager  │       │  │
-                    │  │  └────┬─────┘  └──────────┘       │  │
-                    │  │  ┌────┴─────┐  ┌──────────┐       │  │
-                    │  │  │  Skill   │  │Scheduler │       │  │
-                    │  │  │  System  │  │  (Cron)  │       │  │
-                    │  │  └──────────┘  └──────────┘       │  │
-                    │  │  ┌──────────┐  ┌──────────┐       │  │
-                    │  │  │ Trigger  │  │ Workflow │       │  │
-                    │  │  │ Engine   │  │ Engine   │       │  │
-                    │  │  └──────────┘  └──────────┘       │  │
-                    │  └───────────────────────────────────┘  │
+                    │  Channel Adapters                        │
+                    │  Message Router                          │
+                    │  Agent Runtime (completion loop)         │
+                    │  Session Manager (--resume)              │
+                    │  Skill System (SKILL.md + native tools)  │
+                    │  Cron Scheduler                          │
+                    │  Event Trigger Engine                    │
+                    │  Workflow Engine                         │
+                    │  REST API + WebSocket                    │
+                    │  Web Dashboard                           │
                     └──────────────────┬───────────────────────┘
                                        │
                                        ▼
@@ -89,215 +72,101 @@ Gombwe doesn't replace Claude Code. It sits on top and adds the orchestration la
                                        ▼
                               ┌─────────────────┐
                               │  MCP Servers     │
-                              │  Gmail           │
-                              │  GitHub          │
-                              │  Slack           │
-                              │  Calendar        │
-                              │  ...             │
+                              │  Gmail, GitHub   │
+                              │  Slack, Calendar │
                               └─────────────────┘
 ```
 
 ---
 
-## What Gombwe Solves
+## Key Features
 
-### 1. Always-On Daemon
+### Always-On Daemon
 
-```
-Without Gombwe:
-  Open terminal → use Claude → close terminal → Claude stops
+Gombwe runs as a persistent process. It keeps your channels, scheduler, triggers, and dashboard alive — even when you close the terminal.
 
-With Gombwe:
-  gombwe start → runs 24/7 → monitors, schedules, triggers
-  even when terminal is closed (--headless mode)
-```
+### Phone Access
 
-Gombwe runs as a persistent Node.js process. It keeps the gateway, scheduler, triggers, and channel connections alive. Use `gombwe start --headless` for daemon mode or `nohup gombwe start --headless &` to survive terminal closure.
+Message gombwe from Discord or Telegram on your phone. It runs Claude Code on your machine and sends results back. No terminal, no laptop, no VPN.
 
-### 2. Phone Access
+### Completion Loop
+
+When you fire a task, gombwe doesn't just run it once:
 
 ```
-┌─────────────────────────┐
-│  Discord on your phone  │
-│                         │
-│  You: /email-digest     │
-│                         │
-│  Gombwe: Here are your  │
-│  unread emails:         │
-│  1. John (urgent)...    │
-│  2. Newsletter...       │
-│                         │
-│  You: /task fix the     │
-│  login bug              │
-│                         │
-│  Gombwe: Task started.. │
-│  ...                    │
-│  Gombwe: Fixed. The     │
-│  null check on line 42  │
-│  was missing...         │
-└─────────────────────────┘
+  Prompt → Autonomy wrap → Run → Incomplete? → Continue (up to 5x)
+                                  Failed?    → Retry (up to 3x)
+                                  Done?      → Verify via --resume
 ```
 
-You're on the bus. You text gombwe on Discord. It runs Claude Code on your Mac at home. Results come back to your phone. No terminal, no laptop, no VPN.
+Every step uses `--resume` — Claude remembers everything from prior steps, including files read and commands run.
 
-### 3. Completion Loop (Retry + Continue + Verify)
+### Event Triggers
 
-```
-┌──────────────────────────────────────────────────┐
-│                 Completion Loop                   │
-│                                                   │
-│  ┌─────────┐                                     │
-│  │ Prompt  │  "Build me a REST API"              │
-│  └────┬────┘                                     │
-│       ▼                                           │
-│  ┌─────────┐  Wraps with: "NEVER ask questions.  │
-│  │ Wrap    │  Make decisions. Don't stop halfway."│
-│  └────┬────┘                                     │
-│       ▼                                           │
-│  ┌─────────┐  claude -p → captures session ID    │
-│  │  Run    │─────────────────────────────────┐   │
-│  └────┬────┘                                 │   │
-│       ▼                                      │   │
-│  ┌─────────┐  "I'll continue..." detected?   │   │
-│  │Complete?│──Yes──▶ claude --resume "keep    │   │
-│  └────┬────┘        going" (up to 5x)────────┘   │
-│       │No                                         │
-│       ▼                                           │
-│  ┌─────────┐  Exit code != 0?                    │
-│  │ Failed? │──Yes──▶ claude --resume "retry,     │
-│  └────┬────┘        error was..." (up to 3x)──┐  │
-│       │No                                     │  │
-│       ▼                                       │  │
-│  ┌─────────┐  claude --resume "verify:        │  │
-│  │ Verify  │  run tests, check files,         │  │
-│  └────┬────┘  fix issues"                     │  │
-│       ▼                                       │  │
-│  ┌─────────┐                                  │  │
-│  │  Done   │  Only now marked complete        │  │
-│  └─────────┘                                  │  │
-│                                                   │
-│  All steps use --resume = Claude remembers        │
-│  EVERYTHING from prior steps                      │
-└──────────────────────────────────────────────────┘
+```bash
+gombwe watch "client-email" \
+  --when "Check inbox for emails from @client.com" \
+  --do "Summarize and draft a reply" \
+  --notify "discord:#alerts"
 ```
 
-### 4. Event Triggers
+### Workflow Chains
 
-```
-Every 5 minutes:
-  ┌──────────┐    ┌───────────────┐    ┌──────────┐
-  │  Timer   │───▶│ Claude checks │───▶│TRIGGERED?│
-  │  fires   │    │ "any new      │    │          │
-  └──────────┘    │  emails from  │    └────┬─────┘
-                  │  @client.com?"│         │
-                  └───────────────┘    Yes  │  No
-                                       │    │
-                                       ▼    ▼
-                                  ┌────────┐ (wait)
-                                  │ Action │
-                                  │"Summar-│
-                                  │ize and │
-                                  │draft   │
-                                  │reply"  │
-                                  └───┬────┘
-                                      ▼
-                                 ┌─────────┐
-                                 │ Notify  │
-                                 │discord  │
-                                 │#alerts  │
-                                 └─────────┘
+Multi-step pipelines where each step's output feeds into the next:
+
+```bash
+gombwe workflow "pr-review" \
+  --trigger "webhook:github-pr" \
+  --steps '[
+    {"name":"review","prompt":"Review the code changes"},
+    {"name":"comment","prompt":"Draft comments based on: {{previous}}"},
+    {"name":"notify","prompt":"One-line summary","notify":["discord:#dev"]}
+  ]'
 ```
 
-### 5. Workflow Chains
+### Custom Skills with Native Tools
 
-```
-Webhook: POST /api/webhook/github-pr
-         │
-         ▼
-  Step 1: "Review the code changes"
-         │
-         │ output
-         ▼
-  Step 2: "Based on review: {{previous}},
-           draft GitHub comments"
-         │
-         │ output
-         ▼
-  Step 3: "One-line summary"
-         │
-         │ output ──▶ discord:#github
-         ▼
-  Done
+Skills are markdown files with optional executable tools:
+
+```yaml
+---
+name: system-health
+tools:
+  - name: disk
+    type: shell
+    command: "df -h / | tail -1"
+---
+Analyze the tool results and report system health.
 ```
 
-### 6. Custom Skills with Native Tools
-
-```
-┌─────────────────────────────────────────┐
-│  SKILL.md                                │
-│                                          │
-│  name: system-health                     │
-│  tools:                                  │
-│    - name: disk     shell: "df -h"       │
-│    - name: memory   shell: "vm_stat"     │
-│    - name: cpu      shell: "ps aux"      │
-│                                          │
-│  Instructions:                           │
-│  "Analyze the tool results and report    │
-│   system health status..."               │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-  ┌────────────────────────────────────┐
-  │ Gombwe executes tools directly    │
-  │ (instant, no AI cost)             │
-  │                                    │
-  │  df -h        → "95% used"        │
-  │  vm_stat      → "4GB free"        │
-  │  ps aux       → "node 45% CPU"    │
-  └────────────────┬───────────────────┘
-                   │ results
-                   ▼
-  ┌────────────────────────────────────┐
-  │ Claude analyzes (one call)        │
-  │                                    │
-  │  "Disk is critical at 95%.        │
-  │   Clean ~/Downloads.              │
-  │   Memory is fine.                 │
-  │   Node process at 45% CPU —      │
-  │   check for runaway task."        │
-  └────────────────────────────────────┘
-```
+Native tools execute instantly without AI cost. Claude only gets called once to analyze the results.
 
 ---
 
 ## Bundled Skills
 
-| Skill | What it does | Needs MCP? | Has native tools? |
-|-------|-------------|------------|-------------------|
-| `/email-digest` | Summarize inbox by priority, draft urgent replies | Gmail | No |
-| `/github-review` | PRs needing review, failing CI, stale PRs | GitHub | No |
-| `/morning-briefing` | Calendar + email + code + priorities for the day | Multiple | No |
-| `/code-review` | Review code for bugs, security, performance | No | No |
-| `/deploy-check` | Pre-deployment checklist (tests, build, lint) | No | No |
-| `/security-audit` | Scan for vulnerabilities and hardcoded secrets | No | No |
-| `/system-health` | Check disk, memory, CPU, processes | No | Yes (4 tools) |
-| `/git-digest` | Summarize recent git activity across repos | No | Yes (3 tools) |
-| `/api-health` | Check if APIs and services are responding | No | Yes (3 tools) |
-| `/web-monitor` | Monitor URLs for changes or price drops | Fetch/Brave | No |
-| `/content-ideas` | Trending topics + content ideas for your niche | Brave Search | No |
-| `/meeting-prep` | Briefing notes and talking points | Calendar | No |
-| `/cleanup` | Find dead code, unused deps, temp files | No | No |
+| Skill | What it does |
+|-------|-------------|
+| `/email-digest` | Summarize inbox by priority, draft urgent replies |
+| `/github-review` | PRs needing review, failing CI, action items |
+| `/morning-briefing` | Calendar + email + code + priorities |
+| `/code-review` | Review code for bugs, security, performance |
+| `/deploy-check` | Pre-deployment checklist |
+| `/security-audit` | Scan for vulnerabilities |
+| `/system-health` | Check disk, memory, CPU, processes |
+| `/git-digest` | Summarize recent git activity |
+| `/api-health` | Check if APIs are responding |
+| `/web-monitor` | Monitor URLs for changes |
+| `/content-ideas` | Trending topics + content ideas |
+| `/meeting-prep` | Briefing notes for meetings |
+| `/cleanup` | Find dead code, unused deps, temp files |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install globally from npm
 npm install -g claude-gombwe
-
-# Start
 gombwe start
 ```
 
@@ -306,13 +175,11 @@ Or from source:
 ```bash
 git clone https://github.com/tech-ten/claude-gombwe.git
 cd claude-gombwe
-npm install
-npm run build
-npm link
+npm install && npm run build && npm link
 gombwe start
 ```
 
-## All Commands
+## Commands
 
 ```bash
 # Core
@@ -321,7 +188,7 @@ gombwe start --headless             # Daemon mode
 gombwe run "do something"           # Run task, stream output
 gombwe status                       # System status
 
-# Chat commands (terminal, Discord, Telegram, web)
+# Chat (terminal, Discord, Telegram, web)
 /help                               # All commands
 /task build me an API               # Autonomous task
 /build a landing page               # Autonomous task
@@ -329,34 +196,33 @@ gombwe status                       # System status
 /email-digest                       # Run a skill
 /new                                # Fresh conversation
 /model opus                         # Switch model
-/set discord.token TOKEN            # Configure from anywhere
+/set discord.token TOKEN            # Configure
 
 # Services
-gombwe services                     # List available services
-gombwe connect github -e TOKEN=xxx  # Connect a service
-gombwe connect gmail                # Connect Gmail (needs OAuth)
+gombwe connect github -e GITHUB_PERSONAL_ACCESS_TOKEN=xxx
+gombwe connect gmail
+gombwe connect slack -e SLACK_BOT_TOKEN=xxx -e SLACK_TEAM_ID=xxx
 
-# Jobs
-gombwe job "/email-digest" --schedule "0 8 * * *"  # Daily at 8am
-gombwe jobs                         # List jobs
+# Scheduling
+gombwe job "/email-digest" --schedule "0 8 * * *"
+gombwe jobs
 
 # Triggers
 gombwe watch "name" --when "..." --do "..." --notify "discord:#alerts"
-gombwe triggers                     # List triggers
+gombwe triggers
 
 # Workflows
 gombwe workflow "name" --trigger "webhook:path" --steps '[...]'
-gombwe workflows                    # List workflows
+gombwe workflows
 ```
 
 ## Discord Setup
 
-1. https://discord.com/developers/applications → New Application
-2. Bot tab → enable Message Content Intent → Reset Token → copy
-3. OAuth2 → scope: bot → permissions: Send Messages, Read History, View Channels → invite
-4. `gombwe config --set channels.discord.botToken=YOUR_TOKEN`
-5. Create channels: `#chat`, `#alerts`, `#daily`
-6. Restart gombwe
+1. Create a bot at discord.com/developers/applications
+2. Enable Message Content Intent
+3. Invite to your server
+4. `gombwe config --set channels.discord.botToken=TOKEN`
+5. Restart gombwe
 
 ## Gmail Setup
 
@@ -364,37 +230,20 @@ gombwe workflows                    # List workflows
 2. OAuth consent screen → External → add yourself as test user
 3. Credentials → OAuth client ID → Desktop app → Download JSON
 4. `mkdir ~/.gmail-mcp && mv ~/Downloads/client_secret_*.json ~/.gmail-mcp/gcp-oauth.keys.json`
-5. `npx @gongrzhe/server-gmail-autoauth-mcp auth` (browser sign-in)
+5. `npx @gongrzhe/server-gmail-autoauth-mcp auth`
 6. `claude mcp add --transport stdio --scope user gmail -- npx @gongrzhe/server-gmail-autoauth-mcp`
-
-## Gombwe vs OpenClaw vs Claude Code
-
-| | Claude Code | Gombwe | OpenClaw |
-|---|---|---|---|
-| **Cost** | Subscription | Subscription | API ($1-5k/month) |
-| **Always-on** | No | Yes | Yes |
-| **Phone access** | No | Discord, Telegram | 30+ channels |
-| **Completion loop** | No | Retry + continue + verify | Partial |
-| **Event triggers** | No | Yes | Yes |
-| **Workflows** | No | Yes | Yes |
-| **Concurrent tasks** | 1 | Configurable | Yes |
-| **Native tools** | No | Yes | Yes |
-| **Conversation state** | Session-based | `--resume` (full context) | Stateless (resends history) |
-| **Skills** | Built-in | 13 + custom | 5,700+ |
-| **MCP servers** | Yes | Yes (same config) | No (own tool system) |
 
 ## Documentation
 
-- [docs/WHY.md](docs/WHY.md) — Why this project exists
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Complete architecture guide
-- [docs/COMPLETION-LOOP.md](docs/COMPLETION-LOOP.md) — How the retry/continue/verify loop works
-- [docs/SKILLS.md](docs/SKILLS.md) — Skill format, native tools, creating custom skills
+- [docs/WHY.md](docs/WHY.md) — Project motivation
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical architecture
+- [docs/COMPLETION-LOOP.md](docs/COMPLETION-LOOP.md) — Retry/continue/verify mechanism
+- [docs/SKILLS.md](docs/SKILLS.md) — Skill format and native tools
 - [docs/API.md](docs/API.md) — REST API and WebSocket reference
-- [SETUP.md](SETUP.md) — Step-by-step setup guide
 
 ## Tech Stack
 
-TypeScript, Node.js, Express, WebSocket (ws), grammy (Telegram), discord.js (Discord), croner (cron), gray-matter (YAML), Claude Code CLI
+TypeScript, Node.js, Express, WebSocket, grammy, discord.js, croner, gray-matter, Claude Code CLI
 
 ## License
 

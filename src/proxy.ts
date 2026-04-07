@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
  * OpenAI-compatible API proxy → claude -p (your Max subscription).
  *
  * How it works:
- *   - OpenClaw (or any OpenAI-compatible client) sends the full message history
+ *   - Any OpenAI-compatible client sends the full message history
  *     with every request — that's how the OpenAI API works (stateless).
  *   - We convert the full messages array into a well-structured prompt.
  *   - Each request is a fresh `claude -p` call with the full context.

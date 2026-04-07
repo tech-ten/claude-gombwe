@@ -269,7 +269,7 @@ program
 
 program
   .command('proxy')
-  .description('Start OpenAI-compatible API proxy (route OpenClaw through your subscription)')
+  .description('Start OpenAI-compatible API proxy (Route third-party tools through your subscription)')
   .option('-p, --port <port>', 'Proxy port', '18791')
   .action(async (opts) => {
     const port = parseInt(opts.port, 10);
@@ -282,7 +282,7 @@ program
   │                                         │
   └─────────────────────────────────────────┘
 `);
-    console.log('  Configure OpenClaw or any OpenAI-compatible tool:');
+    console.log('  Configure any OpenAI-compatible tool:');
     console.log(`    API Base URL:  http://127.0.0.1:${port}/v1`);
     console.log('    API Key:       anything (not checked)');
     console.log('    Model:         claude-via-subscription');
@@ -326,7 +326,7 @@ program
     const gateway = new Gateway(config);
     await gateway.start();
 
-    // Start proxy (OpenAI-compatible API for OpenClaw etc.)
+    // Start proxy (OpenAI-compatible API)
     const proxy = createProxyServer(proxyPort);
     await proxy.start();
 
@@ -338,9 +338,9 @@ program
     if (config.channels.telegram?.botToken) console.log('    Telegram:     connected');
     if (config.channels.discord?.botToken) console.log('    Discord:      connected');
     console.log('');
-    console.log('  To use with OpenClaw:');
-    console.log(`    Set provider to: openai/claude-via-subscription`);
-    console.log(`    Set API base to: http://127.0.0.1:${proxyPort}/v1`);
+    console.log('  To use with third-party tools:');
+    console.log(`    API base: http://127.0.0.1:${proxyPort}/v1`);
+    console.log('    Model: claude-via-subscription');
     console.log('');
 
     const shutdown = async () => {
@@ -480,7 +480,7 @@ program
     }
   });
 
-// --- Service management (connect apps like OpenClaw skills) ---
+// --- Service management ---
 
 program
   .command('services')
@@ -564,7 +564,7 @@ program
 
 program
   .command('job <prompt>')
-  .description('Create a scheduled job (like OpenClaw jobs)')
+  .description('Create a scheduled job')
   .option('-s, --schedule <cron>', 'Cron expression (e.g. "0 9 * * *" for 9am daily)')
   .option('--once', 'Run once right now instead of scheduling')
   .option('--port <port>', 'Gateway port', '18790')
