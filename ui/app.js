@@ -447,9 +447,10 @@ async function refreshStatus() {
     const res = await fetch(`${API}/api/status`);
     const s = await res.json();
     document.getElementById('headerStats').innerHTML = `
-      <span>Tasks: ${s.tasks.running}/${s.tasks.total}</span>
-      <span>Skills: ${s.skills}</span>
-      <span>Jobs: ${s.cronJobs}</span>
+      <span>${s.tasks.running} running / ${s.tasks.total} tasks</span>
+      <span>${s.skills} skills</span>
+      <span>${s.cronJobs} jobs</span>
+      <span style="margin-top:4px;font-size:10px;color:var(--text-4)">Cmd+K to search</span>
     `;
   } catch {
     document.getElementById('headerStats').textContent = 'Disconnected';
@@ -458,13 +459,13 @@ async function refreshStatus() {
 
 // ========== NAVIGATION ==========
 function switchTab(name) {
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.nav-btn[data-tab="${name}"]`)?.classList.add('active');
+  document.querySelector(`.nav-item[data-tab="${name}"]`)?.classList.add('active');
   document.getElementById(`tab-${name}`)?.classList.add('active');
 }
 
-document.querySelectorAll('.nav-btn').forEach(btn => {
+document.querySelectorAll('.nav-item').forEach(btn => {
   btn.addEventListener('click', () => {
     switchTab(btn.dataset.tab);
     switch (btn.dataset.tab) {
@@ -666,6 +667,59 @@ async function loadAllSessions() {
     }
     renderChatSidebar();
   } catch {}
+}
+
+// ========== COMMAND PALETTE (Cmd+K) ==========
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    const overlay = document.getElementById('cmdOverlay');
+    overlay.classList.toggle('hidden');
+    if (!overlay.classList.contains('hidden')) {
+      const input = document.getElementById('cmdInput');
+      input.value = '';
+      input.focus();
+      renderCmdResults('');
+    }
+  }
+  if (e.key === 'Escape') {
+    document.getElementById('cmdOverlay').classList.add('hidden');
+  }
+});
+
+document.getElementById('cmdOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
+});
+
+document.getElementById('cmdInput').addEventListener('input', (e) => {
+  renderCmdResults(e.target.value);
+});
+
+function renderCmdResults(query) {
+  const container = document.getElementById('cmdResults');
+  const all = getAllCommands();
+  const q = query.toLowerCase();
+  const matches = q ? all.filter(c => c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q)) : all;
+
+  container.innerHTML = '';
+  for (const item of matches.slice(0, 12)) {
+    const div = document.createElement('div');
+    div.className = 'autocomplete-item';
+    div.innerHTML = `
+      <span class="ac-cmd">${esc(item.cmd)}</span>
+      <span>
+        <span class="ac-desc">${esc(item.desc)}</span>
+        <span class="ac-type ${item.type}">${item.type}</span>
+      </span>
+    `;
+    div.onclick = () => {
+      document.getElementById('cmdOverlay').classList.add('hidden');
+      switchTab('chat');
+      document.getElementById('chatInput').value = item.cmd + ' ';
+      document.getElementById('chatInput').focus();
+    };
+    container.appendChild(div);
+  }
 }
 
 // ========== INIT ==========
