@@ -28,7 +28,7 @@ What Claude Code doesn't have:
 
 ## The name
 
-"Gombwe" is a Shona word. The project was built in a single Claude Code conversation on April 7, 2026.
+"Gombwe" is a Shona word meaning a guardian spirit medium — the vessel that channels higher powers. Claude is the power, gombwe is the medium.
 
 ## How it relates to OpenClaw
 
