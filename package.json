@@ -1,15 +1,42 @@
 {
   "name": "claude-gombwe",
   "version": "0.1.0",
-  "description": "Autonomous agent control panel powered by Claude Code",
+  "description": "Autonomous agent control panel powered by Claude Code — OpenClaw capabilities on your Max subscription",
   "type": "module",
   "bin": {
     "gombwe": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "ui",
+    "skills",
+    "agents",
+    "README.md"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "autonomous",
+    "discord",
+    "telegram",
+    "automation",
+    "mcp",
+    "openclaw",
+    "anthropic"
+  ],
+  "author": "Tendai Mudavanhu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tech-ten/claude-gombwe.git"
+  },
+  "homepage": "https://github.com/tech-ten/claude-gombwe",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "express": "^5.1.0",
