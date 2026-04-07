@@ -1,7 +1,7 @@
 {
   "name": "claude-gombwe",
-  "version": "0.1.1",
-  "description": "Autonomous agent control panel powered by Claude Code — OpenClaw capabilities on your Max subscription",
+  "version": "0.1.2",
+  "description": "Autonomous agent control panel — orchestrate AI tasks, triggers, workflows, and skills from anywhere",
   "type": "module",
   "bin": {
     "gombwe": "./dist/index.js"
@@ -22,7 +22,7 @@
     "telegram",
     "automation",
     "mcp",
-    "openclaw",
+    "workflows",
     "anthropic"
   ],
   "author": "Tendai Mudavanhu",
