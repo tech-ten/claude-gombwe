@@ -5,167 +5,205 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>gombwe</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;1,400&family=Playfair+Display:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
 
-    <header>
-      <div class="header-left">
-        <h1>gombwe</h1>
+    <!-- Fixed Left Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-name">gombwe</span>
         <span class="status-indicator" id="statusDot"></span>
       </div>
-      <div class="header-stats" id="headerStats"></div>
-    </header>
 
-    <nav>
-      <button class="nav-btn active" data-tab="chat">Chat</button>
-      <button class="nav-btn" data-tab="tasks">Tasks</button>
-      <button class="nav-btn" data-tab="jobs">Jobs</button>
-      <button class="nav-btn" data-tab="skills">Skills</button>
-      <button class="nav-btn" data-tab="services">Services</button>
-    </nav>
-
-    <!-- Chat -->
-    <section id="tab-chat" class="tab-content active">
-      <div class="chat-layout">
-        <div class="chat-sidebar">
-          <div class="sidebar-top">
-            <span class="sidebar-label">Conversations</span>
-            <button id="newChatBtn">new</button>
-          </div>
-          <div class="sidebar-filter">
-            <button class="filter-btn active" data-filter="all">all</button>
-            <button class="filter-btn" data-filter="web">web</button>
-            <button class="filter-btn" data-filter="telegram">telegram</button>
-            <button class="filter-btn" data-filter="discord">discord</button>
-          </div>
-          <div class="sidebar-list" id="sidebarList"></div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <button class="nav-item active" data-tab="chat">
+            <span class="nav-dot"></span> Chat
+          </button>
+          <button class="nav-item" data-tab="tasks">
+            <span class="nav-dot"></span> Tasks
+          </button>
         </div>
-        <div class="chat-main">
-          <div class="thread-header">
-            <div class="thread-title" id="threadTitle">New conversation</div>
-            <div class="thread-meta" id="threadMeta"></div>
+        <div class="nav-section">
+          <span class="nav-label">Automation</span>
+          <button class="nav-item" data-tab="jobs">
+            <span class="nav-dot"></span> Jobs
+          </button>
+          <button class="nav-item" data-tab="skills">
+            <span class="nav-dot"></span> Skills
+          </button>
+          <button class="nav-item" data-tab="services">
+            <span class="nav-dot"></span> Services
+          </button>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer" id="headerStats"></div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="content">
+
+      <!-- Chat -->
+      <section id="tab-chat" class="tab-content active">
+        <div class="split-view">
+          <div class="list-panel">
+            <div class="list-header">
+              <span class="list-title">Conversations</span>
+              <button id="newChatBtn">New</button>
+            </div>
+            <div class="list-filters">
+              <button class="filter-btn active" data-filter="all">All</button>
+              <button class="filter-btn" data-filter="web">Web</button>
+              <button class="filter-btn" data-filter="telegram">Telegram</button>
+              <button class="filter-btn" data-filter="discord">Discord</button>
+            </div>
+            <div class="list-items" id="sidebarList"></div>
           </div>
-          <div class="chat-messages" id="chatMessages">
-            <div class="system-msg">
-              <p class="system-serif">The vessel awaits your instruction.</p>
-              <p>Type to begin a conversation. Use <strong>/task</strong> for autonomous work, or <strong>/</strong> to explore commands.</p>
+          <div class="detail-panel">
+            <div class="detail-header">
+              <div>
+                <div class="detail-title" id="threadTitle">New conversation</div>
+                <div class="detail-meta" id="threadMeta"></div>
+              </div>
+            </div>
+            <div class="chat-messages" id="chatMessages">
+              <div class="empty-state">
+                <p class="empty-title">Start a conversation</p>
+                <p class="empty-desc">Type a message below. Use <strong>/</strong> for commands.</p>
+              </div>
+            </div>
+            <div class="composer">
+              <span class="composer-label" id="chatMode">chat</span>
+              <div class="autocomplete-container">
+                <div class="autocomplete-list hidden" id="autocompleteList"></div>
+                <form class="composer-form" id="chatForm">
+                  <input type="text" id="chatInput" placeholder="Message..." autocomplete="off">
+                  <button type="submit">Send</button>
+                </form>
+              </div>
             </div>
           </div>
-          <div class="composer">
-            <div class="composer-mode" id="chatMode">chat</div>
-            <div class="autocomplete-container">
-              <div class="autocomplete-list hidden" id="autocompleteList"></div>
-              <form class="composer-form" id="chatForm">
-                <input type="text" id="chatInput" placeholder="Say something..." autocomplete="off">
-                <button type="submit">send</button>
-              </form>
-            </div>
-          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Tasks -->
-    <section id="tab-tasks" class="tab-content">
-      <div class="chat-layout">
-        <div class="chat-sidebar">
-          <div class="sidebar-top">
-            <span class="sidebar-label">Tasks</span>
-            <select id="taskFilter">
-              <option value="">all</option>
-              <option value="running">running</option>
-              <option value="completed">completed</option>
-              <option value="failed">failed</option>
-            </select>
-          </div>
-          <div class="sidebar-list" id="taskSidebarList"></div>
-        </div>
-        <div class="chat-main">
-          <div class="thread-header">
-            <div class="thread-title" id="taskThreadTitle">Select a task</div>
-            <div class="thread-meta" id="taskThreadMeta"></div>
-          </div>
-          <div class="chat-messages" id="taskMessages">
-            <div class="system-msg">
-              <p class="system-serif">No task selected.</p>
-              <p>Choose one from the sidebar to view its progress.</p>
+      <!-- Tasks -->
+      <section id="tab-tasks" class="tab-content">
+        <div class="split-view">
+          <div class="list-panel">
+            <div class="list-header">
+              <span class="list-title">Tasks</span>
+              <select id="taskFilter">
+                <option value="">All</option>
+                <option value="running">Running</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+              </select>
             </div>
+            <div class="list-items" id="taskSidebarList"></div>
           </div>
-          <div class="composer">
-            <div class="composer-mode">task</div>
-            <div class="autocomplete-container">
+          <div class="detail-panel">
+            <div class="detail-header">
+              <div>
+                <div class="detail-title" id="taskThreadTitle">Select a task</div>
+                <div class="detail-meta" id="taskThreadMeta"></div>
+              </div>
+            </div>
+            <div class="chat-messages" id="taskMessages">
+              <div class="empty-state">
+                <p class="empty-title">No task selected</p>
+                <p class="empty-desc">Choose a task from the list to view its output.</p>
+              </div>
+            </div>
+            <div class="composer">
+              <span class="composer-label">task</span>
               <form class="composer-form" id="taskForm">
                 <input type="text" id="taskInput" placeholder="Follow up..." autocomplete="off">
-                <button type="submit">send</button>
+                <button type="submit">Send</button>
               </form>
             </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Jobs -->
-    <section id="tab-jobs" class="tab-content">
-      <div class="panel-view">
-        <div class="panel-top">
-          <h2>Scheduled Jobs</h2>
-          <button id="addJobBtn">new job</button>
-        </div>
-        <div id="jobForm" class="job-form hidden">
-          <div class="form-row">
-            <select id="jobSchedulePreset">
-              <option value="">Custom schedule</option>
-              <option value="*/30 * * * *">Every 30 minutes</option>
-              <option value="0 * * * *">Every hour</option>
-              <option value="0 8 * * *">Daily at 8am</option>
-              <option value="0 9 * * *">Daily at 9am</option>
-              <option value="0 9,18 * * *">9am and 6pm</option>
-              <option value="0 9 * * 1">Monday at 9am</option>
-              <option value="0 9 * * 1-5">Weekdays at 9am</option>
-              <option value="0 20 * * 0">Sunday at 8pm</option>
-            </select>
-            <input type="text" id="jobCronExpr" placeholder="cron expression">
+      <!-- Jobs -->
+      <section id="tab-jobs" class="tab-content">
+        <div class="page-view">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Scheduled Jobs</h1>
+              <p class="page-desc">Recurring tasks that run on a schedule.</p>
+            </div>
+            <button class="btn-primary" id="addJobBtn">New Job</button>
           </div>
-          <div class="form-row">
-            <select id="jobSkillSelect"><option value="">Pick a skill</option></select>
+          <div id="jobForm" class="card job-form hidden">
+            <div class="form-row">
+              <select id="jobSchedulePreset">
+                <option value="">Custom schedule</option>
+                <option value="*/30 * * * *">Every 30 minutes</option>
+                <option value="0 * * * *">Every hour</option>
+                <option value="0 8 * * *">Daily at 8am</option>
+                <option value="0 9 * * *">Daily at 9am</option>
+                <option value="0 9,18 * * *">9am and 6pm</option>
+                <option value="0 9 * * 1">Monday 9am</option>
+                <option value="0 9 * * 1-5">Weekdays 9am</option>
+              </select>
+              <input type="text" id="jobCronExpr" placeholder="Cron expression">
+            </div>
+            <div class="form-row">
+              <select id="jobSkillSelect"><option value="">Pick a skill</option></select>
+            </div>
+            <textarea id="jobPrompt" rows="2" placeholder="What should happen"></textarea>
+            <div class="form-actions">
+              <button id="cancelJob" class="btn-ghost">Cancel</button>
+              <button id="saveJob" class="btn-primary">Create Job</button>
+            </div>
           </div>
-          <textarea id="jobPrompt" rows="2" placeholder="What should happen"></textarea>
-          <div class="form-actions">
-            <button id="saveJob">create</button>
-            <button id="cancelJob" class="muted">cancel</button>
+          <div class="card" id="jobList"></div>
+        </div>
+      </section>
+
+      <!-- Skills -->
+      <section id="tab-skills" class="tab-content">
+        <div class="page-view">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Skills</h1>
+              <p class="page-desc">Type /<em>name</em> in chat to run, or schedule as a job.</p>
+            </div>
+            <button class="btn-ghost" id="reloadSkills">Reload</button>
           </div>
+          <div class="card" id="skillList"></div>
         </div>
-        <div class="panel-list" id="jobList"></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Skills -->
-    <section id="tab-skills" class="tab-content">
-      <div class="panel-view">
-        <div class="panel-top">
-          <h2>Skills</h2>
-          <button id="reloadSkills">reload</button>
+      <!-- Services -->
+      <section id="tab-services" class="tab-content">
+        <div class="page-view">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Services</h1>
+              <p class="page-desc">Connect external services via <code>gombwe connect &lt;name&gt;</code></p>
+            </div>
+          </div>
+          <div class="card" id="serviceList"></div>
         </div>
-        <p class="panel-hint">Type <em>/name</em> in chat to run a skill, or schedule it as a job.</p>
-        <div class="panel-list" id="skillList"></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Services -->
-    <section id="tab-services" class="tab-content">
-      <div class="panel-view">
-        <div class="panel-top">
-          <h2>Services</h2>
-        </div>
-        <p class="panel-hint">Connect via <code>gombwe connect name</code></p>
-        <div class="panel-list" id="serviceList"></div>
-      </div>
-    </section>
-
+    </main>
   </div>
+
+  <!-- Command Palette -->
+  <div class="cmd-overlay hidden" id="cmdOverlay">
+    <div class="cmd-palette">
+      <input type="text" class="cmd-input" id="cmdInput" placeholder="Search commands, skills, tasks...">
+      <div class="cmd-results" id="cmdResults"></div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
