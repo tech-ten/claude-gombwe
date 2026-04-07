@@ -1,7 +1,7 @@
 {
   "name": "claude-gombwe",
-  "version": "0.1.3",
-  "description": "Autonomous agent control panel — orchestrate AI tasks, triggers, workflows, and skills from anywhere",
+  "version": "0.1.4",
+  "description": "Autonomous agent control panel powered by Claude Code — orchestrate AI tasks, triggers, workflows, and skills from anywhere",
   "type": "module",
   "bin": {
     "gombwe": "./dist/index.js"
