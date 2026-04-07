@@ -9,14 +9,24 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-brand">gombwe</span>
+      <span class="status-indicator" id="statusDot"></span>
+    </div>
+    <div class="topbar-center">
+      <button class="topbar-search" id="topbarSearch">Search commands, skills, tasks... <kbd>Cmd+K</kbd></button>
+    </div>
+    <div class="topbar-right" id="headerStats"></div>
+  </div>
+
   <div id="app">
 
-    <!-- Fixed Left Sidebar -->
+    <!-- Left Sidebar -->
     <aside class="sidebar">
-      <div class="sidebar-brand">
-        <span class="brand-name">gombwe</span>
-        <span class="status-indicator" id="statusDot"></span>
-        <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar"></button>
+      <div class="sidebar-top-area">
+        <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar"><span></span></button>
       </div>
 
       <nav class="sidebar-nav">
@@ -42,7 +52,6 @@
         </div>
       </nav>
 
-      <div class="sidebar-footer" id="headerStats"></div>
     </aside>
 
     <!-- Main Content -->

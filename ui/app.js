@@ -447,10 +447,9 @@ async function refreshStatus() {
     const res = await fetch(`${API}/api/status`);
     const s = await res.json();
     document.getElementById('headerStats').innerHTML = `
-      <span>${s.tasks.running} running / ${s.tasks.total} tasks</span>
+      <span>${s.tasks.running} running</span>
+      <span>${s.tasks.total} tasks</span>
       <span>${s.skills} skills</span>
-      <span>${s.cronJobs} jobs</span>
-      <span style="margin-top:4px;font-size:10px;color:var(--text-4)">Cmd+K to search</span>
     `;
   } catch {
     document.getElementById('headerStats').textContent = 'Disconnected';
@@ -725,6 +724,15 @@ function renderCmdResults(query) {
 // ========== SIDEBAR TOGGLE ==========
 document.getElementById('sidebarToggle').addEventListener('click', () => {
   document.querySelector('.sidebar').classList.toggle('collapsed');
+});
+
+// ========== TOP BAR SEARCH ==========
+document.getElementById('topbarSearch')?.addEventListener('click', () => {
+  document.getElementById('cmdOverlay').classList.remove('hidden');
+  const input = document.getElementById('cmdInput');
+  input.value = '';
+  input.focus();
+  renderCmdResults('');
 });
 
 // ========== INIT ==========
