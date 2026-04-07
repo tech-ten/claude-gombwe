@@ -12,9 +12,13 @@ const taskCache = new Map();          // Tasks only
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
-  ws.onopen = () => document.getElementById('statusDot').classList.remove('offline');
+  ws.onopen = () => {
+    const dot = document.getElementById('statusDot');
+    if (dot) dot.classList.remove('offline', 'warning');
+  };
   ws.onclose = () => {
-    document.getElementById('statusDot').classList.add('offline');
+    const dot = document.getElementById('statusDot');
+    if (dot) dot.classList.add('offline');
     setTimeout(connectWS, 3000);
   };
   ws.onmessage = (e) => handleWSEvent(JSON.parse(e.data));
@@ -364,9 +368,9 @@ async function refreshJobs() {
     div.className = 'cron-item';
     div.innerHTML = `
       <div>
-        <div class="cron-expr">${esc(job.expression)} <span style="color:var(--text-dim);font-size:11px">${cronToHuman(job.expression)}</span></div>
+        <div class="cron-expr">${esc(job.expression)} <span style="color:var(--ink-faint);font-size:11px">${cronToHuman(job.expression)}</span></div>
         <div class="cron-prompt">${esc(job.prompt.slice(0, 100))}</div>
-        ${job.nextRun ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">Next: ${new Date(job.nextRun).toLocaleString()}</div>` : ''}
+        ${job.nextRun ? `<div style="font-size:10px;color:var(--ink-faint);margin-top:2px">Next: ${new Date(job.nextRun).toLocaleString()}</div>` : ''}
       </div>
       <div class="cron-actions">
         <button onclick="toggleJob('${job.id}', ${!job.enabled})">${job.enabled ? 'Pause' : 'Resume'}</button>
@@ -431,7 +435,7 @@ function refreshServices() {
         <div class="service-name">${svc.name}</div>
         <div class="service-desc">${svc.desc}</div>
       </div>
-      <code style="font-size:10px;color:var(--text-dim)">gombwe connect ${id}</code>
+      <code style="font-size:10px;color:var(--ink-faint)">gombwe connect ${id}</code>
     `;
     container.appendChild(div);
   }
