@@ -1,6 +1,6 @@
 # claude-gombwe
 
-An autonomous agent control panel powered by Claude Code.
+An autonomous agent control panel powered by Claude Code — orchestrate AI tasks, triggers, workflows, and skills from anywhere.
 
 *Gombwe (Shona): a guardian spirit medium — the vessel that channels higher powers.*
 
