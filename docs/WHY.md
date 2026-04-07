@@ -2,44 +2,37 @@
 
 ## The problem
 
-In April 2026, Anthropic blocked third-party agent frameworks (most notably OpenClaw) from using Claude Max subscriptions. OpenClaw users who were paying $200/month suddenly faced $1,000-5,000/month in API costs.
+Claude Code is the most capable AI coding tool available. With MCP servers, it can connect to Gmail, GitHub, Slack, and virtually any service. But it has a fundamental limitation: it's session-based.
 
-OpenClaw was popular because it turned Claude from "a chatbot you talk to" into "a personal assistant that works for you 24/7." It ran as a daemon, connected to 30+ messaging platforms, had 5,700+ community skills, and could act proactively — monitoring your email, checking your repos, alerting you to events.
+You open a terminal, work with Claude, close the terminal, and it stops. There's no way to:
+- Have it monitor your email and alert you when something important arrives
+- Run tasks from your phone while you're away from your computer
+- Schedule recurring automation (daily briefings, weekly reports)
+- Fire and forget complex tasks that retry on failure and verify their own work
+- React to events proactively ("when CI breaks, investigate and notify me")
 
-The question was: can you get those capabilities using your legitimate Claude Max subscription?
+## The solution
 
-## The answer
+Gombwe adds an orchestration layer on top of Claude Code that fills these gaps. It's not a replacement — it uses Claude Code as its engine. Everything runs through `claude -p` and `claude --resume`, using your existing subscription.
 
-Yes. Claude Code (Anthropic's official CLI) is part of your subscription. It supports:
-- Headless mode (`claude -p`) for programmatic use
-- `--resume` for persistent conversations across calls
-- MCP servers for connecting to Gmail, GitHub, Slack, etc.
-- Built-in tools for file operations, shell commands, web access
-
-What Claude Code doesn't have:
-- A persistent daemon (it's session-based — exits when you close the terminal)
-- Phone access (no Telegram, Discord, WhatsApp)
-- Event-driven triggers ("when X happens, do Y")
-- Multi-step workflow chains
-- A web dashboard
-- Auto-retry and verification loops
-
-**Gombwe adds exactly these missing pieces on top of Claude Code.** It's an orchestration layer — not an AI replacement. The intelligence is all Claude. Gombwe just makes it reachable from anywhere and able to run autonomously.
+The key architectural insight: `--resume` preserves Claude's full internal state across calls — every file read, every command run, every decision made. This enables a completion loop (retry, continue, verify) that's more capable than approaches that rely on resending conversation history.
 
 ## The name
 
 "Gombwe" is a Shona word meaning a guardian spirit medium — the vessel that channels higher powers. Claude is the power, gombwe is the medium.
 
-## How it relates to OpenClaw
+## What gombwe adds to Claude Code
 
-Same architecture pattern. Different execution engine.
-
-| | OpenClaw | Gombwe |
+| Capability | Claude Code | With Gombwe |
 |---|---|---|
-| AI engine | Raw Anthropic/OpenAI API | Claude Code CLI (`claude -p`) |
-| Payment | Per-token API costs | Subscription (flat rate) |
-| Conversation state | Stateless (resends full history every call) | `--resume` (Claude keeps full internal state) |
-| Tools | Defined in API requests | MCP servers + native tools |
-| Scale | 30+ channels, 5,700 skills, millions of users | 3 channels, 13 skills, built for personal use |
-
-Gombwe has a structural advantage in conversation management (`--resume` vs stateless API), but OpenClaw has a massive ecosystem advantage (5,700 community skills vs 13).
+| Always-on daemon | No | Yes |
+| Phone access (Discord, Telegram) | No | Yes |
+| Auto-retry on failure | No | Yes (3 attempts) |
+| Auto-continue incomplete work | No | Yes (5 continuations) |
+| Verification pass | No | Yes (via --resume) |
+| Event triggers | No | Yes |
+| Multi-step workflows | No | Yes |
+| Concurrent tasks | No | Configurable |
+| Web dashboard | No | Yes |
+| Native tools (no AI cost) | No | Yes |
+| Scheduled jobs | Partial | Full cron support |

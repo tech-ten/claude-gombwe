@@ -17,7 +17,7 @@ interface ClaudeSettings {
 }
 
 /**
- * Available service connectors (equivalent to OpenClaw "skills").
+ * Available service connectors.
  * Each one maps to an MCP server that gives Claude access to the service.
  */
 export const SERVICES: Record<string, {
