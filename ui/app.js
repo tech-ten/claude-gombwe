@@ -646,7 +646,7 @@ async function loadAllSessions() {
         });
       }
       const conv = chatConversations.get(s.key);
-      if (conv && conv.title === conv.key && s.messageCount > 0) {
+      if (conv && conv.title === conv.key) {
         // Try to load the session to get a better title
         try {
           const detail = await fetch(`${API}/api/sessions/${encodeURIComponent(s.key)}`);

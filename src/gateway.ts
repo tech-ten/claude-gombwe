@@ -438,13 +438,17 @@ export class Gateway {
 
     // Sessions
     this.app.get('/api/sessions', (_req: Request, res: Response) => {
-      res.json(this.sessions.listSessions().map(s => ({
-        key: s.key,
-        channel: s.channel,
-        createdAt: s.createdAt,
-        lastActiveAt: s.lastActiveAt,
-        messageCount: s.transcript.length,
-      })));
+      res.json(this.sessions.listSessions().map(s => {
+        // Force-load transcript to get real count
+        const full = this.sessions.getSession(s.key);
+        return {
+          key: s.key,
+          channel: s.channel,
+          createdAt: s.createdAt,
+          lastActiveAt: s.lastActiveAt,
+          messageCount: full ? full.transcript.length : 0,
+        };
+      }));
     });
 
     this.app.get('/api/sessions/:key', (req: Request, res: Response) => {
