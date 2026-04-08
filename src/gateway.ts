@@ -140,7 +140,9 @@ export class Gateway {
                 this.logFamilyAction(family, 'gombwe', 'order completed',
                   `${groceryItems.length + nonFoodItems.length} items moved to pantry (${task.channel})`);
                 this.saveFamilyData(family);
-              } catch {}
+              } catch (err: any) {
+                console.error(`[gateway] post-order cleanup failed: ${err.message}`);
+              }
             }
           }
         }
@@ -172,7 +174,9 @@ export class Gateway {
               });
             }
           }
-        } catch {}
+        } catch (err: any) {
+          console.error(`[gateway] WebSocket message error: ${err.message}`);
+        }
       });
 
       ws.on('close', () => this.wsClients.delete(ws));
@@ -556,7 +560,10 @@ export class Gateway {
             this.saveFamilyData(updated);
             await reply(`Added to shopping list: ${ingData.ingredients.join(', ')}`);
           }
-        } catch {}
+        } catch (err: any) {
+          console.error(`[gateway] ingredient extraction failed for "${mealName}": ${err.message}`);
+          await reply(`Meal added but ingredient extraction failed: ${err.message}`);
+        }
         return true;
       }
 
@@ -820,12 +827,12 @@ export class Gateway {
 
     // Common aliases
     if (lower === 'today' || lower === 'tdy' || lower === 'tonite' || lower === 'tonight') {
-      return now.toISOString().slice(0, 10);
+      return this.localDateStr(now);
     }
     if (lower === 'tomorrow' || lower === 'tmrw' || lower === 'tmr' || lower === 'tomoz' || lower === 'tomo') {
       const d = new Date(now);
       d.setDate(d.getDate() + 1);
-      return d.toISOString().slice(0, 10);
+      return this.localDateStr(d);
     }
 
     // YYYY-MM-DD passthrough
@@ -867,13 +874,17 @@ export class Gateway {
     return null;
   }
 
+  private localDateStr(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
   private dayOffset(now: Date, targetDay: number): string {
     const current = now.getDay();
     let diff = targetDay - current;
     if (diff < 0) diff += 7;
     const d = new Date(now);
     d.setDate(d.getDate() + diff);
-    return d.toISOString().slice(0, 10);
+    return this.localDateStr(d);
   }
 
   private levenshtein(a: string, b: string): number {
