@@ -1,82 +1,57 @@
 #!/usr/bin/env node
 
 /**
- * Grocery automation — search, compare, and add to cart at Woolworths and Coles.
- * Uses your logged-in Chrome session via remote debugging.
+ * Grocery automation — search, compare, cart, checkout at Woolworths & Coles.
  *
- * Usage:
- *   node scripts/grocery.mjs compare "milk 2L" "eggs" "bbq sauce"
- *   node scripts/grocery.mjs order woolworths "milk 2L" "eggs" "bbq sauce"
- *   node scripts/grocery.mjs order coles "milk 2L" "eggs"
- *   node scripts/grocery.mjs split "milk 2L" "eggs" "bbq sauce" "bread" "chicken"
+ * Commands:
+ *   compare <items...>                    Compare prices
+ *   order woolworths|coles <items...>     Add to cart at one store
+ *   split <items...>                      Smart split across both
+ *   checkout woolworths|coles             Pick earliest delivery, leave at door
  */
 
 import puppeteer from 'puppeteer-core';
 import { existsSync } from 'fs';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
 
 const PORT = 19222;
 const CHROME_URL = `http://127.0.0.1:${PORT}`;
 const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
+const MIN_ORDER = 50;
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function connectChrome() {
-  // Try connecting to existing Chrome
   try {
     return await puppeteer.connect({ browserURL: CHROME_URL, defaultViewport: null });
   } catch {}
 
-  // Chrome not running — auto-launch with saved profile
   console.log('  Starting Chrome with saved profile...');
 
   const chromePaths = [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    'google-chrome',
-    'chromium-browser',
   ];
 
-  let chromePath = null;
-  for (const p of chromePaths) {
-    if (existsSync(p)) { chromePath = p; break; }
-  }
+  let chromePath = chromePaths.find(p => existsSync(p));
+  if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
+  if (!existsSync(PROFILE_DIR)) { console.error('Run gombwe grocery-setup first.'); process.exit(1); }
 
-  if (!chromePath) {
-    console.error('Chrome not found. Install Google Chrome or run: node scripts/chrome-setup.mjs');
-    process.exit(1);
-  }
-
-  // Check if profile exists (user has run setup)
-  if (!existsSync(PROFILE_DIR)) {
-    console.error('No saved login found. Run first: node scripts/chrome-setup.mjs');
-    process.exit(1);
-  }
-
-  // Launch Chrome headless-ish with the saved profile (cookies preserved)
   const chrome = spawn(chromePath, [
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE_DIR}`,
-    '--no-first-run',
-    '--no-default-browser-check',
+    '--no-first-run', '--no-default-browser-check',
     'https://www.woolworths.com.au',
     'https://www.coles.com.au',
   ], { detached: true, stdio: 'ignore' });
   chrome.unref();
 
-  // Wait for Chrome to start
   for (let i = 0; i < 15; i++) {
     await wait(2000);
-    try {
-      const browser = await puppeteer.connect({ browserURL: CHROME_URL, defaultViewport: null });
-      console.log('  Chrome connected with saved session.');
-      return browser;
-    } catch {}
+    try { return await puppeteer.connect({ browserURL: CHROME_URL, defaultViewport: null }); } catch {}
   }
-
-  console.error('Chrome failed to start. Run: node scripts/chrome-setup.mjs');
-  process.exit(1);
+  console.error('Chrome failed to start.'); process.exit(1);
 }
 
 async function getPage(browser, domain) {
@@ -91,7 +66,7 @@ async function getPage(browser, domain) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// WOOLWORTHS
+// WOOLWORTHS — uses internal API (reliable prices)
 // ═══════════════════════════════════════════════════════════
 
 async function searchWoolworths(page, query) {
@@ -122,11 +97,9 @@ async function searchWoolworths(page, query) {
 }
 
 async function addToCartWoolworths(page, product) {
-  // Navigate to the product detail page
   await page.goto(product.url, { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
 
-  // Find and click "Add to cart" in shadow DOM
   const clicked = await page.evaluate(() => {
     const allEls = document.querySelectorAll('*');
     for (const el of allEls) {
@@ -151,7 +124,7 @@ async function addToCartWoolworths(page, product) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// COLES
+// COLES — search page for names, add to cart, read price from trolley
 // ═══════════════════════════════════════════════════════════
 
 async function searchColes(page, query) {
@@ -162,36 +135,50 @@ async function searchColes(page, query) {
 
   const products = await page.evaluate(() => {
     const items = [];
-    // Coles renders product info as continuous text blocks like:
-    // "Coles Full Cream Milk | 2L$3.20$1.60/ 1L5 more buying optionsAdd"
-    // We need to parse these intelligently
 
-    // Get all text blocks that contain prices
-    const body = document.body.innerText;
-    const lines = body.split('\n');
+    // Coles has clean DOM: data-testid="product-pricing" with class "price__value" for pack price
+    // and "price__calculation_method" for unit price. We want the pack price.
+    const tiles = document.querySelectorAll('[data-testid="product-tile"], section');
 
-    for (const line of lines) {
-      // Look for lines with product patterns: "Name | Size$Price"
-      const match = line.match(/^(.+?)\$(\d+\.\d{2})/);
-      if (match && match[1].length > 3 && match[1].length < 150) {
-        let name = match[1].trim();
-        // Clean up name — remove leading badges like "EVERY DAY"
-        name = name.replace(/^(EVERY DAY|NEW|HALF PRICE|SPECIAL|Save \$[\d.]+|Life \d+ days min)/gi, '').trim();
-        const price = parseFloat(match[2]);
+    for (const tile of tiles) {
+      // Product name
+      const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
+      if (!titleEl) continue;
+      const name = titleEl.textContent.trim();
+      if (!name || name.length < 3) continue;
 
-        // Skip if it looks like a unit price line
-        if (name.includes('/') && name.length < 10) continue;
-        // Skip duplicates
-        if (items.some(i => i.name === name)) continue;
-
-        items.push({ name, price, url: null, store: 'coles' });
+      // Pack price (not unit price)
+      const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
+      let price = null;
+      if (priceEl) {
+        const match = priceEl.textContent.match(/\$(\d+\.\d{2})/);
+        if (match) price = parseFloat(match[1]);
       }
+
+      // Product link
+      const linkEl = tile.querySelector('a[href*="/product/"]');
+      const url = linkEl ? linkEl.href : null;
+
+      items.push({ name, price, url, store: 'coles' });
     }
 
-    // Also try to get product links
-    const links = document.querySelectorAll('a[href*="/product/"]');
-    for (let i = 0; i < Math.min(links.length, items.length); i++) {
-      if (links[i]) items[i].url = links[i].href;
+    // Fallback if no tiles found — use aria-label on pricing elements
+    if (items.length === 0) {
+      const pricingEls = document.querySelectorAll('[data-testid="product-pricing"]');
+      const titleEls = document.querySelectorAll('[data-testid="product-title"]');
+      const linkEls = document.querySelectorAll('a[href*="/product/"]');
+
+      for (let i = 0; i < Math.min(pricingEls.length, titleEls.length); i++) {
+        const name = titleEls[i]?.textContent?.trim();
+        const ariaPrice = pricingEls[i]?.getAttribute('aria-label'); // "Price $3.20"
+        let price = null;
+        if (ariaPrice) {
+          const match = ariaPrice.match(/\$(\d+\.\d{2})/);
+          if (match) price = parseFloat(match[1]);
+        }
+        const url = linkEls[i]?.href || null;
+        if (name) items.push({ name, price, url, store: 'coles' });
+      }
     }
 
     return items;
@@ -201,17 +188,11 @@ async function searchColes(page, query) {
 }
 
 async function addToCartColes(page, product) {
-  if (product.url) {
-    await page.goto(product.url, { waitUntil: 'networkidle2', timeout: 15000 });
-  } else {
-    await page.goto(`https://www.coles.com.au/search/products?q=${encodeURIComponent(product.name)}`, {
-      waitUntil: 'networkidle2', timeout: 15000
-    });
-  }
+  const url = product.url || `https://www.coles.com.au/search/products?q=${encodeURIComponent(product.name)}`;
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
 
   const clicked = await page.evaluate(() => {
-    // Try buttons
     const buttons = document.querySelectorAll('button');
     for (const btn of buttons) {
       const text = (btn.textContent || '').trim().toLowerCase();
@@ -222,11 +203,10 @@ async function addToCartColes(page, product) {
         return true;
       }
     }
-    // Try aria-label on any element
     const ariaEls = document.querySelectorAll('[aria-label]');
     for (const el of ariaEls) {
       const label = el.getAttribute('aria-label').toLowerCase();
-      if ((label.includes('add') && (label.includes('cart') || label.includes('trolley')))) {
+      if (label.includes('add') && (label.includes('cart') || label.includes('trolley'))) {
         el.click();
         return true;
       }
@@ -236,6 +216,163 @@ async function addToCartColes(page, product) {
 
   await wait(2000);
   return clicked;
+}
+
+// ═══════════════════════════════════════════════════════════
+// CHECKOUT — pick earliest delivery, leave at door
+// ═══════════════════════════════════════════════════════════
+
+async function checkoutWoolworths(page) {
+  console.log('\n  Checking out Woolworths...\n');
+
+  // Go to cart
+  await page.goto('https://www.woolworths.com.au/shop/cart', { waitUntil: 'networkidle2', timeout: 15000 });
+  await wait(3000);
+
+  // Get cart total
+  const cartInfo = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const totalMatch = text.match(/\$(\d+\.\d{2})\s*(in total|total|estimated)/i);
+    const itemMatch = text.match(/(\d+)\s*item/i);
+    return {
+      total: totalMatch ? totalMatch[1] : null,
+      items: itemMatch ? itemMatch[1] : null
+    };
+  });
+
+  if (cartInfo.total) console.log(`  Cart: ${cartInfo.items || '?'} items, $${cartInfo.total}`);
+
+  // Click checkout
+  const checkoutClicked = await page.evaluate(() => {
+    const btns = document.querySelectorAll('button, a');
+    for (const btn of btns) {
+      const text = (btn.textContent || '').toLowerCase();
+      if (text.includes('checkout') || text.includes('check out')) {
+        btn.click();
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (!checkoutClicked) {
+    console.log('  Could not find checkout button. Please complete checkout manually.');
+    console.log('  Cart: https://www.woolworths.com.au/shop/cart');
+    return;
+  }
+
+  await wait(5000);
+
+  // Select earliest delivery time
+  console.log('  Selecting earliest delivery time...');
+  const timeSelected = await page.evaluate(() => {
+    // Look for the first available delivery time slot
+    const slots = document.querySelectorAll('button[class*="time"], [class*="slot"], [class*="timeslot"]');
+    for (const slot of slots) {
+      const text = slot.textContent.toLowerCase();
+      if (!text.includes('unavailable') && !text.includes('sold out')) {
+        slot.click();
+        return slot.textContent.trim();
+      }
+    }
+    return null;
+  });
+
+  if (timeSelected) console.log(`  Selected: ${timeSelected}`);
+  else console.log('  Could not auto-select time. Please choose manually.');
+
+  // Set delivery instructions — leave at door
+  console.log('  Setting delivery instructions: Leave at front door/pouch');
+  await page.evaluate(() => {
+    const inputs = document.querySelectorAll('input, textarea');
+    for (const input of inputs) {
+      const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') || '').toLowerCase();
+      if (label.includes('instruction') || label.includes('note') || label.includes('delivery')) {
+        input.value = 'Please leave at front door / pouch. Thank you.';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
+
+  console.log('\n  Checkout ready. Review in Chrome and confirm payment.');
+  console.log('  Cart: https://www.woolworths.com.au/shop/checkout\n');
+}
+
+async function checkoutColes(page) {
+  console.log('\n  Checking out Coles...\n');
+
+  // Go to trolley
+  await page.goto('https://www.coles.com.au/cart', { waitUntil: 'networkidle2', timeout: 15000 });
+  await wait(3000);
+
+  // Get trolley total
+  const cartInfo = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const totalMatch = text.match(/\$(\d+\.\d{2})/);
+    const itemMatch = text.match(/(\d+)\s*item/i);
+    return {
+      total: totalMatch ? totalMatch[1] : null,
+      items: itemMatch ? itemMatch[1] : null
+    };
+  });
+
+  if (cartInfo.total) console.log(`  Trolley: ${cartInfo.items || '?'} items, $${cartInfo.total}`);
+
+  // Click checkout
+  const checkoutClicked = await page.evaluate(() => {
+    const btns = document.querySelectorAll('button, a');
+    for (const btn of btns) {
+      const text = (btn.textContent || '').toLowerCase();
+      if (text.includes('checkout') || text.includes('check out')) {
+        btn.click();
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (!checkoutClicked) {
+    console.log('  Could not find checkout button. Please complete checkout manually.');
+    console.log('  Trolley: https://www.coles.com.au/cart');
+    return;
+  }
+
+  await wait(5000);
+
+  // Select earliest delivery time
+  console.log('  Selecting earliest delivery time...');
+  const timeSelected = await page.evaluate(() => {
+    const slots = document.querySelectorAll('button[class*="time"], [class*="slot"], [class*="timeslot"]');
+    for (const slot of slots) {
+      const text = slot.textContent.toLowerCase();
+      if (!text.includes('unavailable') && !text.includes('sold out')) {
+        slot.click();
+        return slot.textContent.trim();
+      }
+    }
+    return null;
+  });
+
+  if (timeSelected) console.log(`  Selected: ${timeSelected}`);
+  else console.log('  Could not auto-select time. Please choose manually.');
+
+  // Set delivery instructions
+  console.log('  Setting delivery instructions: Leave at front door/pouch');
+  await page.evaluate(() => {
+    const inputs = document.querySelectorAll('input, textarea');
+    for (const input of inputs) {
+      const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') || '').toLowerCase();
+      if (label.includes('instruction') || label.includes('note') || label.includes('delivery')) {
+        input.value = 'Please leave at front door / pouch. Thank you.';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
+
+  console.log('\n  Checkout ready. Review in Chrome and confirm payment.');
+  console.log('  Trolley: https://www.coles.com.au/cart\n');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -253,10 +390,8 @@ async function compareItems(browser, items) {
   const results = [];
 
   for (const item of items) {
-    const [wProducts, cProducts] = await Promise.all([
-      searchWoolworths(wPage, item),
-      searchColes(cPage, item)
-    ]);
+    const wProducts = await searchWoolworths(wPage, item);
+    const cProducts = await searchColes(cPage, item);
 
     const w = wProducts[0];
     const c = cProducts[0];
@@ -268,18 +403,15 @@ async function compareItems(browser, items) {
     else if (wPrice) best = 'Woolworths';
     else if (cPrice) best = 'Coles';
 
-    const wStr = wPrice ? `$${wPrice.toFixed(2)}` : 'N/A';
-    const cStr = cPrice ? `$${cPrice.toFixed(2)}` : 'N/A';
+    console.log(`  ${item.padEnd(30)}${(wPrice ? `$${wPrice.toFixed(2)}` : 'N/A').padEnd(15)}${(cPrice ? `$${cPrice.toFixed(2)}` : 'N/A').padEnd(15)}${best}`);
 
-    console.log(`  ${item.padEnd(30)}${wStr.padEnd(15)}${cStr.padEnd(15)}${best}`);
-
-    results.push({ item, woolworths: w, coles: c, best: best.toLowerCase() });
+    results.push({ item, woolworths: w, coles: c, best: best.toLowerCase(), wPrice, cPrice });
   }
 
   return results;
 }
 
-async function orderItems(browser, store, items) {
+async function orderItems(browser, store, items, doCheckout = false) {
   const domain = store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au';
   const page = await getPage(browser, domain);
   const searchFn = store === 'woolworths' ? searchWoolworths : searchColes;
@@ -292,12 +424,8 @@ async function orderItems(browser, store, items) {
 
   for (const item of items) {
     process.stdout.write(`  ${item}... `);
-
     const products = await searchFn(page, item);
-    if (products.length === 0) {
-      console.log('not found');
-      continue;
-    }
+    if (products.length === 0) { console.log('not found'); continue; }
 
     const best = products[0];
     const success = await addFn(page, best);
@@ -311,56 +439,110 @@ async function orderItems(browser, store, items) {
     }
   }
 
-  console.log(`\n  ${added}/${items.length} items added. Estimated: $${total.toFixed(2)}\n`);
+  console.log(`\n  ${added}/${items.length} items added. Estimated: $${total.toFixed(2)}`);
+
+  if (doCheckout) {
+    if (store === 'woolworths') await checkoutWoolworths(page);
+    else await checkoutColes(page);
+  }
+
   return { added, total };
 }
 
-async function smartSplit(browser, items, minOrder = 50) {
+async function smartSplit(browser, items, doCheckout = false) {
   const results = await compareItems(browser, items);
 
-  let woolies = results.filter(r => r.best === 'woolworths' && r.woolworths);
-  let coles = results.filter(r => r.best === 'coles' && r.coles);
+  // Calculate totals per store
+  let wItems = results.filter(r => r.best === 'woolworths' && r.woolworths);
+  let cItems = results.filter(r => r.best === 'coles' && r.coles);
+  const noMatch = results.filter(r => r.best === '—');
 
-  const wTotal = woolies.reduce((s, r) => s + (r.woolworths?.price || 0), 0);
-  const cTotal = coles.reduce((s, r) => s + (r.coles?.price || 0), 0);
-
-  if (wTotal > 0 && wTotal < minOrder) {
-    console.log(`\n  Woolworths $${wTotal.toFixed(2)} below $${minOrder} min — moving all to Coles`);
-    coles = [...coles, ...woolies];
-    woolies = [];
-  }
-  if (cTotal > 0 && cTotal < minOrder) {
-    console.log(`\n  Coles $${cTotal.toFixed(2)} below $${minOrder} min — moving all to Woolworths`);
-    woolies = [...woolies, ...coles];
-    coles = [];
+  // Items with no price at either store — default to woolworths
+  for (const r of noMatch) {
+    if (r.woolworths) wItems.push(r);
+    else if (r.coles) cItems.push(r);
   }
 
-  console.log('\n  ── ORDER SPLIT ──');
+  let wTotal = wItems.reduce((s, r) => s + (r.wPrice || 0), 0);
+  let cTotal = cItems.reduce((s, r) => s + (r.cPrice || 0), 0);
+  const grandTotal = wTotal + cTotal;
 
-  if (woolies.length > 0) {
-    console.log(`\n  WOOLWORTHS (${woolies.length} items):`);
+  console.log(`\n  Woolworths total: $${wTotal.toFixed(2)}`);
+  console.log(`  Coles total: $${cTotal.toFixed(2)}`);
+  console.log(`  Combined: $${grandTotal.toFixed(2)}`);
+
+  // Decision logic
+  const bothAboveMin = wTotal >= MIN_ORDER && cTotal >= MIN_ORDER;
+
+  if (bothAboveMin) {
+    // Both orders qualify for free delivery — split is optimal
+    console.log(`\n  Both above $${MIN_ORDER} minimum — splitting for best prices`);
+  } else if (grandTotal < MIN_ORDER * 2) {
+    // Total doesn't justify two orders — pick the cheapest store overall
+    // Calculate what all items would cost at each store
+    const allAtW = results.reduce((s, r) => s + (r.wPrice || r.cPrice || 0), 0);
+    const allAtC = results.reduce((s, r) => s + (r.cPrice || r.wPrice || 0), 0);
+
+    const cheaperStore = allAtW <= allAtC ? 'woolworths' : 'coles';
+    console.log(`\n  Total $${grandTotal.toFixed(2)} doesn't justify two deliveries`);
+    console.log(`  All at Woolworths: $${allAtW.toFixed(2)}`);
+    console.log(`  All at Coles: $${allAtC.toFixed(2)}`);
+    console.log(`  → Ordering everything from ${cheaperStore}`);
+
+    if (cheaperStore === 'woolworths') {
+      wItems = results.filter(r => r.woolworths);
+      cItems = [];
+    } else {
+      cItems = results.filter(r => r.coles);
+      wItems = [];
+    }
+  } else {
+    // One store is below minimum — move its items to the other
+    if (wTotal < MIN_ORDER && wTotal > 0) {
+      console.log(`\n  Woolworths $${wTotal.toFixed(2)} below $${MIN_ORDER} — moving to Coles`);
+      cItems = [...cItems, ...wItems];
+      wItems = [];
+    }
+    if (cTotal < MIN_ORDER && cTotal > 0) {
+      console.log(`\n  Coles $${cTotal.toFixed(2)} below $${MIN_ORDER} — moving to Woolworths`);
+      wItems = [...wItems, ...cItems];
+      cItems = [];
+    }
+  }
+
+  // Execute orders
+  console.log('\n  ── ORDER ──');
+
+  if (wItems.length > 0) {
+    console.log(`\n  WOOLWORTHS (${wItems.length} items):`);
     const wPage = await getPage(browser, 'woolworths.com.au');
     let wt = 0;
-    for (const r of woolies) {
+    for (const r of wItems) {
       process.stdout.write(`    ${r.item}... `);
-      const success = await addToCartWoolworths(wPage, r.woolworths);
-      console.log(success ? `+ $${r.woolworths.price?.toFixed(2)}` : '! failed');
-      wt += r.woolworths.price || 0;
+      const success = await addToCartWoolworths(wPage, r.woolworths || r.coles);
+      const price = r.woolworths?.price || r.coles?.price || 0;
+      console.log(success ? `+ $${price.toFixed(2)}` : '! failed');
+      wt += price;
     }
     console.log(`    Total: $${wt.toFixed(2)}`);
+
+    if (doCheckout) await checkoutWoolworths(wPage);
   }
 
-  if (coles.length > 0) {
-    console.log(`\n  COLES (${coles.length} items):`);
+  if (cItems.length > 0) {
+    console.log(`\n  COLES (${cItems.length} items):`);
     const cPage = await getPage(browser, 'coles.com.au');
     let ct = 0;
-    for (const r of coles) {
+    for (const r of cItems) {
       process.stdout.write(`    ${r.item}... `);
       const success = await addToCartColes(cPage, r.coles || { name: r.item });
-      console.log(success ? `+ $${r.coles?.price?.toFixed(2) || '?'}` : '! failed');
-      ct += r.coles?.price || 0;
+      const price = r.coles?.price || r.woolworths?.price || 0;
+      console.log(success ? `+ $${price.toFixed(2)}` : '! failed');
+      ct += price;
     }
     console.log(`    Total: $${ct.toFixed(2)}`);
+
+    if (doCheckout) await checkoutColes(cPage);
   }
 
   console.log('');
@@ -370,16 +552,21 @@ async function smartSplit(browser, items, minOrder = 50) {
 // MAIN
 // ═══════════════════════════════════════════════════════════
 
-const [command, ...args] = process.argv.slice(2);
+const allArgs = process.argv.slice(2);
+const doCheckout = allArgs.includes('--checkout');
+const args = allArgs.filter(a => a !== '--checkout');
+const [command, ...items] = args;
 
 if (!command) {
   console.log(`
   Grocery — Woolworths & Coles
 
-  compare <item1> <item2> ...              Compare prices
-  order woolworths <item1> <item2> ...     Add to Woolworths cart
-  order coles <item1> <item2> ...          Add to Coles cart
-  split <item1> <item2> ...               Smart split (cheapest per item)
+  compare <items...>                      Compare prices
+  order woolworths|coles <items...>       Add to cart
+  split <items...>                        Smart split across both
+  checkout woolworths|coles               Checkout — earliest delivery, leave at door
+
+  Add --checkout to any order/split command to auto-checkout after adding items.
   `);
   process.exit(0);
 }
@@ -389,19 +576,23 @@ const browser = await connectChrome();
 try {
   switch (command) {
     case 'compare':
-      await compareItems(browser, args);
+      await compareItems(browser, items);
       break;
-
     case 'order': {
-      const store = args[0];
-      await orderItems(browser, store, args.slice(1));
+      const store = items[0];
+      await orderItems(browser, store, items.slice(1), doCheckout);
       break;
     }
-
     case 'split':
-      await smartSplit(browser, args);
+      await smartSplit(browser, items, doCheckout);
       break;
-
+    case 'checkout': {
+      const store = items[0];
+      const page = await getPage(browser, store === 'coles' ? 'coles.com.au' : 'woolworths.com.au');
+      if (store === 'coles') await checkoutColes(page);
+      else await checkoutWoolworths(page);
+      break;
+    }
     default:
       console.log(`Unknown: ${command}`);
   }
