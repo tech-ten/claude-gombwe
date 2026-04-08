@@ -7,6 +7,7 @@ export interface GombweConfig {
     defaultModel?: string;
     maxConcurrent: number;
     workingDir: string;
+    mcpConfigs?: string[];
   };
   channels: {
     telegram?: { botToken: string };

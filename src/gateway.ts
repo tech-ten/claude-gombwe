@@ -34,6 +34,23 @@ export class Gateway {
 
   constructor(config: GombweConfig) {
     this.config = config;
+
+    // Auto-register MCP servers for the agent
+    const familyMcpConfig = JSON.stringify({
+      mcpServers: {
+        'gombwe-family': {
+          command: 'node',
+          args: [join(__dirname, 'mcp', 'family.js')],
+          env: {
+            GOMBWE_DATA_DIR: config.dataDir,
+            GOMBWE_PORT: String(config.port),
+          },
+        },
+      },
+    });
+    if (!config.agents.mcpConfigs) config.agents.mcpConfigs = [];
+    config.agents.mcpConfigs.push(familyMcpConfig);
+
     this.app = express();
     this.app.use(express.json());
     this.server = createServer(this.app);
@@ -215,6 +232,13 @@ export class Gateway {
         if (handled) return;
       }
 
+      // --- Natural language family intent detection ---
+      const familyIntent = this.detectFamilyIntent(trimmedText);
+      if (familyIntent) {
+        const handled = await this.handleCommand(familyIntent.cmd, familyIntent.args, msg, channel);
+        if (handled) return;
+      }
+
       // --- Task mode (if session is set to task mode) ---
       if (session.mode === 'task') {
         const skillsPrompt = this.skills.buildSkillsPrompt();
@@ -226,14 +250,11 @@ export class Gateway {
       // --- Chat mode (default): conversational with --resume ---
       const claudeSessionId = this.sessions.getClaudeSessionId(msg.sessionKey);
 
-      // Inject family + skills context on the first message of a conversation
-      // so Claude can handle natural language family requests
+      // Skills context for first message only (MCP handles family tools natively)
       let chatMessage = msg.text;
       if (!claudeSessionId) {
-        const familyCtx = this.buildFamilyContext();
         const skillsCtx = this.skills.buildSkillsPrompt();
-        const context = [familyCtx, skillsCtx].filter(Boolean).join('\n\n---\n\n');
-        chatMessage = `${context}\n\n---\n\nUser message: ${msg.text}`;
+        if (skillsCtx) chatMessage = `${skillsCtx}\n\n---\n\nUser message: ${msg.text}`;
       }
 
       const result = await this.agent.chat(
@@ -510,7 +531,7 @@ export class Gateway {
         const dayLabel = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(dk + 'T00:00:00').getDay()];
         await reply(`Got it — **${mealSlot}** ${dayLabel}: ${mealName}`);
 
-        // Extract ingredients
+        // Extract ingredients and add to grocery list
         try {
           const ingRes = await fetch(`http://127.0.0.1:${this.config.port}/api/family/ingredients`, {
             method: 'POST',
@@ -519,6 +540,17 @@ export class Gateway {
           });
           const ingData = await ingRes.json();
           if (ingData.ingredients?.length > 0) {
+            // Re-read family data (may have changed) and add ingredients
+            const updated = this.loadFamilyData();
+            if (!updated.groceryList) updated.groceryList = [];
+            for (const name of ingData.ingredients) {
+              const exists = updated.groceryList.some((i: any) => i.name.toLowerCase() === name.toLowerCase());
+              if (!exists) {
+                updated.groceryList.push({ name, checked: false, source: 'auto', meals: [mealName.toLowerCase()] });
+              }
+            }
+            this.logFamilyAction(updated, 'gombwe', 'ingredients added', `${ingData.ingredients.length} items for ${mealName}`);
+            this.saveFamilyData(updated);
             await reply(`Added to shopping list: ${ingData.ingredients.join(', ')}`);
           }
         } catch {}
@@ -690,14 +722,29 @@ export class Gateway {
     return nonFoodKeywords.some(kw => name.includes(kw) || kw.includes(name));
   }
 
+  private detectFamilyIntent(text: string): { cmd: string; args: string[] } | null {
+    const lower = text.toLowerCase().trim();
+    const words = lower.split(/\s+/);
+
+    // --- Meal intent (without slash prefix) ---
+    // "dinner sat butter chicken", "breakfast tomorrow pancakes"
+    const mealSlots = ['breakfast', 'lunch', 'dinner'];
+    if (mealSlots.includes(words[0]) && words.length >= 3) {
+      return { cmd: words[0], args: words.slice(1) };
+    }
+
+    return null;
+  }
+
   private resolveDay(input: string): string | null {
     const now = new Date();
-    const lower = input.toLowerCase();
+    const lower = input.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
-    if (lower === 'today') {
+    // Common aliases
+    if (lower === 'today' || lower === 'tdy' || lower === 'tonite' || lower === 'tonight') {
       return now.toISOString().slice(0, 10);
     }
-    if (lower === 'tomorrow') {
+    if (lower === 'tomorrow' || lower === 'tmrw' || lower === 'tmr' || lower === 'tomoz' || lower === 'tomo') {
       const d = new Date(now);
       d.setDate(d.getDate() + 1);
       return d.toISOString().slice(0, 10);
@@ -706,61 +753,64 @@ export class Gateway {
     // YYYY-MM-DD passthrough
     if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
 
-    const dayMap: Record<string, number> = {
-      sun: 0, sunday: 0,
-      mon: 1, monday: 1,
-      tue: 2, tuesday: 2,
-      wed: 3, wednesday: 3,
-      thu: 4, thursday: 4,
-      fri: 5, friday: 5,
-      sat: 6, saturday: 6,
-    };
+    // Canonical day names with all common abbreviations
+    const days: [number, string[]][] = [
+      [0, ['sun', 'sunday', 'su']],
+      [1, ['mon', 'monday', 'mo']],
+      [2, ['tue', 'tuesday', 'tu', 'tues']],
+      [3, ['wed', 'wednesday', 'we', 'weds']],
+      [4, ['thu', 'thursday', 'th', 'thur', 'thurs']],
+      [5, ['fri', 'friday', 'fr']],
+      [6, ['sat', 'saturday', 'sa']],
+    ];
 
-    const target = dayMap[lower];
-    if (target === undefined) return null;
+    // Exact match first
+    for (const [num, aliases] of days) {
+      if (aliases.includes(lower)) return this.dayOffset(now, num);
+    }
 
+    // Prefix match — "satur", "wednes", "thurs" etc
+    const fullNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    for (let i = 0; i < fullNames.length; i++) {
+      if (lower.length >= 2 && fullNames[i].startsWith(lower)) return this.dayOffset(now, i);
+    }
+
+    // Fuzzy match — handle typos like "satruday", "wendsday", "thursdya", "frieday"
+    let bestMatch = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < fullNames.length; i++) {
+      const d = this.levenshtein(lower, fullNames[i]);
+      if (d < bestDist) { bestDist = d; bestMatch = i; }
+    }
+    // Accept if edit distance is at most 2 (or 3 for longer words)
+    const maxDist = lower.length >= 7 ? 3 : 2;
+    if (bestDist <= maxDist) return this.dayOffset(now, bestMatch);
+
+    return null;
+  }
+
+  private dayOffset(now: Date, targetDay: number): string {
     const current = now.getDay();
-    let diff = target - current;
-    if (diff < 0) diff += 7; // next occurrence
-    // diff === 0 means today — that's fine, resolve to today
-
+    let diff = targetDay - current;
+    if (diff < 0) diff += 7;
     const d = new Date(now);
     d.setDate(d.getDate() + diff);
     return d.toISOString().slice(0, 10);
   }
 
-  private buildFamilyContext(): string {
-    const family = this.loadFamilyData();
-    const mealDays = Object.entries(family.meals || {})
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, slots]: [string, any]) => {
-        const dayName = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(date + 'T00:00:00').getDay()];
-        const meals = Object.entries(slots).map(([slot, name]) => `${slot}: ${name}`).join(', ');
-        return `${dayName} ${date}: ${meals}`;
-      }).join('\n');
-
-    const groceries = (family.groceryList || []).map((i: any) => i.name);
-    const nonFood = (family.nonFoodList || []).map((i: any) => i.name);
-    const pantry = (family.pantry || []).map((i: any) => typeof i === 'string' ? i : i.name);
-
-    return [
-      `You manage a family household. The family data is at ${this.familyFile}.`,
-      `When the user talks about meals, groceries, shopping, cooking, or ordering — act on it directly by reading/writing that JSON file.`,
-      ``,
-      `Current meals:\n${mealDays || '(none planned)'}`,
-      `Shopping list: ${groceries.length ? groceries.join(', ') : '(empty)'}`,
-      nonFood.length ? `Household items: ${nonFood.join(', ')}` : '',
-      pantry.length ? `In stock: ${pantry.join(', ')}` : '',
-      ``,
-      `Key rules:`,
-      `- To add a meal: set meals[YYYY-MM-DD][slot] = name (slot = breakfast/lunch/dinner)`,
-      `- To add groceries: push to groceryList[] with {name, checked: false}`,
-      `- Non-food items (cleaning, toiletries, etc): push to nonFoodList[]`,
-      `- After modifying, always add an action entry to actions[]`,
-      `- After adding a meal, call POST http://127.0.0.1:${this.config.port}/api/family/ingredients with {meal, pantry, existing} to auto-extract ingredients`,
-      `- To order: use the grocery-order skill`,
-      `- Keep responses conversational and brief`,
-    ].filter(Boolean).join('\n');
+  private levenshtein(a: string, b: string): number {
+    const m = a.length, n = b.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+      Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+    );
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+    return dp[m][n];
   }
 
   private logFamilyAction(data: any, actor: string, action: string, detail: string): void {

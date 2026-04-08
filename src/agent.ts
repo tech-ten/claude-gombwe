@@ -245,6 +245,10 @@ export class AgentRuntime extends EventEmitter {
         args.push('--model', this.config.agents.defaultModel);
       }
 
+      if (this.config.agents.mcpConfigs?.length) {
+        args.push('--mcp-config', ...this.config.agents.mcpConfigs);
+      }
+
       const proc = spawn('claude', args, {
         cwd: task.workingDir,
         env: { ...process.env },
@@ -362,6 +366,10 @@ export class AgentRuntime extends EventEmitter {
 
       if (this.config.agents.defaultModel) {
         args.push('--model', this.config.agents.defaultModel);
+      }
+
+      if (this.config.agents.mcpConfigs?.length) {
+        args.push('--mcp-config', ...this.config.agents.mcpConfigs);
       }
 
       const proc = spawn('claude', args, {

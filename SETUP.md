@@ -106,7 +106,24 @@ gombwe watch <name> --when --do Create event trigger
 gombwe triggers                 List triggers
 gombwe workflow <name>          Create workflow
 gombwe workflows                List workflows
+gombwe grocery-setup            One-time Woolworths & Coles login
+gombwe up                       Start everything (gateway + proxy + channels)
 ```
+
+### Family commands (in chat — Discord, Telegram, web)
+
+```
+/dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)
+/breakfast <day> <meal> Add breakfast
+/lunch <day> <meal>     Add lunch
+/list                   View shopping list
+/list milk, eggs        Add items to list
+/buy                    Order everything
+/buy hair remover       Order specific items
+/meals                  View weekly plan, grocery list, pantry
+```
+
+Or just say it naturally: "put butter chicken on Saturday dinner", "we need milk and eggs".
 
 ## How It Works
 
@@ -119,6 +136,7 @@ You (Terminal / Discord / Telegram / Web / Cron / Triggers)
 │  ├─ Web dashboard                        │
 │  ├─ Agent runtime (completion loop)      │
 │  ├─ Channel adapters                     │
+│  ├─ Family commands (/dinner, /list, /buy)│
 │  ├─ Skill system + native tools          │
 │  ├─ Cron scheduler                       │
 │  ├─ Event trigger engine                 │
@@ -128,5 +146,6 @@ You (Terminal / Discord / Telegram / Web / Cron / Triggers)
                    │
                    ▼
              claude -p / claude --resume
+             + --mcp-config (gombwe-family)
              (your Max subscription)
 ```

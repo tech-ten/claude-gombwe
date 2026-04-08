@@ -79,7 +79,7 @@ You will see:
 
   Setup complete! Your login is saved.
   Next time, just run: gombwe grocery
-  Or from Discord: /grocery-order milk, eggs, bread
+  Or from Discord: /buy milk, eggs, bread
 ```
 
 If it says "not logged in" for either store, go back to Chrome and make sure you're fully logged in, then run `gombwe grocery-setup` again.
@@ -199,17 +199,25 @@ The smart split compares every item, assigns each to the cheaper store, then che
 Type in any Discord channel where gombwe is active:
 
 ```
-/grocery-order milk 2L, eggs 12 pack, bread, Masterfoods BBQ Sauce, chicken breast
+/buy                              Order everything on the shopping list
+/buy milk, eggs, bread            Add specific items and order them
+/list milk, eggs, bread           Add items to the list (order later)
 ```
 
-Gombwe will search both stores, compare prices, add items to your cart, and send you the results in Discord.
+Or use natural language: "order the groceries", "buy some milk and eggs"
+
+The `/grocery-order` skill is still available for direct invocation:
+
+```
+/grocery-order milk 2L, eggs 12 pack, bread, chicken breast
+```
 
 ### From the gombwe terminal
 
 If you're running `gombwe start` interactively:
 
 ```
-gombwe> /grocery-order milk, eggs, bread, chicken
+gombwe> /buy milk, eggs, bread, chicken
 ```
 
 ---
