@@ -700,6 +700,8 @@ body {
 
 .btn-ghost:hover { background: var(--bg); color: var(--text); }
 
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
 /* ── List Items (Skills, Jobs, Services) ──────────────────── */
 
 .skill-item, .cron-item, .service-item {
@@ -881,226 +883,343 @@ body {
 }
 
 /* ── Family Page ──────────────────────────────────────────── */
+/* Warm editorial aesthetic — Cormorant Garamond headings, cream/terracotta palette */
 
-.family-page { max-width: 960px; }
+.family-page {
+  --cream: #F7F3ED;
+  --parchment: #EDE8DF;
+  --ink: #2C2418;
+  --ink-light: #6B5D4D;
+  --terracotta: #C4704B;
+  --terracotta-light: #E8956E;
+  --olive: #7A8B5C;
+  --olive-dark: #5C6B42;
+  --sage: #B5C4A0;
+  --warm-white: #FDFCF9;
+  --warm-border: #E4DDD3;
+  --warm-shadow: rgba(44, 36, 24, 0.06);
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --family-radius: 10px;
 
-.family-section { margin-bottom: 28px; }
+  max-width: 900px;
+}
+
+.family-page .page-header { margin-bottom: 24px; }
+
+.family-page .page-title {
+  font-family: var(--serif);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+.family-page .page-desc {
+  color: var(--ink-light);
+  font-size: 13px;
+}
+
+.family-section {
+  margin-bottom: 32px;
+}
 
 .family-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .family-section-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
   letter-spacing: -0.01em;
 }
 
-.btn-sm { padding: 4px 10px; font-size: 11px; }
+.family-page .btn-sm {
+  padding: 5px 12px;
+  font-size: 11px;
+  border-radius: 20px;
+}
 
-/* Week Calendar Grid */
-.week-grid {
+.family-page .btn-ghost.btn-sm {
+  border-color: var(--warm-border);
+  color: var(--ink-light);
+}
+
+.family-page .btn-ghost.btn-sm:hover {
+  border-color: var(--terracotta);
+  color: var(--terracotta);
+  background: rgba(196, 112, 75, 0.06);
+}
+
+.family-page .btn-primary {
+  background: var(--terracotta);
+  color: white;
+  border-radius: 20px;
+}
+
+.family-page .btn-primary:hover {
+  background: var(--terracotta-light);
+  opacity: 1;
+}
+
+/* ── Week Calendar Grid ──────────────────────────────────── */
+
+.family-page .week-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
 }
 
-.week-day {
-  background: var(--surface);
-  padding: 10px;
-  min-height: 100px;
+.family-page .week-day {
+  background: var(--warm-white);
+  border: 1px solid var(--warm-border);
+  border-radius: var(--family-radius);
+  padding: 12px;
+  min-height: 130px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px var(--warm-shadow);
 }
 
-.week-day.today { background: var(--accent-bg); }
-
-.week-day-label {
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-3);
-  margin-bottom: 2px;
+.family-page .week-day:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(44, 36, 24, 0.08);
 }
 
-.week-day-num {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text);
-  margin-bottom: 6px;
+.family-page .week-day.today {
+  background: var(--warm-white);
+  border-color: var(--terracotta);
 }
 
-.week-day.today .week-day-num { color: var(--accent); }
-
-.week-event {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  margin-bottom: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
+.family-page .week-day.today .week-day-header {
+  background: var(--terracotta);
+  margin: -12px -12px 8px;
+  padding: 8px 12px;
+  border-radius: var(--family-radius) var(--family-radius) 0 0;
 }
 
-.week-event.meal { background: var(--green-bg); color: #15803d; }
-.week-event.school { background: var(--amber-bg); color: #a16207; }
-.week-event.general { background: var(--accent-bg); color: var(--accent); }
-
-.week-nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-2);
+.family-page .week-day.today .week-day-label,
+.family-page .week-day.today .week-day-num {
+  color: white;
 }
 
-/* Week day inner layout */
-.week-day-header {
+.family-page .week-day-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
-.week-day-meals {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 4px;
-}
-
-.week-day-events {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.meal-slot {
-  font-size: 11px;
-  color: var(--text-2);
-  margin-bottom: 3px;
-  cursor: pointer;
-  padding: 2px 0;
-  transition: color var(--transition);
-}
-
-.meal-slot:hover { color: var(--text); }
-
-.meal-slot-label {
+.family-page .week-day-label {
   font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-4);
+  letter-spacing: 0.1em;
+  color: var(--ink-light);
 }
 
-.meal-slot-name { color: var(--text); }
-.meal-slot.empty .meal-slot-name { color: var(--text-4); font-style: italic; }
+.family-page .week-day-num {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1;
+}
 
-/* Grocery List */
-.grocery-item {
+.family-page .week-day.today .week-day-num { color: white; }
+
+.family-page .week-nav {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-light);
 }
 
-.grocery-item:last-child { border-bottom: none; }
+.family-page .week-nav .btn-ghost {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-color: var(--warm-border);
+  color: var(--ink-light);
+}
 
-.grocery-check {
+.family-page .week-nav .btn-ghost:hover {
+  border-color: var(--terracotta);
+  color: var(--terracotta);
+  background: rgba(196, 112, 75, 0.06);
+}
+
+.family-page .week-day-meals {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.family-page .week-day-events {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* ── Meal Slots ──────────────────────────────────────────── */
+
+.family-page .meal-slot {
+  font-size: 11.5px;
+  color: var(--ink-light);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+  margin-bottom: 0;
+}
+
+.family-page .meal-slot:hover {
+  background: rgba(196, 112, 75, 0.06);
+  color: var(--ink);
+}
+
+/* Colour bars per slot type */
+.family-page .meal-slot[data-slot="breakfast"] { border-left-color: var(--terracotta-light); }
+.family-page .meal-slot[data-slot="lunch"] { border-left-color: var(--olive); }
+.family-page .meal-slot[data-slot="dinner"] { border-left-color: var(--terracotta); }
+
+.family-page .meal-slot-label {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-right: 4px;
+}
+
+.family-page .meal-slot[data-slot="breakfast"] .meal-slot-label { color: var(--terracotta-light); }
+.family-page .meal-slot[data-slot="lunch"] .meal-slot-label { color: var(--olive); }
+.family-page .meal-slot[data-slot="dinner"] .meal-slot-label { color: var(--terracotta); }
+
+.family-page .meal-slot-name {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.family-page .meal-slot.empty .meal-slot-name {
+  color: var(--ink-light);
+  font-style: italic;
+  font-weight: 400;
+  opacity: 0.5;
+}
+
+/* Status colours */
+.family-page .meal-slot.on-list .meal-slot-name { color: #a16207; }
+.family-page .meal-slot.unresolved .meal-slot-name { color: var(--red); }
+
+.family-page .week-event {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-bottom: 0;
+}
+
+.family-page .week-event.school { background: rgba(196, 112, 75, 0.1); color: var(--terracotta); }
+.family-page .week-event.general { background: rgba(122, 139, 92, 0.1); color: var(--olive-dark); }
+
+/* ── Grocery / Non-food / Pantry cards ───────────────────── */
+
+.family-page .card {
+  background: var(--warm-white);
+  border: 1px solid var(--warm-border);
+  border-radius: var(--family-radius);
+  box-shadow: 0 1px 3px var(--warm-shadow);
+}
+
+.family-page .grocery-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--parchment);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.family-page .grocery-check {
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-4);
+  min-width: 16px;
+  border: 2px solid var(--ink-light);
+  border-radius: 3px;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all var(--transition);
+  position: relative;
 }
 
-.grocery-check:hover { border-color: var(--accent); }
-.grocery-item.checked .grocery-check { background: var(--green); border-color: var(--green); }
-.grocery-item.checked .grocery-name { text-decoration: line-through; color: var(--text-3); }
-
-.grocery-name { flex: 1; }
-
-.grocery-remove {
-  font-size: 11px;
-  color: var(--text-4);
-  background: none;
-  border: none;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--transition);
+.family-page .grocery-check:hover { border-color: var(--terracotta); }
+.family-page .grocery-item.checked .grocery-check {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
 }
-
-.grocery-item:hover .grocery-remove { opacity: 1; }
-.grocery-remove:hover { color: var(--red); }
-
-.grocery-add {
-  margin-top: 8px;
+.family-page .grocery-item.checked .grocery-check::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 5px;
+  height: 9px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
+.family-page .grocery-name { flex: 1; color: var(--ink); }
 
-.grocery-add form {
-  display: flex;
-  gap: 6px;
-}
+.family-page .grocery-remove:hover { color: #c0392b; }
 
-.grocery-add input {
-  flex: 1;
-  font-family: var(--font);
+.family-page .grocery-add input {
+  border-color: var(--warm-border);
+  border-radius: 8px;
+  background: var(--warm-white);
   font-size: 13px;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  outline: none;
-  transition: border-color var(--transition);
+  padding: 8px 14px;
 }
 
-.grocery-add input:focus { border-color: var(--accent); }
+.family-page .grocery-add input:focus { border-color: var(--terracotta); }
 
-/* School Events */
-.school-event {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
+.family-page .grocery-source {
+  border-radius: 12px;
+  padding: 2px 8px;
+}
+
+.family-page .grocery-source.from-auto { color: var(--terracotta); background: rgba(196, 112, 75, 0.08); }
+.family-page .grocery-source.from-human { color: var(--olive-dark); background: rgba(122, 139, 92, 0.1); }
+
+.family-page .pantry-item {
+  border-bottom-color: var(--parchment);
+  padding: 10px 16px;
+}
+
+.family-page .pantry-remove:hover { color: #c0392b; }
+
+.family-page .empty-list {
+  color: var(--ink-light);
   font-size: 13px;
-}
-
-.school-event:last-child { border-bottom: none; }
-
-.school-event-info { flex: 1; }
-
-.school-event-title { font-weight: 500; color: var(--text); }
-
-.school-event-meta {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 1px;
-}
-
-.school-event-date {
-  font-size: 11px;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.empty-list {
-  padding: 20px 14px;
-  font-size: 12px;
-  color: var(--text-4);
-  text-align: center;
+  padding: 24px 16px;
 }
 
 .family-section-actions {
@@ -1111,135 +1230,102 @@ body {
 
 .order-status {
   font-size: 11px;
-  color: var(--green);
+  color: var(--olive-dark);
   font-weight: 500;
 }
 
-/* Meal ingredient status */
-/* Amber: ingredients on grocery list, will be bought */
-.week-event.meal.on-list { background: var(--amber-bg); color: #a16207; }
-.meal-slot.on-list .meal-slot-name { color: #a16207; }
-/* Red: missing — should not appear if auto-extraction works, safety net */
-.week-event.meal.unresolved { background: var(--red-bg); color: var(--red); }
-.meal-slot.unresolved .meal-slot-name { color: var(--red); }
+/* ── School Events ───────────────────────────────────────── */
 
-/* Pantry items */
-.pantry-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-light);
-  font-size: 13px;
+.family-page .school-event {
+  padding: 12px 16px;
+  border-bottom-color: var(--parchment);
 }
 
-.pantry-item:last-child { border-bottom: none; }
-
-.pantry-remove {
-  font-size: 11px;
-  color: var(--text-4);
-  background: none;
-  border: none;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--transition);
+.family-page .school-event-title {
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.pantry-item:hover .pantry-remove { opacity: 1; }
-.pantry-remove:hover { color: var(--red); }
+.family-page .school-event-meta { color: var(--ink-light); }
+.family-page .school-event-date { color: var(--terracotta); font-weight: 500; }
 
-/* Grocery source tag */
-.grocery-source {
-  font-size: 10px;
-  color: var(--text-4);
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--bg);
-  margin-left: 4px;
-}
+/* ── Recipes ─────────────────────────────────────────────── */
 
-.grocery-source.from-meal { color: var(--green); background: var(--green-bg); }
-.grocery-source.from-auto { color: var(--accent); background: var(--accent-bg); font-style: italic; }
-.grocery-source.from-human { color: var(--green); background: var(--green-bg); font-weight: 500; }
-
-/* Recipes */
 .recipe-hint {
   font-size: 11px;
-  color: var(--text-4);
+  color: var(--ink-light);
   font-style: italic;
 }
 
-.recipe-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 8px;
-  box-shadow: var(--shadow);
+.family-page .recipe-card {
+  background: var(--warm-white);
+  border: 1px solid var(--warm-border);
+  border-radius: var(--family-radius);
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px var(--warm-shadow);
+  transition: box-shadow 0.2s;
 }
 
-.recipe-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  transition: background var(--transition);
+.family-page .recipe-card:hover {
+  box-shadow: 0 4px 16px rgba(44, 36, 24, 0.08);
 }
 
-.recipe-header:hover { background: var(--bg); }
-
-.recipe-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
+.family-page .recipe-header {
+  padding: 12px 16px;
 }
 
-.recipe-count {
+.family-page .recipe-header:hover { background: var(--cream); }
+
+.family-page .recipe-name {
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.family-page .recipe-count {
+  color: var(--ink-light);
   font-size: 11px;
-  color: var(--text-4);
 }
 
-.recipe-body {
-  border-top: 1px solid var(--border-light);
-  padding: 8px 0;
+.family-page .recipe-body {
+  border-top-color: var(--parchment);
 }
 
 .recipe-body.collapsed { display: none; }
 
-.recipe-ingredient {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 14px;
-  font-size: 12.5px;
-  transition: background var(--transition);
+.family-page .recipe-ingredient {
+  padding: 6px 16px;
 }
 
-.recipe-ingredient:hover { background: var(--bg); }
+.family-page .recipe-ingredient:hover { background: var(--cream); }
 
-.recipe-ingredient-name {
+.family-page .recipe-ingredient-name {
   flex: 1;
   cursor: pointer;
   padding: 2px 0;
+  color: var(--ink);
 }
 
-.recipe-ingredient-name:hover { color: var(--accent); }
+.family-page .recipe-ingredient-name:hover { color: var(--terracotta); }
 
 .recipe-ingredient-tag {
   font-size: 9px;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 2px 7px;
+  border-radius: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-weight: 500;
+  font-weight: 600;
 }
 
-.recipe-ingredient-tag.auto { color: var(--text-4); background: var(--bg); }
-.recipe-ingredient-tag.human { color: var(--accent); background: var(--accent-bg); }
+.recipe-ingredient-tag.auto { color: var(--ink-light); background: var(--parchment); }
+.recipe-ingredient-tag.human { color: var(--terracotta); background: rgba(196, 112, 75, 0.1); }
 
 .recipe-ingredient-remove {
   font-size: 10px;
-  color: var(--text-4);
+  color: var(--ink-light);
   background: none;
   border: none;
   cursor: pointer;
@@ -1247,71 +1333,62 @@ body {
   transition: opacity var(--transition);
 }
 
-.recipe-ingredient:hover .recipe-ingredient-remove { opacity: 1; }
-.recipe-ingredient-remove:hover { color: var(--red); }
+.family-page .recipe-ingredient:hover .recipe-ingredient-remove { opacity: 1; }
+.recipe-ingredient-remove:hover { color: #c0392b; }
 
-.recipe-add-form {
-  display: flex;
-  gap: 6px;
-  padding: 6px 14px 10px;
-  border-top: 1px solid var(--border-light);
+.family-page .recipe-add-form {
+  border-top-color: var(--parchment);
+  padding: 8px 16px 12px;
 }
 
-.recipe-add-form input {
-  flex: 1;
-  font-family: var(--font);
-  font-size: 12px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  outline: none;
+.family-page .recipe-add-form input {
+  border-color: var(--warm-border);
+  border-radius: 8px;
+  background: var(--cream);
 }
 
-.recipe-add-form input:focus { border-color: var(--accent); }
+.family-page .recipe-add-form input:focus { border-color: var(--terracotta); }
 
-.recipe-instructions {
-  padding: 8px 14px 10px;
-  border-top: 1px solid var(--border-light);
-  font-size: 12px;
-  color: var(--text-3);
-  line-height: 1.6;
+.family-page .recipe-instructions {
+  border-top-color: var(--parchment);
+  color: var(--ink-light);
+  padding: 10px 16px 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 
-/* Action Log */
-.action-item {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-light);
-  font-size: 12px;
-}
+/* ── Action Log ──────────────────────────────────────────── */
 
-.action-item:last-child { border-bottom: none; }
+.family-page .action-item {
+  padding: 10px 16px;
+  border-bottom-color: var(--parchment);
+  font-size: 12.5px;
+}
 
 .action-actor {
-  font-weight: 500;
+  font-weight: 600;
   font-size: 11px;
   min-width: 60px;
   flex-shrink: 0;
 }
 
-.action-actor.human { color: var(--text-2); }
-.action-actor.ai { color: var(--accent); }
+.action-actor.human { color: var(--ink-light); }
+.action-actor.ai { color: var(--terracotta); }
 
 .action-body { flex: 1; }
 
 .action-type {
   font-weight: 500;
-  color: var(--text);
+  color: var(--ink);
   margin-right: 6px;
 }
 
-.action-detail { color: var(--text-2); }
+.action-detail { color: var(--ink-light); }
 
 .action-time {
   font-size: 10px;
-  color: var(--text-4);
+  color: var(--ink-light);
+  opacity: 0.6;
   white-space: nowrap;
 }
 

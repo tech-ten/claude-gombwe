@@ -8,7 +8,7 @@ import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter } from './t
 import { saveConfig } from './config.js';
 import { AgentRuntime } from './agent.js';
 import { SessionManager } from './session.js';
-import { SkillLoader } from './skills.js';
+import { SkillLoader, executeSkillTool } from './skills.js';
 import { Scheduler } from './scheduler.js';
 import { TriggerEngine } from './triggers.js';
 import { WorkflowEngine } from './workflows.js';
@@ -113,9 +113,9 @@ export class Gateway {
                 const family = JSON.parse(readFileSync(familyPath, 'utf-8'));
                 if (!family.pantry) family.pantry = [];
                 if (!family.actions) family.actions = [];
-                const groceryItems = (family.groceryList || []).filter((i: any) => !i.checked).map((i: any) => i.name);
-                const nonFoodItems = (family.nonFoodList || []).filter((i: any) => !i.checked).map((i: any) => i.name);
-                // Move grocery items to pantry
+                const groceryItems = (family.groceryList || []).map((i: any) => i.name);
+                const nonFoodItems = (family.nonFoodList || []).map((i: any) => i.name);
+                // Server-side order: move all items to pantry (no checkbox selection from cron/discord)
                 for (const name of groceryItems) {
                   if (!family.pantry.some((p: string) => p.toLowerCase() === name.toLowerCase())) {
                     family.pantry.push(name);
@@ -463,6 +463,22 @@ export class Gateway {
         // Check skills
         const skill = this.skills.getSkill(cmd);
         if (skill) {
+          // Direct skills: execute tool immediately, skip Claude entirely
+          if (skill.direct && skill.tools && skill.tools.length > 0) {
+            const arg = args.join(' ').trim().toLowerCase();
+            // Find matching tool by name, or default to first tool
+            const tool = (arg && skill.tools.find(t => t.name.includes(arg))) || skill.tools[0];
+            const skillDir = dirname(skill.path);
+            const output = await executeSkillTool(tool, skillDir);
+            await reply(output);
+            this.sessions.addEntry(msg.sessionKey, {
+              role: 'assistant',
+              content: output,
+              timestamp: new Date().toISOString(),
+              channel: msg.channel,
+            });
+            return true;
+          }
           const prompt = `${skill.instructions}\n\nUser request: ${args.join(' ')}`;
           await this.agent.runTask(prompt, msg.channel, msg.sessionKey);
           return true;

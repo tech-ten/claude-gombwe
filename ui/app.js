@@ -1134,17 +1134,16 @@ document.getElementById('pantryAddForm')?.addEventListener('submit', (e) => {
   input.value = '';
 });
 
-// Order Now — sends to chat AND marks this week as ordered (skips cron job)
+// Order Now — orders CHECKED items only, moves them to pantry
 document.getElementById('orderGroceriesBtn')?.addEventListener('click', async () => {
-  const groceries = (familyData.groceryList || []).filter(i => !i.checked).map(i => i.name);
-  const nonFood = (familyData.nonFoodList || []).filter(i => !i.checked).map(i => i.name);
+  const groceries = (familyData.groceryList || []).filter(i => i.checked).map(i => i.name);
+  const nonFood = (familyData.nonFoodList || []).filter(i => i.checked).map(i => i.name);
   const all = [...groceries, ...nonFood];
-  if (all.length === 0) { alert('No items to order.'); return; }
+  if (all.length === 0) { alert('No items selected. Tick the items you want to order.'); return; }
 
   const summary = `Groceries (${groceries.length}):\n${groceries.join(', ')}\n\nHousehold (${nonFood.length}):\n${nonFood.join(', ')}`;
-  if (!confirm(`Order ${all.length} items via Gombwe?\n\n${summary}`)) return;
+  if (!confirm(`Order ${all.length} selected items via Gombwe?\n\n${summary}`)) return;
 
-  // Log and move ordered items to pantry
   logAction('user', 'order placed', `${all.length} items (${groceries.length} grocery, ${nonFood.length} household)`);
   if (!familyData.pantry) familyData.pantry = [];
   for (const name of groceries) {
@@ -1152,8 +1151,9 @@ document.getElementById('orderGroceriesBtn')?.addEventListener('click', async ()
       familyData.pantry.push(name);
     }
   }
-  familyData.groceryList = [];
-  familyData.nonFoodList = [];
+  // Remove ordered items, keep unchecked ones on the list
+  familyData.groceryList = (familyData.groceryList || []).filter(i => !i.checked);
+  familyData.nonFoodList = (familyData.nonFoodList || []).filter(i => !i.checked);
   familyData.lastOrdered = new Date().toISOString();
   saveFamily();
   renderAll();
