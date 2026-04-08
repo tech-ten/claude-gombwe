@@ -142,6 +142,46 @@ async function woolworthsAddToCart(page, product) {
 }
 
 async function woolworthsClearCart(page) {
+  // Try API first — faster and more reliable than DOM clicking
+  const apiCleared = await page.evaluate(async () => {
+    try {
+      // Get current cart items
+      const cartRes = await fetch('https://www.woolworths.com.au/apis/ui/Cart/GetCart', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      const cart = await cartRes.json();
+      const items = cart?.Cart?.Items || cart?.Items || [];
+      if (items.length === 0) return 'empty';
+
+      // Remove each item via API
+      for (const item of items) {
+        const stockcode = item.Stockcode || item.ProductId;
+        if (!stockcode) continue;
+        await fetch('https://www.woolworths.com.au/apis/ui/Cart/Update', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ Stockcode: stockcode, Quantity: 0 }),
+        });
+      }
+      return 'cleared';
+    } catch (e) {
+      return 'error:' + e.message;
+    }
+  });
+
+  if (apiCleared === 'empty') {
+    console.log('  Cart already empty.');
+    return;
+  }
+  if (apiCleared === 'cleared') {
+    console.log('  Cart cleared via API.');
+    return;
+  }
+
+  // Fallback: DOM clicking (in case API changes)
+  console.log(`  API clear failed (${apiCleared}), falling back to DOM...`);
   await page.goto('https://www.woolworths.com.au/shop/cart', { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
 
@@ -163,7 +203,6 @@ async function woolworthsClearCart(page) {
             if (find(el.shadowRoot, depth + 1)) return true;
           }
         }
-        // Non-shadow buttons
         const buttons = root.querySelectorAll('button');
         for (const btn of buttons) {
           const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
@@ -332,14 +371,56 @@ async function woolworthsCheckoutAndPay(page) {
   });
 
   if (ordered) {
-    console.log(`  Order placed: ${ordered}`);
-    await wait(5000);
-  } else {
-    console.log('  Could not auto-place order. Check Chrome.');
-    console.log('  URL:', page.url());
-  }
+    console.log(`  Clicked: ${ordered}`);
+    console.log('  Waiting for order confirmation...');
 
-  return { total: cartTotal, ordered: !!ordered };
+    // Wait up to 30s for confirmation page or success indicator
+    let confirmed = false;
+    for (let i = 0; i < 15; i++) {
+      await wait(2000);
+      const status = await page.evaluate(() => {
+        const url = window.location.href.toLowerCase();
+        const text = document.body.innerText.toLowerCase();
+
+        // Check for confirmation signals
+        if (url.includes('confirmation') || url.includes('order-complete') || url.includes('thankyou')) return 'confirmed';
+        if (text.includes('order confirmed') || text.includes('order has been placed') ||
+            text.includes('thank you for your order') || text.includes('order number')) return 'confirmed';
+
+        // Check for errors / still waiting
+        if (text.includes('cvv') || text.includes('security code') || text.includes('card verification')) return 'waiting_cvv';
+        if (text.includes('payment failed') || text.includes('card declined') || text.includes('transaction failed')) return 'payment_failed';
+        if (text.includes('place order') || text.includes('confirm order')) return 'still_checkout';
+
+        return 'unknown';
+      });
+
+      if (status === 'confirmed') {
+        confirmed = true;
+        console.log('  ORDER CONFIRMED.');
+        break;
+      } else if (status === 'waiting_cvv') {
+        console.log('  BLOCKED: CVV input required. Enter CVV in Chrome and complete manually.');
+        break;
+      } else if (status === 'payment_failed') {
+        console.log('  FAILED: Payment was declined. Check your card in Chrome.');
+        break;
+      } else if (status === 'still_checkout') {
+        // Still on checkout page — button click may not have worked
+        if (i === 7) console.log('  Still on checkout page — may need manual intervention...');
+      }
+    }
+
+    if (!confirmed) {
+      console.log('  Order NOT confirmed. Check Chrome to complete.');
+    }
+
+    return { total: cartTotal, ordered: confirmed };
+  } else {
+    console.log('  Could not find Place Order button. Check Chrome.');
+    console.log('  URL:', page.url());
+    return { total: cartTotal, ordered: false };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -637,8 +718,31 @@ async function colesCheckoutAndPay(page) {
 // FULL BUY — the one function the skill calls
 // ═══════════════════════════════════════════════════════════
 
-async function buy(store, items) {
+async function checkoutOnly(store) {
   const browser = await connectChrome();
+  try {
+    const page = await getPage(browser, store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au');
+    const checkoutFn = store === 'woolworths' ? woolworthsCheckoutAndPay : colesCheckoutAndPay;
+    console.log(`\n  ── CHECKOUT ${store.toUpperCase()} ──\n`);
+    const result = await checkoutFn(page);
+    if (result.ordered) {
+      console.log(`\n  ORDER CONFIRMED`);
+      console.log(`  Delivery: ASAP`);
+      console.log(`  Instructions: ${DELIVERY_INSTRUCTIONS}`);
+      console.log(`\n  Groceries are on their way!\n`);
+    } else {
+      console.log(`\n  ORDER NOT COMPLETED`);
+      console.log(`  Open Chrome and complete checkout manually.\n`);
+    }
+  } finally {
+    browser.disconnect();
+  }
+}
+
+async function buy(store, items, skipCheckout = false) {
+  const browser = await connectChrome();
+
+  let priceComparison = null;
 
   try {
     if (store === 'auto') {
@@ -649,6 +753,7 @@ async function buy(store, items) {
       const cPage = await getPage(browser, 'coles.com.au');
 
       let wTotal = 0, cTotal = 0;
+      const rows = [];
       for (const item of items) {
         const wProducts = await woolworthsSearch(wPage, item);
         const cProducts = await colesSearch(cPage, item);
@@ -657,12 +762,16 @@ async function buy(store, items) {
         wTotal += wPrice === 999 ? 0 : wPrice;
         cTotal += cPrice === 999 ? 0 : cPrice;
         const best = wPrice <= cPrice ? 'W' : 'C';
+        rows.push({ item, wPrice, cPrice, best, wName: wProducts[0]?.name, cName: cProducts[0]?.name });
         console.log(`  ${item.padEnd(35)} W: $${wPrice === 999 ? '?' : wPrice.toFixed(2).padEnd(8)} C: $${cPrice === 999 ? '?' : cPrice.toFixed(2).padEnd(8)} ${best}`);
       }
 
       store = wTotal <= cTotal ? 'woolworths' : 'coles';
+      const savings = Math.abs(wTotal - cTotal);
+      priceComparison = { rows, wTotal, cTotal, chosen: store, savings };
+
       console.log(`\n  Woolworths: $${wTotal.toFixed(2)} | Coles: $${cTotal.toFixed(2)}`);
-      console.log(`  → Ordering from ${store}\n`);
+      console.log(`  → Ordering from ${store} (saving $${savings.toFixed(2)})\n`);
     }
 
     const page = await getPage(browser, store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au');
@@ -713,18 +822,56 @@ async function buy(store, items) {
       console.log('  Delivery fee may apply.\n');
     }
 
-    // 3. Checkout and pay
-    console.log('  ── CHECKOUT ──\n');
-    const result = await checkoutFn(page);
-
-    if (result.ordered) {
-      console.log(`\n  ORDER CONFIRMED`);
-      console.log(`  Store: ${store}`);
+    // 3. Checkout and pay (unless --no-checkout)
+    if (skipCheckout) {
+      console.log(`\n  ── CART READY ──`);
+      console.log(`  Store: ${store.toUpperCase()}`);
       console.log(`  Items: ${added}`);
-      console.log(`  Total: $${result.total || total.toFixed(2)}`);
-      console.log(`  Delivery: ASAP`);
-      console.log(`  Instructions: ${DELIVERY_INSTRUCTIONS}`);
-      console.log(`\n  Groceries are on their way!\n`);
+      console.log(`  Estimated total: $${total.toFixed(2)}`);
+
+      if (priceComparison) {
+        console.log(`\n  ── PRICE COMPARISON ──`);
+        console.log(`  ${'Item'.padEnd(30)} ${'Woolworths'.padEnd(12)} ${'Coles'.padEnd(12)} Best`);
+        console.log(`  ${'─'.repeat(66)}`);
+        for (const row of priceComparison.rows) {
+          const wStr = row.wPrice === 999 ? 'N/A' : `$${row.wPrice.toFixed(2)}`;
+          const cStr = row.cPrice === 999 ? 'N/A' : `$${row.cPrice.toFixed(2)}`;
+          const bestLabel = row.best === 'W' ? 'Woolworths' : 'Coles';
+          console.log(`  ${row.item.padEnd(30)} ${wStr.padEnd(12)} ${cStr.padEnd(12)} ${bestLabel}`);
+        }
+        console.log(`  ${'─'.repeat(66)}`);
+        console.log(`  ${'TOTAL'.padEnd(30)} $${priceComparison.wTotal.toFixed(2).padEnd(11)} $${priceComparison.cTotal.toFixed(2).padEnd(11)}`);
+        console.log(`\n  Decision: ${priceComparison.chosen.toUpperCase()} — saving $${priceComparison.savings.toFixed(2)}`);
+      }
+
+      console.log(`\n  Confirm order? Reply "yes" to place the order, "no" to cancel.\n`);
+
+      // Save pending order state
+      const { writeFileSync } = await import('fs');
+      const { join } = await import('path');
+      const { homedir } = await import('os');
+      writeFileSync(
+        join(homedir(), '.claude-gombwe', 'data', 'pending-order.json'),
+        JSON.stringify({ store, items: added, total, priceComparison, timestamp: new Date().toISOString() }, null, 2)
+      );
+    } else {
+      console.log('  ── CHECKOUT ──\n');
+      const result = await checkoutFn(page);
+
+      if (result.ordered) {
+        console.log(`\n  ORDER CONFIRMED`);
+        console.log(`  Store: ${store}`);
+        console.log(`  Items: ${added}`);
+        console.log(`  Total: $${result.total || total.toFixed(2)}`);
+        console.log(`  Delivery: ASAP`);
+        console.log(`  Instructions: ${DELIVERY_INSTRUCTIONS}`);
+        console.log(`\n  Groceries are on their way!\n`);
+      } else {
+        console.log(`\n  ORDER NOT COMPLETED`);
+        console.log(`  Items are in your ${store} cart (${added} items, ~$${total.toFixed(2)})`);
+        console.log(`  Open Chrome and complete checkout manually.`);
+        console.log(`  Common reasons: CVV required, payment issue, delivery slot needed.\n`);
+      }
     }
 
   } finally {
@@ -736,26 +883,35 @@ async function buy(store, items) {
 // MAIN
 // ═══════════════════════════════════════════════════════════
 
-const [store, ...items] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const noCheckout = args.includes('--no-checkout');
+const checkoutOnlyFlag = args.includes('--checkout-only');
+const filtered = args.filter(a => !a.startsWith('--'));
+const [store, ...items] = filtered;
 
-if (!store || items.length === 0) {
+if (checkoutOnlyFlag && store) {
+  checkoutOnly(store).catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+} else if (!store || items.length === 0) {
   console.log(`
   grocery-buy — Delivered groceries, zero clicks.
 
   Usage:
-    node grocery-buy.mjs auto "milk 2L" "eggs" "bread"     Compare & buy cheapest
-    node grocery-buy.mjs woolworths "milk 2L" "eggs"        Buy from Woolworths
-    node grocery-buy.mjs coles "milk 2L" "eggs"             Buy from Coles
+    node grocery-buy.mjs auto "milk 2L" "eggs" "bread"                Add to cart + checkout
+    node grocery-buy.mjs auto "milk 2L" "eggs" --no-checkout           Add to cart, wait for confirmation
+    node grocery-buy.mjs --checkout-only woolworths                    Checkout existing cart
+    node grocery-buy.mjs woolworths "milk 2L" "eggs"                   Buy from Woolworths
+    node grocery-buy.mjs coles "milk 2L" "eggs"                        Buy from Coles
   `);
   process.exit(0);
-}
-
-if (!['auto', 'woolworths', 'coles'].includes(store)) {
+} else if (!['auto', 'woolworths', 'coles'].includes(store)) {
   console.error(`Unknown store: ${store}. Use: auto, woolworths, or coles`);
   process.exit(1);
+} else {
+  buy(store, items, noCheckout).catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
 }
-
-buy(store, items).catch(err => {
-  console.error('Error:', err.message);
-  process.exit(1);
-});
