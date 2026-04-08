@@ -15,6 +15,7 @@ import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
+import { findChrome, detachedSpawnOptions } from './platform.mjs';
 
 const PORT = 19222;
 const CHROME_URL = `http://127.0.0.1:${PORT}`;
@@ -29,12 +30,7 @@ async function connectChrome() {
 
   console.log('  Starting Chrome with saved profile...');
 
-  const chromePaths = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ];
-
-  let chromePath = chromePaths.find(p => existsSync(p));
+  const chromePath = findChrome();
   if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
   if (!existsSync(PROFILE_DIR)) { console.error('Run gombwe grocery-setup first.'); process.exit(1); }
 
@@ -44,7 +40,7 @@ async function connectChrome() {
     '--no-first-run', '--no-default-browser-check',
     'https://www.woolworths.com.au',
     'https://www.coles.com.au',
-  ], { detached: true, stdio: 'ignore' });
+  ], detachedSpawnOptions());
   chrome.unref();
 
   for (let i = 0; i < 15; i++) {

@@ -20,12 +20,11 @@
  */
 
 import puppeteer from 'puppeteer-core';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
-
-import { readFileSync } from 'fs';
+import { findChrome, detachedSpawnOptions, tempPath } from './platform.mjs';
 
 const PORT = 19222;
 const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
@@ -54,11 +53,7 @@ async function connectChrome() {
     process.exit(1);
   }
 
-  const chromePath = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ].find(p => existsSync(p));
-
+  const chromePath = findChrome();
   if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
 
   spawn(chromePath, [
@@ -67,7 +62,7 @@ async function connectChrome() {
     '--no-first-run', '--no-default-browser-check',
     'https://www.woolworths.com.au',
     'https://www.coles.com.au',
-  ], { detached: true, stdio: 'ignore' }).unref();
+  ], detachedSpawnOptions()).unref();
 
   for (let i = 0; i < 15; i++) {
     await wait(2000);
@@ -617,8 +612,9 @@ async function colesCheckoutAndPay(page) {
     step(`ORDER PLACED: ${ordered}`);
     await wait(5000);
   } else {
-    await page.screenshot({ path: '/tmp/coles-final.png' });
-    step('FAILED: Could not find Place Order button — screenshot at /tmp/coles-final.png');
+    const ssPath = tempPath('coles-final.png');
+    await page.screenshot({ path: ssPath });
+    step(`FAILED: Could not find Place Order button — screenshot at ${ssPath}`);
   }
 
   const logReport = {

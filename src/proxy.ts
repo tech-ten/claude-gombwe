@@ -297,7 +297,7 @@ async function handleStreaming(
   });
 
   res.on('close', () => {
-    if (!proc.killed) proc.kill('SIGTERM');
+    if (!proc.killed) proc.kill();
   });
 }
 

@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, execSync, ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -434,10 +434,14 @@ export class AgentRuntime extends EventEmitter {
 
     const proc = this.processes.get(taskId);
     if (proc) {
-      proc.kill('SIGTERM');
-      setTimeout(() => {
-        if (!proc.killed) proc.kill('SIGKILL');
-      }, 5000);
+      if (process.platform === 'win32') {
+        try { execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: 'ignore' }); } catch {}
+      } else {
+        proc.kill('SIGTERM');
+        setTimeout(() => {
+          if (!proc.killed) proc.kill('SIGKILL');
+        }, 5000);
+      }
     }
 
     task.status = 'cancelled';
