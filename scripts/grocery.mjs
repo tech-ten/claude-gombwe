@@ -93,10 +93,38 @@ async function searchWoolworths(page, query) {
 }
 
 async function clearWoolworthsCart(page) {
+  // Try API first
+  const apiCleared = await page.evaluate(async () => {
+    try {
+      const cartRes = await fetch('https://www.woolworths.com.au/apis/ui/Cart/GetCart', {
+        method: 'GET', credentials: 'include',
+      });
+      const cart = await cartRes.json();
+      const items = cart?.Cart?.Items || cart?.Items || [];
+      if (items.length === 0) return 'empty';
+      for (const item of items) {
+        const stockcode = item.Stockcode || item.ProductId;
+        if (!stockcode) continue;
+        await fetch('https://www.woolworths.com.au/apis/ui/Cart/Update', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ Stockcode: stockcode, Quantity: 0 }),
+        });
+      }
+      return 'cleared';
+    } catch (e) { return 'error:' + e.message; }
+  });
+
+  if (apiCleared === 'empty' || apiCleared === 'cleared') {
+    console.log(`  Woolworths cart ${apiCleared === 'empty' ? 'already empty' : 'cleared via API'}.`);
+    return;
+  }
+
+  // Fallback: DOM clicking
+  console.log(`  API clear failed (${apiCleared}), falling back to DOM...`);
   await page.goto('https://www.woolworths.com.au/shop/cart', { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
 
-  // Keep clicking remove buttons until cart is empty
   for (let i = 0; i < 30; i++) {
     const removed = await page.evaluate(() => {
       const allEls = document.querySelectorAll('*');
@@ -114,7 +142,6 @@ async function clearWoolworthsCart(page) {
           }
         }
       }
-      // Also try non-shadow buttons
       const buttons = document.querySelectorAll('button');
       for (const btn of buttons) {
         const aria = (btn.getAttribute('aria-label') || '').toLowerCase();

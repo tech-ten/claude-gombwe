@@ -38,6 +38,45 @@ const CVV = PREFS.payment?.cvv || null;
 const DELIVERY_INSTRUCTIONS = PREFS.delivery?.instructions || 'Please leave at front door / pouch. Thank you.';
 const MIN_ORDER_WOOLWORTHS = 75;
 const MIN_ORDER_COLES = 50;
+const PRICE_LIMITS = PREFS.price_limits || {};
+const PRICE_BUFFER = 1.15; // 15% buffer above listed limits
+const CLEAR_CACHE = PREFS.clear_cache_before_order !== false; // default true
+
+/**
+ * Pick the best product from search results, respecting price limits.
+ * Prefers the cheapest product that is under the limit (with buffer).
+ * Falls back to cheapest overall if nothing is under limit.
+ */
+function pickBestProduct(products, searchTerm) {
+  if (!products || products.length === 0) return null;
+
+  // Find the applicable price limit (fuzzy match on search term)
+  const termLower = searchTerm.toLowerCase();
+  let limit = null;
+  for (const [key, val] of Object.entries(PRICE_LIMITS)) {
+    if (termLower.includes(key.toLowerCase()) || key.toLowerCase().includes(termLower.split(' ')[0])) {
+      limit = val * PRICE_BUFFER; // apply buffer
+      break;
+    }
+  }
+
+  // Sort by price ascending (cheapest first), treating null/999 as expensive
+  const sorted = [...products].sort((a, b) => (a.price || 999) - (b.price || 999));
+
+  if (limit) {
+    // Prefer cheapest product under the limit
+    const underLimit = sorted.find(p => p.price && p.price <= limit);
+    if (underLimit) return underLimit;
+
+    // Everything over limit — warn and pick cheapest anyway
+    const cheapest = sorted[0];
+    console.log(`  ⚠ PRICE WARNING: "${searchTerm}" cheapest is $${cheapest.price?.toFixed(2)} (limit ~$${limit.toFixed(2)})`);
+    return cheapest;
+  }
+
+  // No limit defined — just pick cheapest
+  return sorted[0];
+}
 
 // ═══════════════════════════════════════════════════════════
 // CHROME
@@ -69,6 +108,22 @@ async function connectChrome() {
     try { return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null }); } catch {}
   }
   console.error('Chrome failed to start.'); process.exit(1);
+}
+
+async function clearBrowserCache(browser) {
+  if (!CLEAR_CACHE) return;
+  console.log('  Clearing browser cache...');
+  try {
+    const page = (await browser.pages())[0] || await browser.newPage();
+    const client = await page.createCDPSession();
+    await client.send('Network.clearBrowserCache');
+    // NOTE: Do NOT clear cookies — that logs us out of Woolworths/Coles
+    // and breaks all authenticated API calls (cart, checkout, payment).
+    await client.detach();
+    console.log('  Cache cleared.');
+  } catch (err) {
+    console.log(`  Cache clear failed (${err.message}) — continuing anyway.`);
+  }
 }
 
 async function getPage(browser, domain) {
@@ -741,6 +796,7 @@ async function checkoutOnly(store) {
 
 async function buy(store, items, skipCheckout = false) {
   const browser = await connectChrome();
+  await clearBrowserCache(browser);
 
   let priceComparison = null;
 
@@ -757,12 +813,14 @@ async function buy(store, items, skipCheckout = false) {
       for (const item of items) {
         const wProducts = await woolworthsSearch(wPage, item);
         const cProducts = await colesSearch(cPage, item);
-        const wPrice = wProducts[0]?.price || 999;
-        const cPrice = cProducts[0]?.price || 999;
+        const wBest = pickBestProduct(wProducts, item);
+        const cBest = pickBestProduct(cProducts, item);
+        const wPrice = wBest?.price || 999;
+        const cPrice = cBest?.price || 999;
         wTotal += wPrice === 999 ? 0 : wPrice;
         cTotal += cPrice === 999 ? 0 : cPrice;
         const best = wPrice <= cPrice ? 'W' : 'C';
-        rows.push({ item, wPrice, cPrice, best, wName: wProducts[0]?.name, cName: cProducts[0]?.name });
+        rows.push({ item, wPrice, cPrice, best, wName: wBest?.name, cName: cBest?.name });
         console.log(`  ${item.padEnd(35)} W: $${wPrice === 999 ? '?' : wPrice.toFixed(2).padEnd(8)} C: $${cPrice === 999 ? '?' : cPrice.toFixed(2).padEnd(8)} ${best}`);
       }
 
@@ -795,7 +853,8 @@ async function buy(store, items, skipCheckout = false) {
       const products = await searchFn(page, item);
       if (products.length === 0) { console.log('not found'); continue; }
 
-      const best = products[0];
+      const best = pickBestProduct(products, item);
+      if (!best) { console.log('no suitable product'); continue; }
       await wait(1000);
       const success = await addFn(page, best);
 
