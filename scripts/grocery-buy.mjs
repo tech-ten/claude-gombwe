@@ -37,6 +37,8 @@ let PREFS = {};
 try { PREFS = JSON.parse(readFileSync(PREFS_FILE, 'utf-8')); } catch {}
 const CVV = PREFS.payment?.cvv || null;
 const DELIVERY_INSTRUCTIONS = PREFS.delivery?.instructions || 'Please leave at front door / pouch. Thank you.';
+const MIN_ORDER_WOOLWORTHS = 75;
+const MIN_ORDER_COLES = 50;
 
 // ═══════════════════════════════════════════════════════════
 // CHROME
@@ -436,103 +438,179 @@ async function colesClearCart(page) {
 }
 
 async function colesCheckoutAndPay(page) {
-  // Go to home, open trolley, click checkout
+  const log = [];
+  const step = (msg) => { console.log(`  ${msg}`); log.push(msg); };
+
+  // STEP 1: Go to Coles home, open trolley
+  step('Opening trolley...');
   await page.goto('https://www.coles.com.au', { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(2000);
 
-  // Get trolley total
   const total = await page.evaluate(() => {
-    const btn = document.querySelector('[data-testid="header-trolley"]');
-    return btn?.textContent?.match(/\$(\d+\.\d{2})/)?.[1] || null;
+    return document.querySelector('[data-testid="header-trolley"]')?.textContent?.match(/\$([\d.]+)/)?.[1] || null;
   });
-  console.log(`  Trolley total: $${total || '?'}`);
+  step(`Trolley total: $${total || '?'}`);
 
-  // Open trolley
   await page.evaluate(() => document.querySelector('[data-testid="header-trolley"]')?.click());
   await wait(3000);
 
-  // Select delivery time — click "When suits you" / slot selector
-  console.log('  Selecting delivery time...');
-  await page.evaluate(() => {
-    const btn = document.querySelector('[data-testid="slot-selector-button"]') ||
-                document.querySelector('[data-testid="select-delivery-slot-TrolleyDeliveryFee"]');
-    if (btn) btn.click();
+  // STEP 2: Dismiss expired slot if shown
+  const expired = await page.evaluate(() => {
+    const text = document.body.innerText;
+    if (text.includes('no longer available') || text.includes('expired')) {
+      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Pick a new slot'));
+      if (btn) { btn.click(); return true; }
+    }
+    return false;
   });
-  await wait(3000);
+  if (expired) { step('Dismissed expired slot'); await wait(3000); }
 
-  // Click "As soon as possible"
+  // STEP 3: Select delivery time — click "As soon as possible" tab
+  step('Selecting ASAP delivery...');
   await page.evaluate(() => {
-    const els = document.querySelectorAll('button, div, label, span');
+    const els = document.querySelectorAll('button, div, label');
     for (const el of els) {
-      const text = (el.textContent || '').trim();
-      if (text === 'As soon as possible' && el.children.length <= 3) {
-        el.click();
-        return;
+      if (el.textContent.trim() === 'As soon as possible' && el.children.length <= 3) {
+        el.click(); return;
       }
     }
   });
   await wait(2000);
 
-  // Select the ASAP/Rapid slot (the radio/circle next to ETA)
-  await page.evaluate(() => {
-    const els = document.querySelectorAll('div, label, li, button');
-    for (const el of els) {
-      const text = (el.textContent || '');
-      if (text.includes('ETA') && text.includes('min') && text.includes('Free') && el.children.length < 10) {
-        el.click();
-        // Also try clicking the input/radio inside
-        const input = el.querySelector('input');
-        if (input) input.click();
-        return;
+  // STEP 4: Click the ETA radio button (the circle, using coordinates relative to "ETA" text)
+  step('Clicking ETA delivery slot...');
+  const etaPos = await page.evaluate(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.textContent.includes('ETA') && node.textContent.includes('min')) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rect = range.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, h: rect.height };
       }
+    }
+    return null;
+  });
+
+  if (etaPos) {
+    await page.mouse.click(etaPos.x - 20, etaPos.y + etaPos.h / 2);
+    step('Selected ETA slot');
+    await wait(3000);
+  } else {
+    step('WARNING: ETA slot not found');
+  }
+
+  // STEP 5: Click "Confirm" (red button that appears after selecting slot)
+  step('Confirming delivery slot...');
+  await page.evaluate(() => {
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      if (btn.textContent.trim() === 'Confirm') { btn.click(); return; }
     }
   });
   await wait(3000);
 
-  // Click Checkout
-  console.log('  Clicking Checkout...');
+  // STEP 6: Click "Continue" (appears after confirm, shows trolley summary)
+  step('Continuing...');
+  await page.evaluate(() => {
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      if (btn.textContent.trim() === 'Continue') { btn.click(); return; }
+    }
+  });
+  await wait(3000);
+
+  // STEP 7: Click "Checkout" (red button at bottom of trolley)
+  step('Clicking Checkout...');
   await page.evaluate(() => document.querySelector('[data-testid="checkout"]')?.click());
+  await wait(5000);
+
+  // STEP 8: Dismiss "Missing anything?" upsell page
+  step('Dismissing upsell...');
+  await page.evaluate(() => {
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      if (btn.textContent.includes('Continue to checkout')) { btn.click(); return; }
+    }
+  });
   await wait(8000);
 
-  // We should now be on the checkout/review/payment page
-  // Set delivery instructions
-  console.log('  Setting delivery instructions...');
-  await page.evaluate((instructions) => {
-    const inputs = document.querySelectorAll('input, textarea');
-    for (const input of inputs) {
-      const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') ||
-                     input.getAttribute('name') || '').toLowerCase();
-      if (label.includes('instruction') || label.includes('note') || label.includes('delivery') ||
-          label.includes('message') || label.includes('driver')) {
-        input.value = instructions;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+  // STEP 9: Handle expired slot (if took too long)
+  const expired2 = await page.evaluate(() => {
+    if (document.body.innerText.includes('no longer available')) {
+      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Pick a new slot'));
+      if (btn) { btn.click(); return true; }
     }
-  }, DELIVERY_INSTRUCTIONS);
-  await wait(2000);
-
-  // Enter CVV if required
-  if (CVV) {
-    console.log('  Entering payment CVV...');
-    await page.evaluate((cvv) => {
-      const inputs = document.querySelectorAll('input');
-      for (const input of inputs) {
-        const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') ||
-                       input.getAttribute('name') || input.id || '').toLowerCase();
-        if (label.includes('cvv') || label.includes('cvc') || label.includes('security code') ||
-            label.includes('card verification')) {
-          input.value = cvv;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
+    return false;
+  });
+  if (expired2) {
+    step('Slot expired during checkout — re-selecting...');
+    await wait(3000);
+    // Re-do steps 3-8
+    await page.evaluate(() => {
+      const els = document.querySelectorAll('button, div');
+      for (const el of els) {
+        if (el.textContent.trim() === 'As soon as possible' && el.children.length <= 3) {
+          el.click(); return;
         }
       }
-    }, CVV);
+    });
+    await wait(2000);
+    if (etaPos) await page.mouse.click(etaPos.x - 20, etaPos.y + etaPos.h / 2);
+    await wait(2000);
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('button'));
+      b.find(x => x.textContent.trim() === 'Confirm')?.click();
+    });
+    await wait(2000);
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('button'));
+      b.find(x => x.textContent.trim() === 'Continue')?.click();
+    });
+    await wait(2000);
+    await page.evaluate(() => document.querySelector('[data-testid="checkout"]')?.click());
+    await wait(3000);
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('button'));
+      b.find(x => x.textContent.includes('Continue to checkout'))?.click();
+    });
+    await wait(8000);
+  }
+
+  // STEP 10: We should now be on the payment/review page
+  step('On payment page...');
+  await page.screenshot({ path: '/tmp/coles-payment-page.png' });
+
+  // STEP 11: Enter CVV
+  if (CVV) {
+    step('Entering CVV...');
+    // CVV might be in an iframe (payment processors often use iframes)
+    const frames = page.frames();
+    for (const frame of frames) {
+      try {
+        await frame.evaluate((cvv) => {
+          const inputs = document.querySelectorAll('input');
+          for (const input of inputs) {
+            const label = (input.getAttribute('aria-label') || input.placeholder ||
+                           input.name || input.id || '').toLowerCase();
+            const ml = input.maxLength;
+            if (label.includes('cvv') || label.includes('cvc') || label.includes('security') ||
+                label.includes('card verification') || (ml >= 3 && ml <= 4 && input.type === 'tel')) {
+              input.focus();
+              input.value = cvv;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+        }, CVV);
+      } catch {}
+    }
     await wait(2000);
   }
 
-  // Click Place Order / Pay
-  console.log('  Placing order...');
+  // STEP 12: Click Place Order
+  step('Placing order...');
   const ordered = await page.evaluate(() => {
     const buttons = document.querySelectorAll('button');
     for (const btn of buttons) {
@@ -550,16 +628,28 @@ async function colesCheckoutAndPay(page) {
   });
 
   if (ordered) {
-    console.log(`  Order placed: ${ordered}`);
+    step(`ORDER PLACED: ${ordered}`);
     await wait(5000);
   } else {
-    // Take screenshot so we can see what's on screen
-    await page.screenshot({ path: '/tmp/coles-final.png', fullPage: false });
-    console.log('  Could not auto-place order. Screenshot: /tmp/coles-final.png');
-    console.log('  Check Chrome to complete payment.');
+    await page.screenshot({ path: '/tmp/coles-final.png' });
+    step('FAILED: Could not find Place Order button. Screenshot: /tmp/coles-final.png');
   }
 
-  return { total, ordered: !!ordered };
+  // Write log for AI monitoring
+  const logReport = {
+    store: 'coles',
+    total,
+    steps: log,
+    success: !!ordered,
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    const { writeFileSync } = await import('fs');
+    writeFileSync(join(homedir(), '.claude-gombwe', 'data', 'grocery-last-run.json'), JSON.stringify(logReport, null, 2));
+  } catch {}
+
+  return { total, ordered: !!ordered, log };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -636,8 +726,9 @@ async function buy(store, items) {
       return;
     }
 
-    if (total < MIN_ORDER) {
-      console.log(`  Warning: $${total.toFixed(2)} below $${MIN_ORDER} delivery minimum.`);
+    const minOrder = store === 'woolworths' ? MIN_ORDER_WOOLWORTHS : MIN_ORDER_COLES;
+    if (total < minOrder) {
+      console.log(`  Warning: $${total.toFixed(2)} below $${minOrder} ${store} delivery minimum.`);
       console.log('  Delivery fee may apply.\n');
     }
 
