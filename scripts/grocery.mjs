@@ -12,17 +12,71 @@
  */
 
 import puppeteer from 'puppeteer-core';
+import { existsSync } from 'fs';
+import { execSync, spawn } from 'child_process';
+import { homedir } from 'os';
+import { join } from 'path';
 
-const CHROME_URL = 'http://127.0.0.1:19222';
+const PORT = 19222;
+const CHROME_URL = `http://127.0.0.1:${PORT}`;
+const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function connectChrome() {
+  // Try connecting to existing Chrome
   try {
     return await puppeteer.connect({ browserURL: CHROME_URL, defaultViewport: null });
-  } catch {
-    console.error('Chrome not running with remote debugging. Start it first.');
+  } catch {}
+
+  // Chrome not running — auto-launch with saved profile
+  console.log('  Starting Chrome with saved profile...');
+
+  const chromePaths = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    'google-chrome',
+    'chromium-browser',
+  ];
+
+  let chromePath = null;
+  for (const p of chromePaths) {
+    if (existsSync(p)) { chromePath = p; break; }
+  }
+
+  if (!chromePath) {
+    console.error('Chrome not found. Install Google Chrome or run: node scripts/chrome-setup.mjs');
     process.exit(1);
   }
+
+  // Check if profile exists (user has run setup)
+  if (!existsSync(PROFILE_DIR)) {
+    console.error('No saved login found. Run first: node scripts/chrome-setup.mjs');
+    process.exit(1);
+  }
+
+  // Launch Chrome headless-ish with the saved profile (cookies preserved)
+  const chrome = spawn(chromePath, [
+    `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${PROFILE_DIR}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    'https://www.woolworths.com.au',
+    'https://www.coles.com.au',
+  ], { detached: true, stdio: 'ignore' });
+  chrome.unref();
+
+  // Wait for Chrome to start
+  for (let i = 0; i < 15; i++) {
+    await wait(2000);
+    try {
+      const browser = await puppeteer.connect({ browserURL: CHROME_URL, defaultViewport: null });
+      console.log('  Chrome connected with saved session.');
+      return browser;
+    } catch {}
+  }
+
+  console.error('Chrome failed to start. Run: node scripts/chrome-setup.mjs');
+  process.exit(1);
 }
 
 async function getPage(browser, domain) {
