@@ -1,15 +1,39 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-data/
 *.tsbuildinfo
-.DS_Store
 
-# Runtime
-*.log
-*.pid
-
-# Credentials (never commit)
+# Environment & credentials (never commit)
+.env
+.env.*
 *.keys.json
 credentials.json
 token.json
-.env
+
+# Runtime data
+data/
+*.log
+*.pid
+
+# macOS
+.DS_Store
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.nfs*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace

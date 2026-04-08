@@ -487,7 +487,8 @@ program
   .description('One-time login to Woolworths & Coles (saves session for future orders)')
   .action(async () => {
     const { execSync } = await import('node:child_process');
-    execSync('node scripts/chrome-setup.mjs', { cwd: import.meta.dirname ? import.meta.dirname + '/..' : process.cwd(), stdio: 'inherit' });
+    const { join } = await import('node:path');
+    execSync('node scripts/chrome-setup.mjs', { cwd: import.meta.dirname ? join(import.meta.dirname, '..') : process.cwd(), stdio: 'inherit' });
   });
 
 program
@@ -499,7 +500,8 @@ program
   .option('--split', 'Smart split — cheapest items from each store')
   .action(async (items, opts) => {
     const { execSync } = await import('node:child_process');
-    const scriptDir = import.meta.dirname ? import.meta.dirname + '/..' : process.cwd();
+    const { join } = await import('node:path');
+    const scriptDir = import.meta.dirname ? join(import.meta.dirname, '..') : process.cwd();
 
     if (items.length === 0) {
       console.log('Usage: gombwe grocery "milk 2L" "eggs" "bread" --split');
