@@ -180,6 +180,60 @@ Each channel is a separate conversation with its own memory.
 
 ---
 
+## Grocery Automation (Woolworths & Coles)
+
+Search products, compare prices, and add to cart at both Woolworths and Coles — from Discord, the terminal, or on a weekly schedule.
+
+### First-time setup (2 minutes)
+
+```bash
+gombwe grocery-setup
+```
+
+Chrome opens with Woolworths and Coles login pages. Log in to both. Press Enter. Your session is saved — you won't need to log in again.
+
+### Ordering groceries
+
+**From Discord:**
+```
+/grocery-order milk 2L, eggs 12 pack, Masterfoods BBQ Sauce, bread, chicken breast
+```
+
+**From terminal:**
+```bash
+# Compare prices across both stores
+gombwe grocery "milk 2L" "eggs" "bread" "chicken" --compare
+
+# Smart split — cheapest from each store, respects delivery minimums
+gombwe grocery "milk" "eggs" "bread" "chicken" "butter" "bananas" --split
+
+# Order from a specific store
+gombwe grocery "milk" "eggs" "bread" --store woolworths
+```
+
+### What happens
+
+1. Chrome launches automatically with your saved login
+2. Searches Woolworths internal API (instant, real prices)
+3. Searches Coles from your logged-in session (real prices)
+4. Compares prices side by side
+5. Smart split keeps each order above the delivery minimum
+6. Adds items to your cart — you just check out
+
+### Weekly schedule
+
+```
+/job /grocery-order review my usual list --schedule "0 9 * * 0"
+```
+
+Every Sunday morning, gombwe prepares your cart and sends the results to Discord.
+
+### How it gets cheaper each week
+
+The grocery skill caches your brand preferences. First order: it searches everything. Second order: it already knows you want Masterfoods BBQ Sauce (not any other brand), Dairy Farmers milk (not homebrand). By the third week, most items are instant matches — near-zero search cost.
+
+---
+
 ## Setting Up Telegram
 
 1. Message [@BotFather](https://t.me/botfather) on Telegram and send `/newbot`
@@ -214,6 +268,10 @@ gombwe watch <name> --when --do     # Create an event trigger
 gombwe triggers                     # List active triggers
 gombwe workflow <name> ...          # Create a multi-step workflow
 gombwe workflows                    # List workflows
+gombwe grocery-setup                # One-time Woolworths & Coles login
+gombwe grocery "items" --split      # Smart split grocery order
+gombwe grocery "items" --compare    # Compare prices only
+gombwe grocery "items" --store woolworths  # Order from specific store
 ```
 
 ### Chat (works in terminal, Discord, Telegram, and web dashboard)
@@ -242,10 +300,11 @@ Type `/` to see all commands with autocomplete. Key ones:
 
 ## Skills
 
-13 built-in skills. Type the name in any chat to run it.
+14 built-in skills. Type the name in any chat to run it.
 
 | Skill | What it does | Needs |
 |-------|-------------|-------|
+| `/grocery-order` | Search, compare prices, add to cart at Woolworths & Coles | One-time login |
 | `/email-digest` | Inbox summary by priority with draft replies | Gmail |
 | `/github-review` | PRs needing review, failing CI, stale PRs | GitHub |
 | `/morning-briefing` | Calendar + email + code + daily priorities | Gmail, Calendar |
@@ -331,6 +390,7 @@ Every step uses `--resume` so Claude remembers everything — every file read, c
 - [docs/COMPLETION-LOOP.md](docs/COMPLETION-LOOP.md) — How retry/continue/verify works
 - [docs/SKILLS.md](docs/SKILLS.md) — Skill format, native tools, creating custom skills
 - [docs/API.md](docs/API.md) — REST API and WebSocket reference
+- [docs/GROCERY.md](docs/GROCERY.md) — Grocery automation setup and usage (Woolworths & Coles)
 - [docs/WHY.md](docs/WHY.md) — Project motivation
 
 ## License
