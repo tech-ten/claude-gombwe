@@ -13,6 +13,7 @@ import { execSync, spawn } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { findChrome, killPort, detachedSpawnOptions } from './platform.mjs';
 
 const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
 const PORT = 19222;
@@ -38,24 +39,11 @@ async function main() {
   }
 
   // Kill any existing Chrome on our debug port
-  try {
-    const pids = execSync(`lsof -ti:${PORT} 2>/dev/null`).toString().trim();
-    if (pids) {
-      execSync(`kill ${pids} 2>/dev/null`);
-      await wait(2000);
-    }
-  } catch {}
+  killPort(PORT);
+  await wait(2000);
 
   // Find Chrome
-  const chromePaths = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ];
-
-  let chromePath = null;
-  for (const p of chromePaths) {
-    if (existsSync(p)) { chromePath = p; break; }
-  }
+  const chromePath = findChrome();
 
   if (!chromePath) {
     console.log('  Chrome not found. Please install Google Chrome.');
@@ -72,10 +60,7 @@ async function main() {
     '--no-default-browser-check',
     'https://www.woolworths.com.au/shop/securelogin',
     'https://www.coles.com.au/login',
-  ], {
-    detached: true,
-    stdio: 'ignore',
-  });
+  ], detachedSpawnOptions());
   chrome.unref();
 
   await wait(5000);

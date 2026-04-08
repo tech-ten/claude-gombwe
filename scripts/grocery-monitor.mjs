@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import puppeteer from 'puppeteer-core';
+import { findChrome, detachedSpawnOptions, tempPath } from './platform.mjs';
 
 const PORT = 19222;
 const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
@@ -89,7 +90,7 @@ async function executeStep(page, name, fn, maxRetries = 2) {
       }
 
       // Take screenshot
-      const ssPath = `/tmp/grocery-fail-${Date.now()}.png`;
+      const ssPath = tempPath(`grocery-fail-${Date.now()}.png`);
       try { await page.screenshot({ path: ssPath }); } catch {}
 
       // Ask Claude to fix
@@ -124,14 +125,14 @@ async function connectChrome() {
   const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
   if (!existsSync(PROFILE_DIR)) { console.error('Run: gombwe grocery-setup'); process.exit(1); }
 
-  const chromePath = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find(p => existsSync(p));
+  const chromePath = findChrome();
   if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
 
   spawn(chromePath, [
     `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
     'https://www.coles.com.au', 'https://www.woolworths.com.au',
-  ], { detached: true, stdio: 'ignore' }).unref();
+  ], detachedSpawnOptions()).unref();
 
   for (let i = 0; i < 15; i++) {
     await wait(2000);
@@ -382,7 +383,7 @@ async function colesMonitoredCheckout(page, items) {
     step(`Instructions: ${DELIVERY_INSTRUCTIONS}`);
   } else {
     step('=== ORDER INCOMPLETE — check Chrome ===');
-    await page.screenshot({ path: '/tmp/grocery-final-state.png' });
+    await page.screenshot({ path: tempPath('grocery-final-state.png') });
   }
 
   return report;

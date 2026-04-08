@@ -138,10 +138,13 @@ export async function executeSkillTool(tool: SkillTool, skillDir: string): Promi
       const scriptPath = join(skillDir, tool.script);
       if (!existsSync(scriptPath)) return `Error: script not found: ${scriptPath}`;
       try {
-        const output = execSync(`bash "${scriptPath}"`, {
+        const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
+        const cmd = process.platform === 'win32' ? `"${scriptPath}"` : `bash "${scriptPath}"`;
+        const output = execSync(cmd, {
           cwd: skillDir,
           timeout: 60000,
           encoding: 'utf-8',
+          shell,
           env: { ...process.env },
         });
         return output.trim();
