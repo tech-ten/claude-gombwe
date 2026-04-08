@@ -47,6 +47,8 @@ export class AgentRuntime extends EventEmitter {
     this.loadTasks();
   }
 
+  reloadTasks(): void { this.loadTasks(); }
+
   private loadTasks(): void {
     if (existsSync(this.tasksFile)) {
       const raw = readFileSync(this.tasksFile, 'utf-8');

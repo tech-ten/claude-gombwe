@@ -37,6 +37,12 @@
           </button>
         </div>
         <div class="nav-section">
+          <span class="nav-label">Home</span>
+          <button class="nav-item" data-tab="family">
+            <span class="nav-dot"></span> Family
+          </button>
+        </div>
+        <div class="nav-section">
           <span class="nav-label">Automation</span>
           <button class="nav-item" data-tab="jobs">
             <span class="nav-dot"></span> Jobs
@@ -198,6 +204,64 @@
             </div>
           </div>
           <div class="card" id="serviceList"></div>
+        </div>
+      </section>
+
+      <!-- Family -->
+      <section id="tab-family" class="tab-content">
+        <div class="page-view family-page">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Family</h1>
+              <p class="page-desc">Calendar, meals, grocery list, and school plans</p>
+            </div>
+          </div>
+
+          <!-- Week Calendar -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">This Week</h2>
+              <div class="week-nav">
+                <button class="btn-ghost btn-sm" id="weekPrev">&larr;</button>
+                <span id="weekLabel"></span>
+                <button class="btn-ghost btn-sm" id="weekNext">&rarr;</button>
+              </div>
+            </div>
+            <div class="week-grid" id="weekGrid"></div>
+          </div>
+
+          <!-- Meal Plan -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Meal Plan</h2>
+            </div>
+            <div class="meal-grid" id="mealGrid"></div>
+          </div>
+
+          <!-- Grocery List -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Grocery List</h2>
+              <button class="btn-primary btn-sm" id="orderGroceriesBtn">Order Now</button>
+            </div>
+            <div class="card" id="groceryList"></div>
+            <div class="grocery-add">
+              <form id="groceryAddForm">
+                <input type="text" id="groceryInput" placeholder="Add item...">
+                <button type="submit" class="btn-primary btn-sm">Add</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- School / Kids -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">School</h2>
+              <button class="btn-ghost btn-sm" id="addSchoolEventBtn">Add Event</button>
+            </div>
+            <div class="card" id="schoolEvents"></div>
+          </div>
+
         </div>
       </section>
 
