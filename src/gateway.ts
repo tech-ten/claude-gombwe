@@ -184,9 +184,10 @@ export class Gateway {
       const channel = this.channels.get(msg.channel);
 
       // --- All commands use / prefix ---
-      if (msg.text.startsWith('/')) {
-        const [cmd, ...rest] = msg.text.slice(1).split(' ');
-        const handled = await this.handleCommand(cmd, rest, msg, channel);
+      const trimmedText = msg.text.trim().replace(/\s+/g, ' ');
+      if (trimmedText.startsWith('/')) {
+        const [cmd, ...rest] = trimmedText.slice(1).split(' ');
+        const handled = await this.handleCommand(cmd.toLowerCase(), rest, msg, channel);
         if (handled) return;
       }
 
@@ -316,6 +317,50 @@ export class Gateway {
         const skills = this.skills.getInvocableSkills();
         const summary = skills.map(s => `- /${s.name}: ${s.description}`).join('\n');
         await reply(`**Available Skills:**\n${summary || 'No skills loaded.'}`);
+        return true;
+      }
+
+      case 'job': {
+        // /job /morning-briefing --schedule "0 8 * * *"
+        // Parse: everything before --schedule is the prompt, after is the cron expression
+        // Handle multi-line messages, smart quotes, double spaces
+        const fullArgs = args.join(' ').replace(/\s+/g, ' ').replace(/[\u201C\u201D\u2018\u2019]/g, '"');
+        const scheduleMatch = fullArgs.match(/--schedule\s+["']?([^"'\n]+)["']?/);
+        const prompt = fullArgs.replace(/--schedule\s+["']?[^"'\n]+["']?/, '').trim();
+
+        if (!prompt || !scheduleMatch) {
+          await reply(
+            '**Usage:** /job <prompt> --schedule "<cron>"\n\n' +
+            '**Examples:**\n' +
+            '/job /morning-briefing --schedule "0 8 * * *"\n' +
+            '/job /email-digest --schedule "*/30 * * * *"\n' +
+            '/job check my GitHub --schedule "0 9 * * 1-5"\n\n' +
+            '**Schedules:**\n' +
+            '*/30 * * * * — every 30 minutes\n' +
+            '0 8 * * * — daily at 8am\n' +
+            '0 9 * * 1-5 — weekdays at 9am\n' +
+            '0 9 * * 1 — every Monday at 9am'
+          );
+          return true;
+        }
+
+        const expression = scheduleMatch[1].trim();
+        const job = this.scheduler.createJob(expression, prompt, msg.channel, `cron:${Date.now()}`);
+        await reply(`**Job scheduled**\nSchedule: ${expression}\nPrompt: ${prompt}\nNext run: ${job.nextRun || 'calculating...'}`);
+        return true;
+      }
+
+      case 'jobs': {
+        const jobs = this.scheduler.listJobs();
+        if (jobs.length === 0) {
+          await reply('No scheduled jobs. Create one with:\n/job /morning-briefing --schedule "0 8 * * *"');
+          return true;
+        }
+        const lines = jobs.map(j => {
+          const status = j.enabled ? 'active' : 'paused';
+          return `- [${status}] **${j.expression}** — ${j.prompt.slice(0, 50)}`;
+        });
+        await reply(`**Scheduled Jobs:**\n${lines.join('\n')}`);
         return true;
       }
 
