@@ -217,10 +217,10 @@
             </div>
           </div>
 
-          <!-- Week Calendar -->
+          <!-- Weekly Planner -->
           <div class="family-section">
             <div class="family-section-header">
-              <h2 class="family-section-title">This Week</h2>
+              <h2 class="family-section-title">Week</h2>
               <div class="week-nav">
                 <button class="btn-ghost btn-sm" id="weekPrev">&larr;</button>
                 <span id="weekLabel"></span>
@@ -230,27 +230,59 @@
             <div class="week-grid" id="weekGrid"></div>
           </div>
 
-          <!-- Meal Plan -->
-          <div class="family-section">
-            <div class="family-section-header">
-              <h2 class="family-section-title">Meal Plan</h2>
-            </div>
-            <div class="meal-grid" id="mealGrid"></div>
-          </div>
-
           <!-- Grocery List -->
           <div class="family-section">
             <div class="family-section-header">
               <h2 class="family-section-title">Grocery List</h2>
-              <button class="btn-primary btn-sm" id="orderGroceriesBtn">Order Now</button>
+              <div class="family-section-actions">
+                <span class="order-status" id="orderStatus"></span>
+                <button class="btn-primary btn-sm" id="orderGroceriesBtn">Order Now</button>
+              </div>
             </div>
             <div class="card" id="groceryList"></div>
             <div class="grocery-add">
               <form id="groceryAddForm">
-                <input type="text" id="groceryInput" placeholder="Add item...">
+                <input type="text" id="groceryInput" placeholder="Add grocery item...">
                 <button type="submit" class="btn-primary btn-sm">Add</button>
               </form>
             </div>
+          </div>
+
+          <!-- Non-Food Items -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Household / Non-Food</h2>
+            </div>
+            <div class="card" id="nonFoodList"></div>
+            <div class="grocery-add">
+              <form id="nonFoodAddForm">
+                <input type="text" id="nonFoodInput" placeholder="Add household item...">
+                <button type="submit" class="btn-primary btn-sm">Add</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Pantry / In Stock -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Pantry / In Stock</h2>
+            </div>
+            <div class="card" id="pantryList"></div>
+            <div class="grocery-add">
+              <form id="pantryAddForm">
+                <input type="text" id="pantryInput" placeholder="Add stocked item...">
+                <button type="submit" class="btn-primary btn-sm">Add</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Recipes -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Recipes</h2>
+              <span class="recipe-hint">Click ingredients to edit. Changes are saved as your preferences.</span>
+            </div>
+            <div id="recipeList"></div>
           </div>
 
           <!-- School / Kids -->
@@ -260,6 +292,14 @@
               <button class="btn-ghost btn-sm" id="addSchoolEventBtn">Add Event</button>
             </div>
             <div class="card" id="schoolEvents"></div>
+          </div>
+
+          <!-- Actions Log -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Actions</h2>
+            </div>
+            <div class="card" id="actionLog"></div>
           </div>
 
         </div>

@@ -737,18 +737,30 @@ document.getElementById('topbarSearch')?.addEventListener('click', () => {
 });
 
 // ========== FAMILY ==========
-let familyData = { meals: {}, groceryList: [], events: [], members: [] };
+let familyData = { meals: {}, groceryList: [], nonFoodList: [], pantry: [], events: [], members: [], lastOrdered: null };
 let weekOffset = 0;
 
 async function loadFamily() {
   try {
     const res = await fetch(`${API}/api/family`);
     familyData = await res.json();
+    if (!familyData.pantry) familyData.pantry = [];
+    if (!familyData.nonFoodList) familyData.nonFoodList = [];
+    if (!familyData.lastOrdered) familyData.lastOrdered = null;
   } catch {}
+  await loadRecipes();
+  renderAll();
+}
+
+function renderAll() {
   renderWeekGrid();
-  renderMealGrid();
   renderGroceryList();
+  renderNonFoodList();
+  renderPantryList();
+  renderRecipes();
   renderSchoolEvents();
+  renderOrderStatus();
+  renderActionLog();
 }
 
 async function saveFamily() {
@@ -764,7 +776,7 @@ async function saveFamily() {
 function getWeekDates() {
   const now = new Date();
   const start = new Date(now);
-  start.setDate(start.getDate() - start.getDay() + 1 + weekOffset * 7); // Monday
+  start.setDate(start.getDate() - start.getDay() + 1 + weekOffset * 7);
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(start);
@@ -778,8 +790,80 @@ function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+function isoWeek(d) {
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+}
+
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Action log
+function logAction(actor, action, detail) {
+  if (!familyData.actions) familyData.actions = [];
+  familyData.actions.unshift({
+    time: new Date().toISOString(),
+    actor, // 'user' or 'gombwe'
+    action,
+    detail
+  });
+  // Keep last 100
+  if (familyData.actions.length > 100) familyData.actions.length = 100;
+}
+
+// Check meal coverage: 'pantry' = fully stocked, 'listed' = on grocery list, 'missing' = neither
+function mealStatus(mealName) {
+  if (!mealName) return 'none';
+  const lower = mealName.toLowerCase();
+  const pantryNames = (familyData.pantry || []).map(i => i.toLowerCase());
+  const groceryNames = (familyData.groceryList || []).map(i => i.name.toLowerCase());
+  // If any grocery item references this meal, it's listed
+  const onList = groceryNames.some(item => item.includes(lower) || lower.includes(item)) ||
+    (familyData.groceryList || []).some(i => (i.meals || []).includes(lower) || (i.meal === lower));
+  const inPantry = pantryNames.some(item => item.includes(lower) || lower.includes(item));
+  if (inPantry) return 'pantry';
+  if (onList) return 'listed';
+  return 'missing';
+}
+
+// Extract ingredients for a meal and add to grocery list
+async function extractAndAddIngredients(mealName) {
+  if (!mealName) return;
+  const pantry = familyData.pantry || [];
+  const existing = (familyData.groceryList || []).map(i => i.name);
+  try {
+    const res = await fetch(`${API}/api/family/ingredients`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meal: mealName, pantry, existing })
+    });
+    const data = await res.json();
+    if (data.ingredients && data.ingredients.length > 0) {
+      const source = data.source === 'local' ? 'gombwe' : 'gombwe (ai)';
+      logAction(source, 'ingredients added', `${mealName}: ${data.ingredients.join(', ')}`);
+      if (!familyData.groceryList) familyData.groceryList = [];
+      for (const item of data.ingredients) {
+        const lower = item.toLowerCase();
+        // Fuzzy match: "garlic" matches "garlic", "onion" matches "onions", "eggs" matches "free range eggs 12 pack"
+        const idx = familyData.groceryList.findIndex(i => {
+          const n = i.name.toLowerCase();
+          return n === lower || n.includes(lower) || lower.includes(n) ||
+            n.replace(/s$/, '') === lower.replace(/s$/, '');
+        });
+        if (idx >= 0) {
+          const existing = familyData.groceryList[idx];
+          if (!existing.meals) existing.meals = [];
+          if (!existing.meals.includes(mealName.toLowerCase())) existing.meals.push(mealName.toLowerCase());
+          existing.source = 'auto';
+        } else {
+          familyData.groceryList.push({ name: item, checked: false, source: 'auto', meals: [mealName.toLowerCase()] });
+        }
+      }
+      await saveFamily();
+      renderGroceryList();
+    }
+  } catch {}
+}
 
 function renderWeekGrid() {
   const grid = document.getElementById('weekGrid');
@@ -801,61 +885,42 @@ function renderWeekGrid() {
     const div = document.createElement('div');
     div.className = `week-day${isToday ? ' today' : ''}`;
 
-    // Collect events for this day
     const dayEvents = (familyData.events || []).filter(ev => ev.date === dk);
-    const meals = familyData.meals?.[dk];
+    const meals = familyData.meals?.[dk] || {};
 
-    let eventsHtml = '';
-    if (meals) {
-      if (meals.breakfast) eventsHtml += `<div class="week-event meal" title="Breakfast: ${esc(meals.breakfast)}">${esc(meals.breakfast)}</div>`;
-      if (meals.lunch) eventsHtml += `<div class="week-event meal" title="Lunch: ${esc(meals.lunch)}">${esc(meals.lunch)}</div>`;
-      if (meals.dinner) eventsHtml += `<div class="week-event meal" title="Dinner: ${esc(meals.dinner)}">${esc(meals.dinner)}</div>`;
+    // Meal slots — clickable to edit
+    let mealsHtml = '';
+    for (const slot of ['breakfast', 'lunch', 'dinner']) {
+      const name = meals[slot] || '';
+      const status = name ? mealStatus(name) : 'none';
+      const statusCls = status === 'listed' ? ' on-list' : status === 'missing' ? ' unresolved' : '';
+      mealsHtml += `
+        <div class="meal-slot${name ? '' : ' empty'}${statusCls}" data-date="${dk}" data-slot="${slot}">
+          <span class="meal-slot-label">${slot[0].toUpperCase()}</span>
+          <span class="meal-slot-name">${name ? esc(name) : '—'}</span>
+        </div>
+      `;
     }
+
+    // Events (school, general)
+    let eventsHtml = '';
     for (const ev of dayEvents) {
       const cls = ev.type === 'school' ? 'school' : 'general';
       eventsHtml += `<div class="week-event ${cls}" title="${esc(ev.title)}">${esc(ev.title)}</div>`;
     }
 
     div.innerHTML = `
-      <div class="week-day-label">${DAY_NAMES[i]}</div>
-      <div class="week-day-num">${d.getDate()}</div>
-      ${eventsHtml}
-    `;
-    grid.appendChild(div);
-  }
-}
-
-function renderMealGrid() {
-  const grid = document.getElementById('mealGrid');
-  if (!grid) return;
-  const days = getWeekDates();
-  grid.innerHTML = '';
-
-  for (let i = 0; i < 7; i++) {
-    const d = days[i];
-    const dk = dateKey(d);
-    const meals = familyData.meals?.[dk] || {};
-    const div = document.createElement('div');
-    div.className = 'meal-day';
-
-    const slots = ['breakfast', 'lunch', 'dinner'].map(slot => {
-      const name = meals[slot] || '';
-      return `
-        <div class="meal-slot ${name ? '' : 'empty'}" data-date="${dk}" data-slot="${slot}">
-          <div class="meal-slot-label">${slot}</div>
-          <div class="meal-slot-name">${name ? esc(name) : '—'}</div>
-        </div>
-      `;
-    }).join('');
-
-    div.innerHTML = `
-      <div class="meal-day-label">${DAY_NAMES[i]}</div>
-      ${slots}
+      <div class="week-day-header">
+        <span class="week-day-label">${DAY_NAMES[i]}</span>
+        <span class="week-day-num">${d.getDate()}</span>
+      </div>
+      <div class="week-day-meals">${mealsHtml}</div>
+      ${eventsHtml ? `<div class="week-day-events">${eventsHtml}</div>` : ''}
     `;
     grid.appendChild(div);
   }
 
-  // Click to edit meal
+  // Click to edit meals
   grid.querySelectorAll('.meal-slot').forEach(el => {
     el.addEventListener('click', () => {
       const dk = el.dataset.date;
@@ -867,12 +932,14 @@ function renderMealGrid() {
       if (!familyData.meals[dk]) familyData.meals[dk] = {};
       if (val) {
         familyData.meals[dk][slot] = val;
+        logAction('user', 'meal added', `${slot} on ${dk}: ${val}`);
       } else {
+        logAction('user', 'meal removed', `${slot} on ${dk}: ${current}`);
         delete familyData.meals[dk][slot];
       }
       saveFamily();
-      renderMealGrid();
-      renderWeekGrid();
+      renderAll();
+      if (val) extractAndAddIngredients(val);
     });
   });
 }
@@ -883,7 +950,7 @@ function renderGroceryList() {
   const items = familyData.groceryList || [];
 
   if (items.length === 0) {
-    list.innerHTML = '<div class="empty-list">No items yet. Add something below.</div>';
+    list.innerHTML = '<div class="empty-list">No items. Add groceries below or plan meals above.</div>';
     return;
   }
 
@@ -891,9 +958,16 @@ function renderGroceryList() {
   items.forEach((item, idx) => {
     const div = document.createElement('div');
     div.className = `grocery-item${item.checked ? ' checked' : ''}`;
+    let sourceTag = '';
+    const mealNames = item.meals || (item.meal ? [item.meal] : []);
+    if (item.source === 'human' && mealNames.length > 0) {
+      sourceTag = `<span class="grocery-source from-human" title="preference: ${esc(mealNames.join(', '))}">${esc(mealNames.join(', '))}</span>`;
+    } else if ((item.source === 'auto' || item.source === 'meal') && mealNames.length > 0) {
+      sourceTag = `<span class="grocery-source from-auto" title="${esc(mealNames.join(', '))}">${esc(mealNames.join(', '))}</span>`;
+    }
     div.innerHTML = `
       <div class="grocery-check" data-idx="${idx}"></div>
-      <span class="grocery-name">${esc(item.name)}</span>
+      <span class="grocery-name">${esc(item.name)}${sourceTag}</span>
       <button class="grocery-remove" data-idx="${idx}">remove</button>
     `;
     list.appendChild(div);
@@ -914,33 +988,177 @@ function renderGroceryList() {
       familyData.groceryList.splice(idx, 1);
       saveFamily();
       renderGroceryList();
+      renderWeekGrid();
+      renderWeekGrid();
     });
   });
 }
 
+function renderNonFoodList() {
+  const list = document.getElementById('nonFoodList');
+  if (!list) return;
+  const items = familyData.nonFoodList || [];
+
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-list">Toilet paper, cleaning supplies, etc.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  items.forEach((item, idx) => {
+    const div = document.createElement('div');
+    div.className = `grocery-item${item.checked ? ' checked' : ''}`;
+    div.innerHTML = `
+      <div class="grocery-check" data-idx="${idx}" data-list="nonfood"></div>
+      <span class="grocery-name">${esc(item.name)}</span>
+      <button class="grocery-remove" data-idx="${idx}" data-list="nonfood">remove</button>
+    `;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.grocery-check').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      familyData.nonFoodList[idx].checked = !familyData.nonFoodList[idx].checked;
+      saveFamily();
+      renderNonFoodList();
+    });
+  });
+
+  list.querySelectorAll('.grocery-remove').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      familyData.nonFoodList.splice(idx, 1);
+      saveFamily();
+      renderNonFoodList();
+    });
+  });
+}
+
+function renderPantryList() {
+  const list = document.getElementById('pantryList');
+  if (!list) return;
+  const items = familyData.pantry || [];
+
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-list">Items you already have at home. Meals covered by pantry won\'t show red.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  items.forEach((name, idx) => {
+    const div = document.createElement('div');
+    div.className = 'pantry-item';
+    div.innerHTML = `
+      <span>${esc(name)}</span>
+      <button class="pantry-remove" data-idx="${idx}">remove</button>
+    `;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.pantry-remove').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      familyData.pantry.splice(idx, 1);
+      saveFamily();
+      renderPantryList();
+      renderWeekGrid();
+      renderWeekGrid();
+    });
+  });
+}
+
+function renderOrderStatus() {
+  const el = document.getElementById('orderStatus');
+  if (!el) return;
+  if (familyData.lastOrdered) {
+    const d = new Date(familyData.lastOrdered);
+    const now = new Date();
+    // Same ISO week = already ordered this week
+    if (isoWeek(d) === isoWeek(now) && d.getFullYear() === now.getFullYear()) {
+      el.textContent = `Ordered ${DAY_NAMES[(d.getDay()+6)%7]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+    } else {
+      el.textContent = '';
+    }
+  }
+}
+
+// Add grocery items
 document.getElementById('groceryAddForm')?.addEventListener('submit', (e) => {
   e.preventDefault();
   const input = document.getElementById('groceryInput');
   const val = input.value.trim();
   if (!val) return;
   if (!familyData.groceryList) familyData.groceryList = [];
-  // Support comma-separated items
-  val.split(',').map(s => s.trim()).filter(Boolean).forEach(name => {
+  const items = val.split(',').map(s => s.trim()).filter(Boolean);
+  items.forEach(name => {
     familyData.groceryList.push({ name, checked: false });
   });
+  logAction('user', 'grocery added', items.join(', '));
   saveFamily();
-  renderGroceryList();
+  renderAll();
   input.value = '';
 });
 
+// Add non-food items
+document.getElementById('nonFoodAddForm')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('nonFoodInput');
+  const val = input.value.trim();
+  if (!val) return;
+  if (!familyData.nonFoodList) familyData.nonFoodList = [];
+  val.split(',').map(s => s.trim()).filter(Boolean).forEach(name => {
+    familyData.nonFoodList.push({ name, checked: false });
+  });
+  saveFamily();
+  renderNonFoodList();
+  input.value = '';
+});
+
+// Add pantry items
+document.getElementById('pantryAddForm')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('pantryInput');
+  const val = input.value.trim();
+  if (!val) return;
+  if (!familyData.pantry) familyData.pantry = [];
+  val.split(',').map(s => s.trim()).filter(Boolean).forEach(name => {
+    if (!familyData.pantry.includes(name)) familyData.pantry.push(name);
+  });
+  saveFamily();
+  renderPantryList();
+  renderWeekGrid();
+  input.value = '';
+});
+
+// Order Now — sends to chat AND marks this week as ordered (skips cron job)
 document.getElementById('orderGroceriesBtn')?.addEventListener('click', async () => {
-  const unchecked = (familyData.groceryList || []).filter(i => !i.checked).map(i => i.name);
-  if (unchecked.length === 0) { alert('No items to order.'); return; }
-  if (!confirm(`Order ${unchecked.length} items via Gombwe?\n\n${unchecked.join(', ')}`)) return;
-  // Send grocery order to chat
+  const groceries = (familyData.groceryList || []).filter(i => !i.checked).map(i => i.name);
+  const nonFood = (familyData.nonFoodList || []).filter(i => !i.checked).map(i => i.name);
+  const all = [...groceries, ...nonFood];
+  if (all.length === 0) { alert('No items to order.'); return; }
+
+  const summary = `Groceries (${groceries.length}):\n${groceries.join(', ')}\n\nHousehold (${nonFood.length}):\n${nonFood.join(', ')}`;
+  if (!confirm(`Order ${all.length} items via Gombwe?\n\n${summary}`)) return;
+
+  // Log and move ordered items to pantry
+  logAction('user', 'order placed', `${all.length} items (${groceries.length} grocery, ${nonFood.length} household)`);
+  if (!familyData.pantry) familyData.pantry = [];
+  for (const name of groceries) {
+    if (!familyData.pantry.some(p => p.toLowerCase() === name.toLowerCase())) {
+      familyData.pantry.push(name);
+    }
+  }
+  familyData.groceryList = [];
+  familyData.nonFoodList = [];
+  familyData.lastOrdered = new Date().toISOString();
+  saveFamily();
+  renderAll();
+
+  // Send to chat
   switchTab('chat');
   const input = document.getElementById('chatInput');
-  input.value = `/grocery-order ${unchecked.join(', ')}`;
+  input.value = `/grocery-order ${all.join(', ')}`;
   document.getElementById('chatForm').dispatchEvent(new Event('submit'));
 });
 
@@ -956,7 +1174,7 @@ function renderSchoolEvents() {
   }
 
   list.innerHTML = '';
-  events.forEach(ev => {
+  events.forEach((ev, idx) => {
     const div = document.createElement('div');
     div.className = 'school-event';
     const d = new Date(ev.date + 'T00:00:00');
@@ -979,13 +1197,253 @@ document.getElementById('addSchoolEventBtn')?.addEventListener('click', () => {
   const child = prompt('Child name (optional):');
   if (!familyData.events) familyData.events = [];
   familyData.events.push({ title, date, type: 'school', child: child || '', notes: '' });
+  logAction('user', 'school event added', `${title} on ${date}${child ? ' (' + child + ')' : ''}`);
   saveFamily();
   renderSchoolEvents();
   renderWeekGrid();
 });
 
-document.getElementById('weekPrev')?.addEventListener('click', () => { weekOffset--; renderWeekGrid(); renderMealGrid(); });
-document.getElementById('weekNext')?.addEventListener('click', () => { weekOffset++; renderWeekGrid(); renderMealGrid(); });
+function renderActionLog() {
+  const list = document.getElementById('actionLog');
+  if (!list) return;
+  const actions = familyData.actions || [];
+
+  if (actions.length === 0) {
+    list.innerHTML = '<div class="empty-list">No actions yet.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const a of actions.slice(0, 20)) {
+    const div = document.createElement('div');
+    div.className = 'action-item';
+    const isAi = a.actor.includes('gombwe');
+    div.innerHTML = `
+      <div class="action-actor ${isAi ? 'ai' : 'human'}">${esc(a.actor)}</div>
+      <div class="action-body">
+        <span class="action-type">${esc(a.action)}</span>
+        <span class="action-detail">${esc(a.detail)}</span>
+      </div>
+      <div class="action-time">${timeAgo(a.time)}</div>
+    `;
+    list.appendChild(div);
+  }
+}
+
+document.getElementById('weekPrev')?.addEventListener('click', () => { weekOffset--; renderWeekGrid(); });
+document.getElementById('weekNext')?.addEventListener('click', () => { weekOffset++; renderWeekGrid(); });
+
+// ========== RECIPES ==========
+let recipesData = {};
+let expandedRecipes = new Set();
+
+async function loadRecipes() {
+  try {
+    const res = await fetch(`${API}/api/family/recipes`);
+    recipesData = await res.json();
+  } catch {}
+  renderRecipes();
+}
+
+async function saveRecipe(name, data) {
+  try {
+    await fetch(`${API}/api/family/recipes/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  } catch {}
+}
+
+function renderRecipes() {
+  const container = document.getElementById('recipeList');
+  if (!container) return;
+  const names = Object.keys(recipesData).sort();
+
+  if (names.length === 0) {
+    container.innerHTML = '<div class="card"><div class="empty-list">No recipes yet. Add meals to the planner and ingredients will be extracted automatically.</div></div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const name of names) {
+    const recipe = recipesData[name];
+    const expanded = expandedRecipes.has(name);
+    const ingredients = recipe.ingredients || [];
+    const prefs = recipe.preferences || {};
+
+    const card = document.createElement('div');
+    card.className = 'recipe-card';
+
+    let ingredientsHtml = '';
+    ingredients.forEach((ing, idx) => {
+      const isHuman = prefs[ing] === 'human';
+      const tag = isHuman
+        ? '<span class="recipe-ingredient-tag human">preference</span>'
+        : '<span class="recipe-ingredient-tag auto">auto</span>';
+      ingredientsHtml += `
+        <div class="recipe-ingredient">
+          <span class="recipe-ingredient-name" data-recipe="${esc(name)}" data-idx="${idx}">${esc(ing)}</span>
+          ${tag}
+          <button class="recipe-ingredient-remove" data-recipe="${esc(name)}" data-idx="${idx}">remove</button>
+        </div>
+      `;
+    });
+
+    card.innerHTML = `
+      <div class="recipe-header" data-recipe="${esc(name)}">
+        <span class="recipe-name">${esc(name)}</span>
+        <span class="recipe-count">${ingredients.length} ingredients</span>
+      </div>
+      <div class="recipe-body${expanded ? '' : ' collapsed'}">
+        ${ingredientsHtml}
+        <form class="recipe-add-form" data-recipe="${esc(name)}">
+          <input type="text" placeholder="Add ingredient..." data-recipe="${esc(name)}">
+          <button type="submit" class="btn-primary btn-sm">Add</button>
+        </form>
+        ${recipe.recipe ? `<div class="recipe-instructions">${esc(recipe.recipe)}</div>` : ''}
+      </div>
+    `;
+    container.appendChild(card);
+  }
+
+  // Toggle expand/collapse
+  container.querySelectorAll('.recipe-header').forEach(el => {
+    el.addEventListener('click', () => {
+      const name = el.dataset.recipe;
+      if (expandedRecipes.has(name)) expandedRecipes.delete(name);
+      else expandedRecipes.add(name);
+      renderRecipes();
+    });
+  });
+
+  // Click ingredient to edit
+  container.querySelectorAll('.recipe-ingredient-name').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = el.dataset.recipe;
+      const idx = parseInt(el.dataset.idx);
+      const recipe = recipesData[name];
+      const current = recipe.ingredients[idx];
+      const val = prompt(`Edit ingredient for ${name}:`, current);
+      if (val === null || val === current) return;
+      if (!val) return; // don't allow blank — use remove instead
+      const old = recipe.ingredients[idx];
+      recipe.ingredients[idx] = val;
+      if (!recipe.preferences) recipe.preferences = {};
+      // Remove old preference key, mark new one as human
+      delete recipe.preferences[old];
+      recipe.preferences[val] = 'human';
+      logAction('user', 'ingredient edited', `${name}: "${old}" → "${val}"`);
+      saveRecipe(name, recipe);
+      saveFamily();
+      renderRecipes();
+      // Update grocery list if the old ingredient was on it for this meal
+      updateGroceryForRecipeChange(name, old, val);
+    });
+  });
+
+  // Remove ingredient
+  container.querySelectorAll('.recipe-ingredient-remove').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = el.dataset.recipe;
+      const idx = parseInt(el.dataset.idx);
+      const recipe = recipesData[name];
+      const removed = recipe.ingredients.splice(idx, 1)[0];
+      if (recipe.preferences) delete recipe.preferences[removed];
+      logAction('user', 'ingredient removed', `${name}: "${removed}"`);
+      saveRecipe(name, recipe);
+      saveFamily();
+      renderRecipes();
+      // Remove from grocery list if only used by this meal
+      removeGroceryIfOrphan(removed, name);
+    });
+  });
+
+  // Add ingredient
+  container.querySelectorAll('.recipe-add-form').forEach(form => {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = form.dataset.recipe;
+      const input = form.querySelector('input');
+      const val = input.value.trim();
+      if (!val) return;
+      const recipe = recipesData[name];
+      recipe.ingredients.push(val);
+      if (!recipe.preferences) recipe.preferences = {};
+      recipe.preferences[val] = 'human';
+      logAction('user', 'ingredient added', `${name}: "${val}"`);
+      saveRecipe(name, recipe);
+      saveFamily();
+      input.value = '';
+      renderRecipes();
+      // Add to grocery list for this meal
+      addGroceryFromRecipe(name, val);
+    });
+  });
+}
+
+// When a recipe ingredient is edited, update the grocery list
+function updateGroceryForRecipeChange(mealName, oldIng, newIng) {
+  const lower = mealName.toLowerCase();
+  const oldLower = oldIng.toLowerCase();
+  const list = familyData.groceryList || [];
+  const idx = list.findIndex(i => {
+    const n = i.name.toLowerCase();
+    return (n === oldLower || n.includes(oldLower) || oldLower.includes(n)) &&
+      (i.meals || []).includes(lower);
+  });
+  if (idx >= 0) {
+    list[idx].name = newIng;
+    list[idx].source = 'human';
+    saveFamily();
+    renderGroceryList();
+  }
+}
+
+// When a recipe ingredient is removed, remove from grocery if no other meal uses it
+function removeGroceryIfOrphan(ingredient, mealName) {
+  const lower = ingredient.toLowerCase();
+  const mealLower = mealName.toLowerCase();
+  const list = familyData.groceryList || [];
+  const idx = list.findIndex(i => {
+    const n = i.name.toLowerCase();
+    return n === lower || n.includes(lower) || lower.includes(n);
+  });
+  if (idx >= 0) {
+    const item = list[idx];
+    if (item.meals) {
+      item.meals = item.meals.filter(m => m !== mealLower);
+      if (item.meals.length === 0 && item.source === 'auto') {
+        list.splice(idx, 1);
+      }
+    }
+    saveFamily();
+    renderGroceryList();
+  }
+}
+
+// When a human adds an ingredient to a recipe, add it to grocery list
+function addGroceryFromRecipe(mealName, ingredient) {
+  if (!familyData.groceryList) familyData.groceryList = [];
+  const lower = ingredient.toLowerCase();
+  const mealLower = mealName.toLowerCase();
+  const idx = familyData.groceryList.findIndex(i => {
+    const n = i.name.toLowerCase();
+    return n === lower || n.includes(lower) || lower.includes(n) ||
+      n.replace(/s$/, '') === lower.replace(/s$/, '');
+  });
+  if (idx >= 0) {
+    const existing = familyData.groceryList[idx];
+    if (!existing.meals) existing.meals = [];
+    if (!existing.meals.includes(mealLower)) existing.meals.push(mealLower);
+  } else {
+    familyData.groceryList.push({ name: ingredient, checked: false, source: 'human', meals: [mealLower] });
+  }
+  saveFamily();
+  renderGroceryList();
+}
 
 // ========== INIT ==========
 connectWS();
