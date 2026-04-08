@@ -25,11 +25,18 @@ import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
 
+import { readFileSync } from 'fs';
+
 const PORT = 19222;
 const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
-const MIN_ORDER = 50;
-const DELIVERY_INSTRUCTIONS = 'Please leave at front door / pouch. Thank you.';
+const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Load config
+let PREFS = {};
+try { PREFS = JSON.parse(readFileSync(PREFS_FILE, 'utf-8')); } catch {}
+const CVV = PREFS.payment?.cvv || null;
+const DELIVERY_INSTRUCTIONS = PREFS.delivery?.instructions || 'Please leave at front door / pouch. Thank you.';
 
 // ═══════════════════════════════════════════════════════════
 // CHROME
@@ -270,6 +277,47 @@ async function woolworthsCheckoutAndPay(page) {
 
   await wait(2000);
 
+  // Enter CVV if required
+  if (CVV) {
+    console.log('  Entering payment CVV...');
+    await page.evaluate((cvv) => {
+      const inputs = document.querySelectorAll('input');
+      for (const input of inputs) {
+        const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') ||
+                       input.getAttribute('name') || input.id || '').toLowerCase();
+        const type = input.type || '';
+        if (label.includes('cvv') || label.includes('cvc') || label.includes('security code') ||
+            label.includes('card verification') || (type === 'password' && label.includes('card')) ||
+            (type === 'tel' && input.maxLength <= 4 && input.maxLength >= 3)) {
+          input.value = cvv;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+      // Also check shadow DOM for CVV input
+      function findCvv(root, depth = 0) {
+        if (depth > 3) return;
+        const els = root.querySelectorAll('*');
+        for (const el of els) {
+          if (el.shadowRoot) {
+            const inputs = el.shadowRoot.querySelectorAll('input');
+            for (const input of inputs) {
+              const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') || '').toLowerCase();
+              if (label.includes('cvv') || label.includes('cvc') || label.includes('security')) {
+                input.value = cvv;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }
+            findCvv(el.shadowRoot, depth + 1);
+          }
+        }
+      }
+      findCvv(document);
+    }, CVV);
+    await wait(2000);
+  }
+
   // Click Place Order / Pay / Confirm
   console.log('  Placing order...');
   const ordered = await page.evaluate(() => {
@@ -463,6 +511,25 @@ async function colesCheckoutAndPay(page) {
     }
   }, DELIVERY_INSTRUCTIONS);
   await wait(2000);
+
+  // Enter CVV if required
+  if (CVV) {
+    console.log('  Entering payment CVV...');
+    await page.evaluate((cvv) => {
+      const inputs = document.querySelectorAll('input');
+      for (const input of inputs) {
+        const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') ||
+                       input.getAttribute('name') || input.id || '').toLowerCase();
+        if (label.includes('cvv') || label.includes('cvc') || label.includes('security code') ||
+            label.includes('card verification')) {
+          input.value = cvv;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+    }, CVV);
+    await wait(2000);
+  }
 
   // Click Place Order / Pay
   console.log('  Placing order...');

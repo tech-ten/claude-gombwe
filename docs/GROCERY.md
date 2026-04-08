@@ -84,7 +84,29 @@ You will see:
 
 If it says "not logged in" for either store, go back to Chrome and make sure you're fully logged in, then run `gombwe grocery-setup` again.
 
-### 1.5 What was saved
+### 1.5 Configure payment
+
+Open `~/.claude-gombwe/data/grocery-preferences.json` and add your CVV so checkout completes automatically:
+
+```json
+{
+  "payment": {
+    "cvv": "1234"
+  },
+  "delivery": {
+    "instructions": "Please leave at front door / pouch. Thank you.",
+    "preference": "asap"
+  },
+  "brands": {
+    "bbq sauce": "MasterFoods Smokey Barbecue Sauce 500mL"
+  },
+  "never_substitute": ["MasterFoods BBQ Sauce"]
+}
+```
+
+Your CVV is stored locally on your machine only — never committed to git, never uploaded anywhere. The script enters it during checkout so payment completes without manual intervention.
+
+### 1.6 What was saved
 
 Your login cookies are saved in `~/.claude-gombwe/chrome-profile/`. This is a local Chrome profile on your computer — your credentials are not sent anywhere. Next time you run a grocery command, Chrome launches in the background with this profile and you're already logged in.
 
