@@ -6,16 +6,19 @@ user-invocable: true
 tools:
   - name: load-preferences
     type: shell
-    command: "cat ~/.claude-gombwe/data/grocery-preferences.json 2>/dev/null || echo '{\"store\":\"woolworths\",\"brands\":{\"bbq sauce\":\"MasterFoods Smokey Barbecue Sauce 500mL\",\"tomato sauce\":\"Heinz Tomato Ketchup 500mL\"},\"sizes\":{},\"notes\":\"Never substitute Masterfoods BBQ Sauce\"}'"
-  - name: load-history
+    command: "cat ~/.claude-gombwe/data/grocery-preferences.json 2>/dev/null || echo '{\"brands\":{\"bbq sauce\":\"MasterFoods Smokey Barbecue Sauce 500mL\"},\"never_substitute\":[\"Masterfoods BBQ Sauce\"],\"notes\":\"Never substitute Masterfoods BBQ Sauce\"}'"
+  - name: compare-prices
     type: shell
-    command: "cat ~/.claude-gombwe/data/grocery-history.json 2>/dev/null || echo '[]'"
-  - name: save-preferences
+    command: "node /Users/tendaimudavanhu/code/claude-gombwe/scripts/grocery.mjs compare"
+  - name: order-woolworths
     type: shell
-    command: "cat > ~/.claude-gombwe/data/grocery-preferences.json"
-  - name: save-history
+    command: "node /Users/tendaimudavanhu/code/claude-gombwe/scripts/grocery.mjs order woolworths"
+  - name: order-coles
     type: shell
-    command: "cat > ~/.claude-gombwe/data/grocery-history.json"
+    command: "node /Users/tendaimudavanhu/code/claude-gombwe/scripts/grocery.mjs order coles"
+  - name: smart-split
+    type: shell
+    command: "node /Users/tendaimudavanhu/code/claude-gombwe/scripts/grocery.mjs split"
 ---
 
 # Smart Grocery Order — Woolworths & Coles
