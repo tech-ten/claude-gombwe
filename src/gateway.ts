@@ -103,6 +103,38 @@ export class Gateway {
             timestamp: new Date().toISOString(),
             channel: task.channel,
           });
+
+          // On successful grocery order: move grocery items to pantry
+          if (event === 'task:completed' && task.prompt?.toLowerCase().includes('grocery-order')) {
+            const output = task.output.join('\n');
+            if (output.includes('ORDER CONFIRMED') || output.includes('order placed') || output.includes('Groceries are on their way')) {
+              try {
+                const familyPath = join(this.config.dataDir, 'family.json');
+                const family = JSON.parse(readFileSync(familyPath, 'utf-8'));
+                if (!family.pantry) family.pantry = [];
+                if (!family.actions) family.actions = [];
+                const groceryItems = (family.groceryList || []).filter((i: any) => !i.checked).map((i: any) => i.name);
+                const nonFoodItems = (family.nonFoodList || []).filter((i: any) => !i.checked).map((i: any) => i.name);
+                // Move grocery items to pantry
+                for (const name of groceryItems) {
+                  if (!family.pantry.some((p: string) => p.toLowerCase() === name.toLowerCase())) {
+                    family.pantry.push(name);
+                  }
+                }
+                family.groceryList = [];
+                family.nonFoodList = [];
+                family.lastOrdered = new Date().toISOString();
+                family.actions.unshift({
+                  time: new Date().toISOString(),
+                  actor: 'gombwe',
+                  action: 'order completed',
+                  detail: `${groceryItems.length + nonFoodItems.length} items moved to pantry (${task.channel})`,
+                });
+                if (family.actions.length > 100) family.actions.length = 100;
+                writeFileSync(familyPath, JSON.stringify(family, null, 2));
+              } catch {}
+            }
+          }
         }
       });
     }
@@ -664,6 +696,77 @@ export class Gateway {
       Object.assign(data, req.body);
       saveFamily(data);
       res.json(data);
+    });
+
+    // Recipe database
+    const recipesFile = join(this.config.dataDir, 'recipes.json');
+    const loadRecipes = (): Record<string, { ingredients: string[], recipe: string }> => {
+      try { return JSON.parse(readFileSync(recipesFile, 'utf-8')); }
+      catch { return {}; }
+    };
+    const saveRecipes = (data: any) => writeFileSync(recipesFile, JSON.stringify(data, null, 2));
+
+    this.app.get('/api/family/recipes', (_req: Request, res: Response) => {
+      res.json(loadRecipes());
+    });
+
+    this.app.put('/api/family/recipes/:name', (req: Request, res: Response) => {
+      const recipes = loadRecipes();
+      const name = (req.params.name as string).toLowerCase();
+      recipes[name] = req.body;
+      saveRecipes(recipes);
+      res.json({ ok: true });
+    });
+
+    // Extract ingredients — checks local recipes first, only calls AI for unknown meals
+    this.app.post('/api/family/ingredients', async (req: Request, res: Response) => {
+      const { meal, pantry = [], existing = [] } = req.body;
+      if (!meal) { res.status(400).json({ error: 'meal is required' }); return; }
+
+      const recipes = loadRecipes();
+      const key = meal.toLowerCase();
+
+      // Check local recipe database first
+      if (recipes[key]) {
+        const cached = recipes[key];
+        const filteredIngredients = cached.ingredients.filter((i: string) => {
+          const il = i.toLowerCase();
+          return !pantry.some((p: string) => p.toLowerCase() === il) &&
+                 !existing.some((e: string) => e.toLowerCase() === il);
+        });
+        res.json({ ingredients: filteredIngredients, source: 'local', recipe: cached.recipe });
+        return;
+      }
+
+      // Unknown meal — call AI
+      try {
+        const { execSync } = await import('node:child_process');
+        const prompt = `I need the recipe and grocery list for "${meal}". Return ONLY valid JSON with this exact structure, no explanation:
+{"ingredients": ["item1", "item2"], "recipe": "Step 1: ... Step 2: ..."}
+The ingredients should be short grocery item names. The recipe should be concise cooking instructions.`;
+        const result = execSync(
+          `claude -p "${prompt.replace(/"/g, '\\"')}" --output-format text --dangerously-skip-permissions --model claude-sonnet-4-6`,
+          { encoding: 'utf-8', timeout: 20000 }
+        ).trim();
+
+        const match = result.match(/\{[\s\S]*\}/);
+        const parsed = match ? JSON.parse(match[0]) : { ingredients: [], recipe: '' };
+
+        // Save to local recipe database
+        recipes[key] = { ingredients: parsed.ingredients || [], recipe: parsed.recipe || '' };
+        saveRecipes(recipes);
+
+        // Filter out pantry/existing
+        const filteredIngredients = (parsed.ingredients || []).filter((i: string) => {
+          const il = i.toLowerCase();
+          return !pantry.some((p: string) => p.toLowerCase() === il) &&
+                 !existing.some((e: string) => e.toLowerCase() === il);
+        });
+
+        res.json({ ingredients: filteredIngredients, source: 'ai', recipe: parsed.recipe || '' });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message, ingredients: [], source: 'error' });
+      }
     });
   }
 

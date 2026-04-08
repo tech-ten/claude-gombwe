@@ -56,3 +56,5 @@ You NEVER browse websites. You NEVER click buttons. You call the tool and it doe
 - Use preferred brands from the preferences file
 - Never substitute Masterfoods BBQ Sauce
 - After successful order, save any new preferences
+- If called from a scheduled job (cron), check ~/.claude-gombwe/data/family.json for lastOrdered — if it falls within the current ISO week, skip the order and report "Already ordered this week"
+- If items are "Review my usual list", read weekly_list from grocery-preferences.json AND unchecked items from family.json groceryList and nonFoodList
