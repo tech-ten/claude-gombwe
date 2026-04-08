@@ -6,16 +6,24 @@ user-invocable: true
 tools:
   - name: buy-auto
     type: shell
-    description: Compare prices and buy from the cheapest store — full end-to-end
-    command: "node scripts/grocery-buy.mjs auto"
+    description: Compare prices, add to cart at cheapest store. Does NOT checkout — waits for user confirmation.
+    command: "node scripts/grocery-buy.mjs auto --no-checkout"
   - name: buy-woolworths
     type: shell
-    description: Buy from Woolworths — clear cart, add items, checkout, pay
-    command: "node scripts/grocery-buy.mjs woolworths"
+    description: Add items to Woolworths cart. Does NOT checkout — waits for user confirmation.
+    command: "node scripts/grocery-buy.mjs woolworths --no-checkout"
   - name: buy-coles
     type: shell
-    description: Buy from Coles — clear cart, add items, checkout, pay
-    command: "node scripts/grocery-buy.mjs coles"
+    description: Add items to Coles cart. Does NOT checkout — waits for user confirmation.
+    command: "node scripts/grocery-buy.mjs coles --no-checkout"
+  - name: confirm-checkout-woolworths
+    type: shell
+    description: Confirm and place the Woolworths order. Only call AFTER the user says yes.
+    command: "node scripts/grocery-buy.mjs --checkout-only woolworths"
+  - name: confirm-checkout-coles
+    type: shell
+    description: Confirm and place the Coles order. Only call AFTER the user says yes.
+    command: "node scripts/grocery-buy.mjs --checkout-only coles"
   - name: load-preferences
     type: shell
     description: Load saved brand preferences
@@ -47,7 +55,10 @@ You NEVER browse websites. You NEVER click buttons. You call the tool and it doe
 1. Parse: "milk, eggs, bread, bbq sauce" → ["milk 2L", "free range eggs 12 pack", "sliced bread white", "Masterfoods Barbecue Sauce 500mL"]
 2. Check preferences: if "bbq sauce" → preference says "MasterFoods Smokey Barbecue Sauce 500mL", use that exact name
 3. Call: buy-auto with those items (or buy-woolworths/buy-coles if user specifies)
-4. Report the result to the user
+4. Show the user the cart summary (items added, store, estimated total)
+5. **ASK THE USER TO CONFIRM** before placing the order. Say something like: "Cart ready at Woolworths — 5 items, ~$32.50. Place order? (yes/no)"
+6. Only call confirm-checkout-woolworths or confirm-checkout-coles AFTER the user replies yes
+7. If the user says no, cancel, or stop — do NOT checkout. Tell them items are in the cart and they can checkout manually.
 
 ## Rules
 
