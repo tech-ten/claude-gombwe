@@ -109,13 +109,9 @@ export class Gateway {
             const output = task.output.join('\n');
             if (output.includes('ORDER CONFIRMED') || output.includes('order placed') || output.includes('Groceries are on their way')) {
               try {
-                const familyPath = join(this.config.dataDir, 'family.json');
-                const family = JSON.parse(readFileSync(familyPath, 'utf-8'));
-                if (!family.pantry) family.pantry = [];
-                if (!family.actions) family.actions = [];
+                const family = this.loadFamilyData();
                 const groceryItems = (family.groceryList || []).map((i: any) => i.name);
                 const nonFoodItems = (family.nonFoodList || []).map((i: any) => i.name);
-                // Server-side order: move all items to pantry (no checkbox selection from cron/discord)
                 for (const name of groceryItems) {
                   if (!family.pantry.some((p: string) => p.toLowerCase() === name.toLowerCase())) {
                     family.pantry.push(name);
@@ -124,14 +120,9 @@ export class Gateway {
                 family.groceryList = [];
                 family.nonFoodList = [];
                 family.lastOrdered = new Date().toISOString();
-                family.actions.unshift({
-                  time: new Date().toISOString(),
-                  actor: 'gombwe',
-                  action: 'order completed',
-                  detail: `${groceryItems.length + nonFoodItems.length} items moved to pantry (${task.channel})`,
-                });
-                if (family.actions.length > 100) family.actions.length = 100;
-                writeFileSync(familyPath, JSON.stringify(family, null, 2));
+                this.logFamilyAction(family, 'gombwe', 'order completed',
+                  `${groceryItems.length + nonFoodItems.length} items moved to pantry (${task.channel})`);
+                this.saveFamilyData(family);
               } catch {}
             }
           }
@@ -235,8 +226,18 @@ export class Gateway {
       // --- Chat mode (default): conversational with --resume ---
       const claudeSessionId = this.sessions.getClaudeSessionId(msg.sessionKey);
 
+      // Inject family + skills context on the first message of a conversation
+      // so Claude can handle natural language family requests
+      let chatMessage = msg.text;
+      if (!claudeSessionId) {
+        const familyCtx = this.buildFamilyContext();
+        const skillsCtx = this.skills.buildSkillsPrompt();
+        const context = [familyCtx, skillsCtx].filter(Boolean).join('\n\n---\n\n');
+        chatMessage = `${context}\n\n---\n\nUser message: ${msg.text}`;
+      }
+
       const result = await this.agent.chat(
-        msg.text,
+        chatMessage,
         this.config.agents.workingDir,
         claudeSessionId || undefined,
       );
@@ -292,7 +293,17 @@ export class Gateway {
           `/tasks — list running/recent tasks\n` +
           `/cancel <id> — cancel a running task\n` +
           `/skills — list available skills\n` +
-          `/model <name> — switch model (opus/sonnet/haiku)\n`
+          `/model <name> — switch model (opus/sonnet/haiku)\n\n` +
+          `**Family:**\n` +
+          `Just say it naturally — "add chicken curry to Wednesday dinner", "we need milk", "order the groceries"\n\n` +
+          `Or use commands:\n` +
+          `/meals — view weekly plan, grocery list, pantry\n` +
+          `/dinner <day> <meal> — e.g. /dinner wed Chicken curry\n` +
+          `/breakfast <day> <meal> — e.g. /breakfast sat Pancakes\n` +
+          `/lunch <day> <meal> — e.g. /lunch thu Caesar salad\n` +
+          `/list — view shopping list · /list milk, eggs — add items\n` +
+          `/buy — order everything on the list\n` +
+          `/buy <items> — order specific items (e.g. /buy hair remover)\n`
         );
         return true;
 
@@ -459,6 +470,161 @@ export class Gateway {
         return true;
       }
 
+      // ── Family commands ──────────────────────────────────────
+      // /dinner wed Chicken curry — slot is the command, day + name
+      // /breakfast sat Pancakes
+      // /lunch thu Caesar salad
+      case 'breakfast':
+      case 'lunch':
+      case 'dinner': {
+        const mealSlot = cmd; // breakfast, lunch, or dinner
+        if (args.length < 2) {
+          await reply(
+            `**Usage:** /${mealSlot} <day> <meal name>\n\n` +
+            `**Examples:**\n` +
+            `/${mealSlot} wed Chicken curry\n` +
+            `/${mealSlot} friday Fish and chips\n` +
+            `/${mealSlot} today Leftovers\n\n` +
+            `**Days:** today, tomorrow, mon, tue, wed, thu, fri, sat, sun\n` +
+            `(or full names: monday, tuesday, etc.)`
+          );
+          return true;
+        }
+
+        const dayArg = args[0].toLowerCase();
+        const mealName = args.slice(1).join(' ');
+        const dk = this.resolveDay(dayArg);
+
+        if (!dk) {
+          await reply(`I don't recognise "${args[0]}" as a day.\nTry: today, tomorrow, mon, tue, wed, thu, fri, sat, sun`);
+          return true;
+        }
+
+        const family = this.loadFamilyData();
+        if (!family.meals) family.meals = {};
+        if (!family.meals[dk]) family.meals[dk] = {};
+        family.meals[dk][mealSlot] = mealName;
+        this.logFamilyAction(family, msg.sender || 'user', 'meal added', `${mealSlot} on ${dk}: ${mealName}`);
+        this.saveFamilyData(family);
+
+        const dayLabel = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(dk + 'T00:00:00').getDay()];
+        await reply(`Got it — **${mealSlot}** ${dayLabel}: ${mealName}`);
+
+        // Extract ingredients
+        try {
+          const ingRes = await fetch(`http://127.0.0.1:${this.config.port}/api/family/ingredients`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ meal: mealName, pantry: family.pantry || [], existing: (family.groceryList || []).map((i: any) => i.name) }),
+          });
+          const ingData = await ingRes.json();
+          if (ingData.ingredients?.length > 0) {
+            await reply(`Added to shopping list: ${ingData.ingredients.join(', ')}`);
+          }
+        } catch {}
+        return true;
+      }
+
+      // /list — view grocery list. /list milk, eggs — add items
+      case 'list': {
+        const listArgs = args.join(' ').trim();
+        const family = this.loadFamilyData();
+
+        if (!listArgs) {
+          // Show the list
+          const groceries = (family.groceryList || []).filter((i: any) => !i.checked);
+          const nonFood = (family.nonFoodList || []).filter((i: any) => !i.checked);
+          if (groceries.length === 0 && nonFood.length === 0) {
+            await reply('Shopping list is empty. Add items with `/list milk, eggs, bread`');
+            return true;
+          }
+          let out = '**Shopping List**\n';
+          if (groceries.length) out += '\n' + groceries.map((i: any) => `- ${i.name}`).join('\n');
+          if (nonFood.length) out += '\n\n**Household**\n' + nonFood.map((i: any) => `- ${i.name}`).join('\n');
+          await reply(out);
+          return true;
+        }
+
+        // Add items — auto-sort food vs non-food
+        if (!family.groceryList) family.groceryList = [];
+        if (!family.nonFoodList) family.nonFoodList = [];
+        const newItems = listArgs.split(',').map((s: string) => s.trim()).filter(Boolean);
+        const added: string[] = [];
+        for (const name of newItems) {
+          const lower = name.toLowerCase();
+          const exists = [...family.groceryList, ...family.nonFoodList].some((i: any) => {
+            const n = i.name.toLowerCase();
+            return n === lower || n.includes(lower) || lower.includes(n);
+          });
+          if (exists) continue;
+          if (this.isNonFoodItem(lower)) {
+            family.nonFoodList.push({ name, checked: false });
+          } else {
+            family.groceryList.push({ name, checked: false });
+          }
+          added.push(name);
+        }
+        if (added.length > 0) {
+          this.logFamilyAction(family, msg.sender || 'user', 'added to list', added.join(', '));
+          this.saveFamilyData(family);
+          await reply(`Added: ${added.join(', ')}`);
+        } else {
+          await reply('Those items are already on the list.');
+        }
+        return true;
+      }
+
+      // /buy — buy everything on the list. /buy hair remover — buy specific things
+      case 'buy': {
+        const buyArgs = args.join(' ').trim();
+        const family = this.loadFamilyData();
+        let itemsToOrder: string[];
+
+        if (buyArgs) {
+          // Specific items — add to correct list first
+          itemsToOrder = buyArgs.split(',').map((s: string) => s.trim()).filter(Boolean);
+          if (!family.groceryList) family.groceryList = [];
+          if (!family.nonFoodList) family.nonFoodList = [];
+          const newItems: string[] = [];
+          for (const item of itemsToOrder) {
+            const lower = item.toLowerCase();
+            const exists = [...family.groceryList, ...family.nonFoodList].some((i: any) => {
+              const n = i.name.toLowerCase();
+              return n === lower || n.includes(lower) || lower.includes(n);
+            });
+            if (exists) continue;
+            if (this.isNonFoodItem(lower)) {
+              family.nonFoodList.push({ name: item, checked: false });
+            } else {
+              family.groceryList.push({ name: item, checked: false });
+            }
+            newItems.push(item);
+          }
+          if (newItems.length > 0) {
+            this.logFamilyAction(family, msg.sender || 'user', 'added to list (buy)', newItems.join(', '));
+            this.saveFamilyData(family);
+          }
+        } else {
+          const groceries = (family.groceryList || []).map((i: any) => i.name);
+          const nonFood = (family.nonFoodList || []).map((i: any) => i.name);
+          itemsToOrder = [...groceries, ...nonFood];
+        }
+
+        if (itemsToOrder.length === 0) {
+          await reply('Nothing to buy. Add items with `/list milk, eggs` first, or `/buy hair remover` to order directly.');
+          return true;
+        }
+
+        await reply(`**Buying ${itemsToOrder.length} items:**\n${itemsToOrder.join(', ')}\n\nStarting order...`);
+
+        const skillsPrompt = this.skills.buildSkillsPrompt();
+        const buyPrompt = skillsPrompt
+          ? `${skillsPrompt}\n\n/grocery-order ${itemsToOrder.join(', ')}`
+          : `/grocery-order ${itemsToOrder.join(', ')}`;
+        await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey);
+        return true;
+      }
+
       default: {
         // Check skills
         const skill = this.skills.getSkill(cmd);
@@ -486,6 +652,121 @@ export class Gateway {
         return false; // Not a known command
       }
     }
+  }
+
+  private get familyFile(): string {
+    return join(this.config.dataDir, 'family.json');
+  }
+
+  private loadFamilyData(): any {
+    try { return JSON.parse(readFileSync(this.familyFile, 'utf-8')); }
+    catch { return { meals: {}, groceryList: [], nonFoodList: [], pantry: [], events: [], members: [], actions: [] }; }
+  }
+
+  private saveFamilyData(data: any): void {
+    writeFileSync(this.familyFile, JSON.stringify(data, null, 2));
+  }
+
+  private isNonFoodItem(name: string): boolean {
+    const nonFoodKeywords = [
+      'toilet paper', 'paper towel', 'tissues', 'napkins',
+      'shampoo', 'conditioner', 'body wash', 'soap', 'hand wash',
+      'toothpaste', 'toothbrush', 'mouthwash', 'floss', 'dental',
+      'deodorant', 'razor', 'shaving', 'hair remover', 'wax strip',
+      'sunscreen', 'moisturiser', 'moisturizer', 'lotion', 'cream',
+      'detergent', 'laundry', 'fabric softener', 'bleach', 'stain',
+      'dishwash', 'dish soap', 'sponge', 'scrub', 'cleaning', 'cleaner',
+      'disinfectant', 'wipes', 'spray', 'air freshener',
+      'bin bags', 'garbage bags', 'trash bags', 'cling wrap', 'foil', 'baking paper',
+      'batteries', 'light bulb', 'candle',
+      'nappy', 'nappies', 'diaper', 'diapers', 'baby wipes',
+      'pad', 'pads', 'tampon', 'tampons', 'sanitary',
+      'pet food', 'cat litter', 'dog food',
+      'ziplock', 'sandwich bags', 'glad wrap',
+      'insect', 'bug spray', 'fly spray', 'mosquito',
+      'bandaid', 'band-aid', 'plaster', 'first aid',
+      'cotton', 'cotton ball', 'cotton bud', 'q-tip',
+    ];
+    return nonFoodKeywords.some(kw => name.includes(kw) || kw.includes(name));
+  }
+
+  private resolveDay(input: string): string | null {
+    const now = new Date();
+    const lower = input.toLowerCase();
+
+    if (lower === 'today') {
+      return now.toISOString().slice(0, 10);
+    }
+    if (lower === 'tomorrow') {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().slice(0, 10);
+    }
+
+    // YYYY-MM-DD passthrough
+    if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+
+    const dayMap: Record<string, number> = {
+      sun: 0, sunday: 0,
+      mon: 1, monday: 1,
+      tue: 2, tuesday: 2,
+      wed: 3, wednesday: 3,
+      thu: 4, thursday: 4,
+      fri: 5, friday: 5,
+      sat: 6, saturday: 6,
+    };
+
+    const target = dayMap[lower];
+    if (target === undefined) return null;
+
+    const current = now.getDay();
+    let diff = target - current;
+    if (diff < 0) diff += 7; // next occurrence
+    // diff === 0 means today — that's fine, resolve to today
+
+    const d = new Date(now);
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+
+  private buildFamilyContext(): string {
+    const family = this.loadFamilyData();
+    const mealDays = Object.entries(family.meals || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, slots]: [string, any]) => {
+        const dayName = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(date + 'T00:00:00').getDay()];
+        const meals = Object.entries(slots).map(([slot, name]) => `${slot}: ${name}`).join(', ');
+        return `${dayName} ${date}: ${meals}`;
+      }).join('\n');
+
+    const groceries = (family.groceryList || []).map((i: any) => i.name);
+    const nonFood = (family.nonFoodList || []).map((i: any) => i.name);
+    const pantry = (family.pantry || []).map((i: any) => typeof i === 'string' ? i : i.name);
+
+    return [
+      `You manage a family household. The family data is at ${this.familyFile}.`,
+      `When the user talks about meals, groceries, shopping, cooking, or ordering — act on it directly by reading/writing that JSON file.`,
+      ``,
+      `Current meals:\n${mealDays || '(none planned)'}`,
+      `Shopping list: ${groceries.length ? groceries.join(', ') : '(empty)'}`,
+      nonFood.length ? `Household items: ${nonFood.join(', ')}` : '',
+      pantry.length ? `In stock: ${pantry.join(', ')}` : '',
+      ``,
+      `Key rules:`,
+      `- To add a meal: set meals[YYYY-MM-DD][slot] = name (slot = breakfast/lunch/dinner)`,
+      `- To add groceries: push to groceryList[] with {name, checked: false}`,
+      `- Non-food items (cleaning, toiletries, etc): push to nonFoodList[]`,
+      `- After modifying, always add an action entry to actions[]`,
+      `- After adding a meal, call POST http://127.0.0.1:${this.config.port}/api/family/ingredients with {meal, pantry, existing} to auto-extract ingredients`,
+      `- To order: use the grocery-order skill`,
+      `- Keep responses conversational and brief`,
+    ].filter(Boolean).join('\n');
+  }
+
+  private logFamilyAction(data: any, actor: string, action: string, detail: string): void {
+    if (!data.actions) data.actions = [];
+    data.actions.unshift({ time: new Date().toISOString(), actor, action, detail });
+    if (data.actions.length > 100) data.actions.length = 100;
   }
 
   private setupRoutes(): void {
@@ -691,26 +972,19 @@ export class Gateway {
     });
 
     // ── Family data (calendar, meals, grocery list, school) ──
-    const familyFile = join(this.config.dataDir, 'family.json');
-    const loadFamily = () => {
-      try { return JSON.parse(readFileSync(familyFile, 'utf-8')); }
-      catch { return { meals: {}, groceryList: [], events: [], members: [] }; }
-    };
-    const saveFamily = (data: any) => writeFileSync(familyFile, JSON.stringify(data, null, 2));
-
     this.app.get('/api/family', (_req: Request, res: Response) => {
-      res.json(loadFamily());
+      res.json(this.loadFamilyData());
     });
 
     this.app.put('/api/family', (req: Request, res: Response) => {
-      saveFamily(req.body);
+      this.saveFamilyData(req.body);
       res.json({ ok: true });
     });
 
     this.app.patch('/api/family', (req: Request, res: Response) => {
-      const data = loadFamily();
+      const data = this.loadFamilyData();
       Object.assign(data, req.body);
-      saveFamily(data);
+      this.saveFamilyData(data);
       res.json(data);
     });
 

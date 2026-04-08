@@ -522,6 +522,12 @@ const BUILTIN_COMMANDS = [
   { cmd: '/refactor', desc: 'Refactor code autonomously', type: 'action' },
   { cmd: '/test', desc: 'Run or write tests', type: 'action' },
   { cmd: '/create', desc: 'Create something new', type: 'action' },
+  { cmd: '/meals', desc: 'View weekly plan, grocery list, pantry', type: 'cmd' },
+  { cmd: '/dinner', desc: 'Add dinner (e.g. /dinner wed Chicken curry)', type: 'cmd' },
+  { cmd: '/breakfast', desc: 'Add breakfast (e.g. /breakfast sat Pancakes)', type: 'cmd' },
+  { cmd: '/lunch', desc: 'Add lunch (e.g. /lunch thu Caesar salad)', type: 'cmd' },
+  { cmd: '/list', desc: 'View or add to shopping list (e.g. /list milk, eggs)', type: 'cmd' },
+  { cmd: '/buy', desc: 'Order items (e.g. /buy or /buy hair remover)', type: 'action' },
 ];
 
 let acSelectedIndex = -1;
