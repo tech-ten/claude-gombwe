@@ -861,6 +861,9 @@ async function extractAndAddIngredients(mealName) {
       }
       await saveFamily();
       renderGroceryList();
+      renderWeekGrid();
+      // Refresh recipes to show the new/updated recipe
+      await loadRecipes();
     }
   } catch {}
 }
