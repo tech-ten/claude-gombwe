@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter } from './types.js';
@@ -474,6 +475,12 @@ export class Gateway {
       res.json(task);
     });
 
+    this.app.post('/api/tasks/reload', (_req: Request, res: Response) => {
+      this.agent.reloadTasks();
+      const tasks = this.agent.listTasks();
+      res.json({ ok: true, count: tasks.length });
+    });
+
     this.app.post('/api/tasks/:id/cancel', (req: Request, res: Response) => {
       const id = req.params.id as string;
       const ok = this.agent.cancelTask(id);
@@ -633,6 +640,30 @@ export class Gateway {
       const wf = this.workflows.toggleWorkflow(id, req.body.enabled);
       if (!wf) { res.status(404).json({ error: 'Not found' }); return; }
       res.json(wf);
+    });
+
+    // ── Family data (calendar, meals, grocery list, school) ──
+    const familyFile = join(this.config.dataDir, 'family.json');
+    const loadFamily = () => {
+      try { return JSON.parse(readFileSync(familyFile, 'utf-8')); }
+      catch { return { meals: {}, groceryList: [], events: [], members: [] }; }
+    };
+    const saveFamily = (data: any) => writeFileSync(familyFile, JSON.stringify(data, null, 2));
+
+    this.app.get('/api/family', (_req: Request, res: Response) => {
+      res.json(loadFamily());
+    });
+
+    this.app.put('/api/family', (req: Request, res: Response) => {
+      saveFamily(req.body);
+      res.json({ ok: true });
+    });
+
+    this.app.patch('/api/family', (req: Request, res: Response) => {
+      const data = loadFamily();
+      Object.assign(data, req.body);
+      saveFamily(data);
+      res.json(data);
     });
   }
 

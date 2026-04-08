@@ -472,6 +472,7 @@ document.querySelectorAll('.nav-item').forEach(btn => {
       case 'skills': refreshSkills(); break;
       case 'jobs': refreshJobs(); break;
       case 'services': refreshServices(); break;
+      case 'family': loadFamily(); break;
     }
   });
 });
@@ -734,6 +735,257 @@ document.getElementById('topbarSearch')?.addEventListener('click', () => {
   input.focus();
   renderCmdResults('');
 });
+
+// ========== FAMILY ==========
+let familyData = { meals: {}, groceryList: [], events: [], members: [] };
+let weekOffset = 0;
+
+async function loadFamily() {
+  try {
+    const res = await fetch(`${API}/api/family`);
+    familyData = await res.json();
+  } catch {}
+  renderWeekGrid();
+  renderMealGrid();
+  renderGroceryList();
+  renderSchoolEvents();
+}
+
+async function saveFamily() {
+  try {
+    await fetch(`${API}/api/family`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(familyData)
+    });
+  } catch {}
+}
+
+function getWeekDates() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - start.getDay() + 1 + weekOffset * 7); // Monday
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    days.push(d);
+  }
+  return days;
+}
+
+function dateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function renderWeekGrid() {
+  const grid = document.getElementById('weekGrid');
+  if (!grid) return;
+  const days = getWeekDates();
+  const today = dateKey(new Date());
+
+  const label = document.getElementById('weekLabel');
+  if (label) {
+    const s = days[0], e = days[6];
+    label.textContent = `${s.getDate()} ${MONTHS[s.getMonth()]} — ${e.getDate()} ${MONTHS[e.getMonth()]} ${e.getFullYear()}`;
+  }
+
+  grid.innerHTML = '';
+  for (let i = 0; i < 7; i++) {
+    const d = days[i];
+    const dk = dateKey(d);
+    const isToday = dk === today;
+    const div = document.createElement('div');
+    div.className = `week-day${isToday ? ' today' : ''}`;
+
+    // Collect events for this day
+    const dayEvents = (familyData.events || []).filter(ev => ev.date === dk);
+    const meals = familyData.meals?.[dk];
+
+    let eventsHtml = '';
+    if (meals) {
+      if (meals.breakfast) eventsHtml += `<div class="week-event meal" title="Breakfast: ${esc(meals.breakfast)}">${esc(meals.breakfast)}</div>`;
+      if (meals.lunch) eventsHtml += `<div class="week-event meal" title="Lunch: ${esc(meals.lunch)}">${esc(meals.lunch)}</div>`;
+      if (meals.dinner) eventsHtml += `<div class="week-event meal" title="Dinner: ${esc(meals.dinner)}">${esc(meals.dinner)}</div>`;
+    }
+    for (const ev of dayEvents) {
+      const cls = ev.type === 'school' ? 'school' : 'general';
+      eventsHtml += `<div class="week-event ${cls}" title="${esc(ev.title)}">${esc(ev.title)}</div>`;
+    }
+
+    div.innerHTML = `
+      <div class="week-day-label">${DAY_NAMES[i]}</div>
+      <div class="week-day-num">${d.getDate()}</div>
+      ${eventsHtml}
+    `;
+    grid.appendChild(div);
+  }
+}
+
+function renderMealGrid() {
+  const grid = document.getElementById('mealGrid');
+  if (!grid) return;
+  const days = getWeekDates();
+  grid.innerHTML = '';
+
+  for (let i = 0; i < 7; i++) {
+    const d = days[i];
+    const dk = dateKey(d);
+    const meals = familyData.meals?.[dk] || {};
+    const div = document.createElement('div');
+    div.className = 'meal-day';
+
+    const slots = ['breakfast', 'lunch', 'dinner'].map(slot => {
+      const name = meals[slot] || '';
+      return `
+        <div class="meal-slot ${name ? '' : 'empty'}" data-date="${dk}" data-slot="${slot}">
+          <div class="meal-slot-label">${slot}</div>
+          <div class="meal-slot-name">${name ? esc(name) : '—'}</div>
+        </div>
+      `;
+    }).join('');
+
+    div.innerHTML = `
+      <div class="meal-day-label">${DAY_NAMES[i]}</div>
+      ${slots}
+    `;
+    grid.appendChild(div);
+  }
+
+  // Click to edit meal
+  grid.querySelectorAll('.meal-slot').forEach(el => {
+    el.addEventListener('click', () => {
+      const dk = el.dataset.date;
+      const slot = el.dataset.slot;
+      const current = familyData.meals?.[dk]?.[slot] || '';
+      const val = prompt(`${slot.charAt(0).toUpperCase() + slot.slice(1)} for ${dk}:`, current);
+      if (val === null) return;
+      if (!familyData.meals) familyData.meals = {};
+      if (!familyData.meals[dk]) familyData.meals[dk] = {};
+      if (val) {
+        familyData.meals[dk][slot] = val;
+      } else {
+        delete familyData.meals[dk][slot];
+      }
+      saveFamily();
+      renderMealGrid();
+      renderWeekGrid();
+    });
+  });
+}
+
+function renderGroceryList() {
+  const list = document.getElementById('groceryList');
+  if (!list) return;
+  const items = familyData.groceryList || [];
+
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-list">No items yet. Add something below.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  items.forEach((item, idx) => {
+    const div = document.createElement('div');
+    div.className = `grocery-item${item.checked ? ' checked' : ''}`;
+    div.innerHTML = `
+      <div class="grocery-check" data-idx="${idx}"></div>
+      <span class="grocery-name">${esc(item.name)}</span>
+      <button class="grocery-remove" data-idx="${idx}">remove</button>
+    `;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.grocery-check').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      familyData.groceryList[idx].checked = !familyData.groceryList[idx].checked;
+      saveFamily();
+      renderGroceryList();
+    });
+  });
+
+  list.querySelectorAll('.grocery-remove').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      familyData.groceryList.splice(idx, 1);
+      saveFamily();
+      renderGroceryList();
+    });
+  });
+}
+
+document.getElementById('groceryAddForm')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('groceryInput');
+  const val = input.value.trim();
+  if (!val) return;
+  if (!familyData.groceryList) familyData.groceryList = [];
+  // Support comma-separated items
+  val.split(',').map(s => s.trim()).filter(Boolean).forEach(name => {
+    familyData.groceryList.push({ name, checked: false });
+  });
+  saveFamily();
+  renderGroceryList();
+  input.value = '';
+});
+
+document.getElementById('orderGroceriesBtn')?.addEventListener('click', async () => {
+  const unchecked = (familyData.groceryList || []).filter(i => !i.checked).map(i => i.name);
+  if (unchecked.length === 0) { alert('No items to order.'); return; }
+  if (!confirm(`Order ${unchecked.length} items via Gombwe?\n\n${unchecked.join(', ')}`)) return;
+  // Send grocery order to chat
+  switchTab('chat');
+  const input = document.getElementById('chatInput');
+  input.value = `/grocery-order ${unchecked.join(', ')}`;
+  document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+});
+
+function renderSchoolEvents() {
+  const list = document.getElementById('schoolEvents');
+  if (!list) return;
+  const events = (familyData.events || []).filter(e => e.type === 'school')
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (events.length === 0) {
+    list.innerHTML = '<div class="empty-list">No school events. Click Add Event above.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  events.forEach(ev => {
+    const div = document.createElement('div');
+    div.className = 'school-event';
+    const d = new Date(ev.date + 'T00:00:00');
+    div.innerHTML = `
+      <div class="school-event-info">
+        <div class="school-event-title">${esc(ev.title)}</div>
+        <div class="school-event-meta">${ev.child ? esc(ev.child) : ''} ${ev.notes ? '— ' + esc(ev.notes) : ''}</div>
+      </div>
+      <div class="school-event-date">${DAY_NAMES[(d.getDay()+6)%7]} ${d.getDate()} ${MONTHS[d.getMonth()]}</div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('addSchoolEventBtn')?.addEventListener('click', () => {
+  const title = prompt('Event name (e.g. "School photos", "Sports day"):');
+  if (!title) return;
+  const date = prompt('Date (YYYY-MM-DD):', dateKey(new Date()));
+  if (!date) return;
+  const child = prompt('Child name (optional):');
+  if (!familyData.events) familyData.events = [];
+  familyData.events.push({ title, date, type: 'school', child: child || '', notes: '' });
+  saveFamily();
+  renderSchoolEvents();
+  renderWeekGrid();
+});
+
+document.getElementById('weekPrev')?.addEventListener('click', () => { weekOffset--; renderWeekGrid(); renderMealGrid(); });
+document.getElementById('weekNext')?.addEventListener('click', () => { weekOffset++; renderWeekGrid(); renderMealGrid(); });
 
 // ========== INIT ==========
 connectWS();
