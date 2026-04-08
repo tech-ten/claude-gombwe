@@ -344,6 +344,81 @@ server.tool(
   }
 );
 
+// ── Tool: set_family ────────────────────────────────────────
+server.tool(
+  'set_family',
+  'Add or update a family member. Used for scaling recipe quantities and dietary requirements.',
+  {
+    name: z.string().describe('Name of the family member (e.g. "Tendai", "Mia")'),
+    type: z.enum(['adult', 'child']).describe('Whether this person is an adult or child'),
+    dietary: z.string().optional().describe('Dietary notes (e.g. "vegetarian", "no dairy", "allergic to nuts")'),
+  },
+  async ({ name, type, dietary }) => {
+    const family = loadFamily();
+    if (!family.members) family.members = [];
+
+    const existing = family.members.findIndex((m: any) => m.name.toLowerCase() === name.toLowerCase());
+    const member: any = { name, type };
+    if (dietary) member.dietary = dietary;
+
+    if (existing >= 0) {
+      family.members[existing] = member;
+      logAction(family, 'user', 'member updated', `${name} (${type}${dietary ? ', ' + dietary : ''})`);
+    } else {
+      family.members.push(member);
+      logAction(family, 'user', 'member added', `${name} (${type}${dietary ? ', ' + dietary : ''})`);
+    }
+
+    saveFamily(family);
+    const total = family.members.length;
+    return { content: [{ type: 'text' as const, text: `${existing >= 0 ? 'Updated' : 'Added'} ${name} (${type}${dietary ? ', ' + dietary : ''}). Family size: ${total}.` }] };
+  }
+);
+
+// ── Tool: view_family ───────────────────────────────────────
+server.tool(
+  'view_family',
+  'View all family members, their types, and dietary requirements.',
+  {},
+  async () => {
+    const family = loadFamily();
+    const members = family.members || [];
+    if (members.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No family members configured yet. Use set_family to add members.' }] };
+    }
+
+    const adults = members.filter((m: any) => m.type === 'adult');
+    const children = members.filter((m: any) => m.type === 'child');
+    const lines = members.map((m: any) =>
+      `- ${m.name} (${m.type})${m.dietary ? ' — ' + m.dietary : ''}`
+    );
+    return { content: [{ type: 'text' as const, text: `**Family** (${members.length}: ${adults.length} adults, ${children.length} children)\n${lines.join('\n')}` }] };
+  }
+);
+
+// ── Tool: remove_family_member ──────────────────────────────
+server.tool(
+  'remove_family_member',
+  'Remove a family member.',
+  {
+    name: z.string().describe('Name of the family member to remove'),
+  },
+  async ({ name }) => {
+    const family = loadFamily();
+    if (!family.members) family.members = [];
+
+    const idx = family.members.findIndex((m: any) => m.name.toLowerCase() === name.toLowerCase());
+    if (idx < 0) {
+      return { content: [{ type: 'text' as const, text: `No family member named "${name}" found.` }] };
+    }
+
+    const removed = family.members.splice(idx, 1)[0];
+    logAction(family, 'user', 'member removed', removed.name);
+    saveFamily(family);
+    return { content: [{ type: 'text' as const, text: `Removed ${removed.name}. Family size: ${family.members.length}.` }] };
+  }
+);
+
 // ── Start server ────────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();

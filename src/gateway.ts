@@ -324,7 +324,10 @@ export class Gateway {
           `/lunch <day> <meal> — e.g. /lunch thu Caesar salad\n` +
           `/list — view shopping list · /list milk, eggs — add items\n` +
           `/buy — order everything on the list\n` +
-          `/buy <items> — order specific items (e.g. /buy hair remover)\n`
+          `/buy <items> — order specific items (e.g. /buy hair remover)\n` +
+          `/family add <name> <adult|child> [dietary] — add a family member\n` +
+          `/family remove <name> — remove a family member\n` +
+          `/family — view family members\n`
         );
         return true;
 
@@ -654,6 +657,81 @@ export class Gateway {
           ? `${skillsPrompt}\n\n/grocery-order ${itemsToOrder.join(', ')}`
           : `/grocery-order ${itemsToOrder.join(', ')}`;
         await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey);
+        return true;
+      }
+
+      // /family — view or manage family members
+      case 'family': {
+        const family = this.loadFamilyData();
+        if (!family.members) family.members = [];
+        const sub = args[0]?.toLowerCase();
+
+        if (!sub || sub === 'list') {
+          if (family.members.length === 0) {
+            await reply(
+              `No family members set yet.\n\n` +
+              `**Add members:**\n` +
+              `/family add <name> — add an adult\n` +
+              `/family add <name> child — add a child\n` +
+              `/family add <name> toddler — add a toddler\n` +
+              `/family add <name> adult "no dairy" — with dietary notes\n\n` +
+              `Family size affects ingredient quantities and recipe scaling.`
+            );
+            return true;
+          }
+          const lines = family.members.map((m: any) => {
+            let line = `- **${m.name}** (${m.type || 'adult'})`;
+            if (m.dietary) line += ` — ${m.dietary}`;
+            return line;
+          });
+          await reply(`**Family** (${family.members.length} people)\n${lines.join('\n')}`);
+          return true;
+        }
+
+        if (sub === 'add' && args.length >= 2) {
+          const name = args[1];
+          const typeArg = args[2]?.toLowerCase();
+          const validTypes = ['adult', 'child', 'toddler', 'baby'];
+          const type = validTypes.includes(typeArg || '') ? typeArg : 'adult';
+          // Everything after name and type is dietary notes
+          const dietaryStart = validTypes.includes(typeArg || '') ? 3 : 2;
+          const dietary = args.slice(dietaryStart).join(' ').replace(/^["']|["']$/g, '') || '';
+
+          const exists = family.members.some((m: any) => m.name.toLowerCase() === name.toLowerCase());
+          if (exists) {
+            await reply(`${name} is already in the family.`);
+            return true;
+          }
+
+          const member: any = { name, type };
+          if (dietary) member.dietary = dietary;
+          family.members.push(member);
+          this.logFamilyAction(family, msg.sender || 'user', 'member added', `${name} (${type})`);
+          this.saveFamilyData(family);
+          await reply(`Added **${name}** (${type})${dietary ? ` — ${dietary}` : ''}. Family size: ${family.members.length}`);
+          return true;
+        }
+
+        if (sub === 'remove' && args.length >= 2) {
+          const name = args[1].toLowerCase();
+          const idx = family.members.findIndex((m: any) => m.name.toLowerCase() === name);
+          if (idx === -1) {
+            await reply(`No one called "${args[1]}" in the family.`);
+            return true;
+          }
+          const removed = family.members.splice(idx, 1)[0];
+          this.logFamilyAction(family, msg.sender || 'user', 'member removed', removed.name);
+          this.saveFamilyData(family);
+          await reply(`Removed **${removed.name}**. Family size: ${family.members.length}`);
+          return true;
+        }
+
+        await reply(
+          `**Usage:**\n` +
+          `/family — view family members\n` +
+          `/family add <name> [adult|child|toddler] ["dietary notes"]\n` +
+          `/family remove <name>`
+        );
         return true;
       }
 
@@ -1063,6 +1141,13 @@ export class Gateway {
       const { meal, pantry = [], existing = [] } = req.body;
       if (!meal) { res.status(400).json({ error: 'meal is required' }); return; }
 
+      const family = this.loadFamilyData();
+      const members = family.members || [];
+      const familySize = members.length || 2; // default to 2 if not configured
+      const adults = members.filter((m: any) => m.type === 'adult' || !m.type).length || familySize;
+      const children = members.filter((m: any) => m.type === 'child' || m.type === 'toddler').length;
+      const dietaryNotes = members.filter((m: any) => m.dietary).map((m: any) => `${m.name}: ${m.dietary}`);
+
       const recipes = loadRecipes();
       const key = meal.toLowerCase();
 
@@ -1078,12 +1163,14 @@ export class Gateway {
         return;
       }
 
-      // Unknown meal — call AI
+      // Unknown meal — call AI with family size context
+      const servesNote = `Serves ${familySize} (${adults} adults${children ? `, ${children} children` : ''}).`;
+      const dietaryNote = dietaryNotes.length ? ` Dietary: ${dietaryNotes.join('; ')}.` : '';
       try {
         const { execSync } = await import('node:child_process');
-        const prompt = `I need the recipe and grocery list for "${meal}". Return ONLY valid JSON with this exact structure, no explanation:
-{"ingredients": ["item1", "item2"], "recipe": "Step 1: ... Step 2: ..."}
-The ingredients should be short grocery item names. The recipe should be concise cooking instructions.`;
+        const prompt = `I need the recipe and grocery list for "${meal}". ${servesNote}${dietaryNote} Return ONLY valid JSON with this exact structure, no explanation:
+{"ingredients": ["item1 with quantity", "item2 with quantity"], "recipe": "Step 1: ... Step 2: ..."}
+The ingredients should be grocery item names with quantities scaled for ${familySize} people. The recipe should be concise cooking instructions.`;
         const result = execSync(
           `claude -p "${prompt.replace(/"/g, '\\"')}" --output-format text --dangerously-skip-permissions --model claude-sonnet-4-6`,
           { encoding: 'utf-8', timeout: 20000 }
