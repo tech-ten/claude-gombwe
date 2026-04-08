@@ -43,17 +43,21 @@ function logAction(data: any, actor: string, action: string, detail: string): vo
   if (data.actions.length > 100) data.actions.length = 100;
 }
 
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function resolveDay(input: string): string | null {
   const now = new Date();
   const lower = input.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
   if (['today', 'tdy', 'tonite', 'tonight'].includes(lower)) {
-    return now.toISOString().slice(0, 10);
+    return localDateStr(now);
   }
   if (['tomorrow', 'tmrw', 'tmr', 'tomoz', 'tomo'].includes(lower)) {
     const d = new Date(now);
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
 
@@ -92,7 +96,7 @@ function dayOffset(now: Date, target: number): string {
   if (diff < 0) diff += 7;
   const d = new Date(now);
   d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 function levenshtein(a: string, b: string): number {
@@ -141,14 +145,17 @@ function dayLabel(dateStr: string): string {
 // ── Extract ingredients via gateway API ─────────────────────
 async function extractIngredients(meal: string, pantry: string[], existing: string[]): Promise<string[]> {
   try {
+    console.error(`[mcp-family] extractIngredients: requesting for "${meal}" from http://127.0.0.1:${GATEWAY_PORT}/api/family/ingredients`);
     const res = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/api/family/ingredients`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ meal, pantry, existing }),
     });
     const data = await res.json();
+    console.error(`[mcp-family] extractIngredients: got ${(data.ingredients || []).length} ingredients (source: ${data.source || 'unknown'})`);
     return data.ingredients || [];
-  } catch {
+  } catch (err: any) {
+    console.error(`[mcp-family] extractIngredients FAILED: ${err.message}`);
     return [];
   }
 }
@@ -184,7 +191,14 @@ server.tool(
     // Extract and add ingredients
     const pantry = (family.pantry || []).map((p: any) => typeof p === 'string' ? p : p.name);
     const existing = (family.groceryList || []).map((i: any) => i.name);
-    const ingredients = await extractIngredients(meal, pantry, existing);
+    let ingredients: string[] = [];
+    let extractError = '';
+    try {
+      ingredients = await extractIngredients(meal, pantry, existing);
+    } catch (err: any) {
+      extractError = err.message;
+      console.error(`[mcp-family] add_meal ingredient extraction failed for "${meal}": ${err.message}`);
+    }
 
     if (ingredients.length > 0) {
       const updated = loadFamily();
@@ -203,7 +217,10 @@ server.tool(
       return { content: [{ type: 'text' as const, text: `Added ${slot} on ${dayLabel(dk)} ${dk}: ${meal}\nShopping list: +${added.join(', ')}` }] };
     }
 
-    return { content: [{ type: 'text' as const, text: `Added ${slot} on ${dayLabel(dk)} ${dk}: ${meal}` }] };
+    const warn = extractError
+      ? `\n⚠ Ingredient extraction failed: ${extractError}`
+      : (ingredients.length === 0 ? '\nNo new ingredients to add (already on list or in pantry).' : '');
+    return { content: [{ type: 'text' as const, text: `Added ${slot} on ${dayLabel(dk)} ${dk}: ${meal}${warn}` }] };
   }
 );
 

@@ -129,6 +129,10 @@ export class AgentRuntime extends EventEmitter {
   }
 
   private async handleSuccess(task: AgentTask, result: ClaudeResult): Promise<void> {
+    if (task.status === 'cancelled') {
+      this.emitOutput(task, `[gombwe] Task cancelled. Stopping.`);
+      return;
+    }
     // Check if output looks incomplete
     if (this.looksIncomplete(result.output) && task.continuations < task.maxContinuations) {
       task.continuations++;
@@ -174,6 +178,10 @@ export class AgentRuntime extends EventEmitter {
   }
 
   private async handleFailure(task: AgentTask, result: ClaudeResult): Promise<void> {
+    if (task.status === 'cancelled') {
+      this.emitOutput(task, `[gombwe] Task cancelled. Stopping.`);
+      return;
+    }
     if (task.attempt < task.maxAttempts) {
       task.attempt++;
       this.emitOutput(task, `[gombwe] Attempt ${task.attempt - 1} failed: ${result.error}. Retrying (${task.attempt}/${task.maxAttempts})...`);
