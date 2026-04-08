@@ -59,7 +59,7 @@ Rules:
 
   try {
     const result = execSync(
-      `claude -p "${prompt.replace(/"/g, '\\"')}" --output-format text --dangerously-skip-permissions --verbose --model claude-haiku-4-5`,
+      `claude -p "${prompt.replace(/"/g, '\\"')}" --output-format text --dangerously-skip-permissions --verbose --model claude-sonnet-4-6`,
       { encoding: 'utf-8', timeout: 30000 }
     );
     step(`AI suggested fix (${result.length} chars)`);
@@ -193,6 +193,12 @@ async function colesMonitoredCheckout(page, items) {
     return true;
   });
 
+  await executeStep(page, 'Open delivery time picker', async () => {
+    await page.evaluate(() => document.querySelector('[data-testid="how-and-when-button"]')?.click());
+    await wait(2000);
+    return true;
+  });
+
   await executeStep(page, 'Select ASAP delivery', async () => {
     // Click "As soon as possible" tab
     await page.evaluate(() => {
@@ -209,7 +215,7 @@ async function colesMonitoredCheckout(page, items) {
     const pos = await page.evaluate(() => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node;
-      while (node = walker.nextNode()) {
+      while ((node = walker.nextNode())) {
         if (node.textContent.includes('ETA') && node.textContent.includes('min')) {
           const range = document.createRange();
           range.selectNodeContents(node);
@@ -267,7 +273,7 @@ async function colesMonitoredCheckout(page, items) {
     return true;
   });
 
-  // Handle slot expiry
+  // Handle slot expiry (can happen if checkout took too long)
   await executeStep(page, 'Check for expired slot', async () => {
     const expired = await page.evaluate(() => {
       if (document.body.innerText.includes('no longer available')) {
@@ -278,11 +284,14 @@ async function colesMonitoredCheckout(page, items) {
       return 'ok';
     });
     if (expired === 'expired') {
-      step('  Slot expired — re-selecting...');
-      // Re-run the delivery selection
+      step('  Slot expired — re-opening trolley and re-selecting...');
       await wait(3000);
-      // The AI monitor will handle re-selection if needed
-      throw new Error('Slot expired, need re-selection');
+      // Re-open trolley and repeat slot selection
+      await page.evaluate(() => document.querySelector('[data-testid="header-trolley"]')?.click());
+      await wait(2000);
+      await page.evaluate(() => document.querySelector('[data-testid="how-and-when-button"]')?.click());
+      await wait(2000);
+      throw new Error('Slot expired — retry will pick a new slot');
     }
     return true;
   });
@@ -321,16 +330,31 @@ async function colesMonitoredCheckout(page, items) {
     });
   }
 
+  // CONFIRM ORDER REVIEW PAGE
+  await executeStep(page, 'Confirm order review', async () => {
+    await page.evaluate(() => {
+      const btn = document.querySelector('[data-testid="complete-review-trolley-&-substitutions"]') ||
+        Array.from(document.querySelectorAll('button')).find(b =>
+          b.textContent.includes('Confirm') || b.textContent.includes('Review')
+        );
+      if (btn) btn.click();
+    });
+    await wait(5000);
+    return true;
+  });
+
   // PLACE ORDER
   const ordered = await executeStep(page, 'Place order', async () => {
     const clicked = await page.evaluate(() => {
+      // Try reliable data-testid first (confirmed working)
+      const byTestId = document.querySelector('[data-testid="place-order-button"]');
+      if (byTestId) { byTestId.click(); return byTestId.textContent.trim(); }
+
       const buttons = document.querySelectorAll('button');
       for (const btn of buttons) {
         const text = (btn.textContent || '').toLowerCase().trim();
-        const testid = btn.getAttribute('data-testid') || '';
         if (text.includes('place order') || text.includes('pay now') ||
-            text.includes('complete order') || text.includes('submit order') ||
-            testid.includes('place-order') || testid.includes('submit-order')) {
+            text.includes('complete order') || text.includes('submit order')) {
           btn.click();
           return btn.textContent.trim();
         }
