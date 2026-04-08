@@ -11,6 +11,7 @@ description: What it does  # Shown in skill lists and autocomplete.
 version: 1.0.0
 user-invocable: true       # If true, users can type /skill-name to run it.
 disable-model-invocation: false  # If true, exclude from model's prompt context.
+direct: false              # If true, execute tool and return output — skip Claude entirely.
 tools:                     # Optional: native tools the skill can execute.
   - name: tool-name
     type: shell            # shell | http | script
@@ -54,6 +55,34 @@ When a user types `/email-digest` (from any channel):
 4. Passes instructions + tool results to `agent.runTask()`
 5. Claude reads the instructions and produces the output
 6. Result is sent back to the channel
+
+### Direct skills (`direct: true`)
+
+For skills that only display data (no AI reasoning needed), set `direct: true` in the frontmatter. This executes the first matching tool and returns its output immediately — no Claude invocation, no autonomy wrapper, no verification pass.
+
+```yaml
+---
+name: meals
+description: View weekly meal plan
+direct: true
+tools:
+  - name: view-all
+    type: shell
+    command: "node scripts/meals-view.mjs all"
+---
+```
+
+When invoked, the argument is matched against tool names. `/meals grocery` runs the tool whose name contains "grocery". If no match, the first tool runs.
+
+Use `direct: true` when:
+- The skill is read-only (viewing data, not modifying anything)
+- The tool output is already human-readable (no AI formatting needed)
+- You want instant responses with zero AI cost
+
+Leave it off (default) when:
+- The skill needs Claude to reason, plan, or make decisions
+- The output needs AI interpretation or summarisation
+- The skill has side effects that need the completion loop's retry/verify logic
 
 ## Native tools
 
@@ -101,21 +130,23 @@ With native tools, gombwe runs `df -h` directly (instant, free), then only calls
 
 ## Bundled skills
 
-| Skill | Has native tools? | Needs MCP? |
-|-------|-------------------|------------|
-| email-digest | No | Gmail MCP |
-| github-review | No | GitHub MCP |
-| morning-briefing | No | Multiple |
-| code-review | No | No |
-| deploy-check | No | No |
-| security-audit | No | No |
-| system-health | Yes (4 tools) | No |
-| git-digest | Yes (3 tools) | No |
-| api-health | Yes (3 tools) | No |
-| web-monitor | No | Fetch MCP |
-| content-ideas | No | Brave Search MCP |
-| meeting-prep | No | Calendar MCP |
-| cleanup | No | No |
+| Skill | Native tools? | Direct? | Needs MCP? |
+|-------|---------------|---------|------------|
+| meals | Yes (5 tools) | Yes | No |
+| grocery-order | Yes (4 tools) | No | No |
+| email-digest | No | No | Gmail MCP |
+| github-review | No | No | GitHub MCP |
+| morning-briefing | No | No | Multiple |
+| code-review | No | No | No |
+| deploy-check | No | No | No |
+| security-audit | No | No | No |
+| system-health | Yes (4 tools) | No | No |
+| git-digest | Yes (3 tools) | No | No |
+| api-health | Yes (3 tools) | No | No |
+| web-monitor | No | No | Fetch MCP |
+| content-ideas | No | No | Brave Search MCP |
+| meeting-prep | No | No | Calendar MCP |
+| cleanup | No | No | No |
 
 ## Creating your own skill
 

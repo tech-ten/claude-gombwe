@@ -62,6 +62,7 @@ export class SkillLoader {
       version: data.version || '0.0.0',
       userInvocable: data['user-invocable'] !== false,
       disableModelInvocation: data['disable-model-invocation'] === true,
+      direct: data['direct'] === true,
       instructions: content.trim(),
       path: filePath,
       tools,

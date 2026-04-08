@@ -68,6 +68,7 @@ export interface Skill {
   version: string;
   userInvocable: boolean;
   disableModelInvocation: boolean;
+  direct: boolean; // If true, execute tool directly — skip Claude entirely
   instructions: string;
   path: string;
   // Tools — executable actions the skill can perform directly
