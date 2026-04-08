@@ -966,6 +966,68 @@ body {
   opacity: 1;
 }
 
+/* ── Family Members ──────────────────────────────────────── */
+
+.family-page .member-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--parchment);
+}
+
+.family-page .member-item:last-of-type { border-bottom: none; }
+
+.family-page .member-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.family-page .member-name {
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.family-page .member-type {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-light);
+  background: var(--parchment);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.family-page .member-dietary {
+  font-size: 11px;
+  color: var(--terracotta);
+  font-style: italic;
+}
+
+.family-page .member-remove {
+  background: none;
+  border: none;
+  color: var(--ink-light);
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.family-page .member-item:hover .member-remove { opacity: 1; }
+.family-page .member-remove:hover { color: var(--red); }
+
+.family-page .member-summary {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: var(--ink-light);
+  border-top: 1px solid var(--parchment);
+}
+
 /* ── Week Calendar Grid ──────────────────────────────────── */
 
 .family-page .week-grid {
