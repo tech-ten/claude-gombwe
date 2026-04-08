@@ -34,10 +34,13 @@
   },
   "homepage": "https://github.com/tech-ten/claude-gombwe",
   "scripts": {
+    "clean": "shx rm -rf dist && shx mkdir dist",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "prepublishOnly": "npm run build"
+    "start": "cross-env NODE_ENV=production node dist/index.js",
+    "dev": "run-p watch-server watch-assets",
+    "watch-server": "tsx watch src/index.ts",
+    "watch-assets": "shx echo 'Watching assets...'",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -58,6 +61,9 @@
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.0",
+    "cross-env": "^10.1.0",
+    "npm-run-all": "^4.1.5",
+    "shx": "^0.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }

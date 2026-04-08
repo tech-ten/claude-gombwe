@@ -106,7 +106,7 @@ export const SERVICES: Record<string, {
     description: 'Read and manage local files and folders',
     package: '@modelcontextprotocol/server-filesystem',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem', homedir() + '/Documents'],
+    args: ['-y', '@modelcontextprotocol/server-filesystem', join(homedir(), 'Documents')],
     envVars: [],
     exampleJobs: [
       'Every night at midnight, check my Downloads folder and organize files by type into subfolders.',
