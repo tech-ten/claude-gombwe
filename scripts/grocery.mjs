@@ -96,28 +96,115 @@ async function searchWoolworths(page, query) {
   return products.slice(0, 5);
 }
 
-async function addToCartWoolworths(page, product) {
-  await page.goto(product.url, { waitUntil: 'networkidle2', timeout: 15000 });
+async function clearWoolworthsCart(page) {
+  await page.goto('https://www.woolworths.com.au/shop/cart', { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
 
-  const clicked = await page.evaluate(() => {
-    const allEls = document.querySelectorAll('*');
-    for (const el of allEls) {
-      const shadow = el.shadowRoot;
-      if (shadow) {
-        const btns = shadow.querySelectorAll('button');
-        for (const btn of btns) {
-          const text = (btn.textContent || '').toLowerCase();
-          const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-          if (text.includes('add to cart') || aria.includes('add to cart')) {
-            btn.click();
-            return true;
+  // Keep clicking remove buttons until cart is empty
+  for (let i = 0; i < 30; i++) {
+    const removed = await page.evaluate(() => {
+      const allEls = document.querySelectorAll('*');
+      for (const el of allEls) {
+        const shadow = el.shadowRoot;
+        if (shadow) {
+          const btns = shadow.querySelectorAll('button');
+          for (const btn of btns) {
+            const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+            const text = (btn.textContent || '').toLowerCase();
+            if (aria.includes('remove') || aria.includes('delete') || text.includes('remove')) {
+              btn.click();
+              return true;
+            }
           }
         }
       }
+      // Also try non-shadow buttons
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (aria.includes('remove from cart') || aria.includes('remove item')) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    });
+    if (!removed) break;
+    await wait(1500);
+  }
+}
+
+async function clearColesCart(page) {
+  await page.goto('https://www.coles.com.au/cart', { waitUntil: 'networkidle2', timeout: 15000 });
+  await wait(3000);
+
+  // Click "Empty trolley" or remove items one by one
+  for (let i = 0; i < 30; i++) {
+    const removed = await page.evaluate(() => {
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const text = (btn.textContent || '').toLowerCase();
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (text.includes('remove') || aria.includes('remove') || text.includes('delete')) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    });
+    if (!removed) break;
+    await wait(1500);
+
+    // Confirm removal if a dialog appears
+    await page.evaluate(() => {
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const text = (btn.textContent || '').toLowerCase();
+        if (text === 'remove' || text === 'yes' || text === 'confirm') {
+          btn.click();
+        }
+      }
+    });
+    await wait(1000);
+  }
+}
+
+async function addToCartWoolworths(page, product) {
+  await page.goto(product.url, { waitUntil: 'networkidle2', timeout: 15000 });
+  await wait(4000);
+
+  const clicked = await page.evaluate((productName) => {
+    // Deep shadow DOM search — Woolworths nests buttons inside WC-ADD-TO-CART shadow roots
+    function findAddButton(root, depth = 0) {
+      if (depth > 3) return null;
+      const els = root.querySelectorAll('*');
+      for (const el of els) {
+        if (el.shadowRoot) {
+          const btns = el.shadowRoot.querySelectorAll('button');
+          for (const btn of btns) {
+            const text = (btn.textContent || '').toLowerCase();
+            const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+            // Match the specific product to avoid adding wrong items
+            const nameMatch = productName ? aria.includes(productName.toLowerCase().slice(0, 20)) : true;
+            if ((text.includes('add to cart') || aria.includes('add to cart')) && nameMatch) {
+              return btn;
+            }
+          }
+          // Recurse into nested shadow roots
+          const nested = findAddButton(el.shadowRoot, depth + 1);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    }
+
+    const btn = findAddButton(document);
+    if (btn) {
+      btn.click();
+      return true;
     }
     return false;
-  });
+  }, product.name);
 
   await wait(2000);
   return clicked;
@@ -417,6 +504,12 @@ async function orderItems(browser, store, items, doCheckout = false) {
   const searchFn = store === 'woolworths' ? searchWoolworths : searchColes;
   const addFn = store === 'woolworths' ? addToCartWoolworths : addToCartColes;
 
+  // Clear cart before starting fresh
+  console.log(`\n  Clearing ${store} cart...`);
+  if (store === 'woolworths') await clearWoolworthsCart(page);
+  else await clearColesCart(page);
+  console.log('  Cart cleared.');
+
   console.log(`\n  Adding ${items.length} items to ${store} cart\n`);
 
   let total = 0;
@@ -510,12 +603,15 @@ async function smartSplit(browser, items, doCheckout = false) {
     }
   }
 
-  // Execute orders
+  // Clear carts before ordering
   console.log('\n  ── ORDER ──');
 
   if (wItems.length > 0) {
-    console.log(`\n  WOOLWORTHS (${wItems.length} items):`);
     const wPage = await getPage(browser, 'woolworths.com.au');
+    console.log('\n  Clearing Woolworths cart...');
+    await clearWoolworthsCart(wPage);
+    console.log(`  WOOLWORTHS (${wItems.length} items):`);
+
     let wt = 0;
     for (const r of wItems) {
       process.stdout.write(`    ${r.item}... `);
@@ -530,8 +626,11 @@ async function smartSplit(browser, items, doCheckout = false) {
   }
 
   if (cItems.length > 0) {
-    console.log(`\n  COLES (${cItems.length} items):`);
     const cPage = await getPage(browser, 'coles.com.au');
+    console.log('\n  Clearing Coles cart...');
+    await clearColesCart(cPage);
+    console.log(`  COLES (${cItems.length} items):`);
+
     let ct = 0;
     for (const r of cItems) {
       process.stdout.write(`    ${r.item}... `);
