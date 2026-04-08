@@ -760,6 +760,7 @@ async function loadFamily() {
 }
 
 function renderAll() {
+  renderMembers();
   renderWeekGrid();
   renderGroceryList();
   renderNonFoodList();
@@ -874,6 +875,69 @@ async function extractAndAddIngredients(mealName) {
     }
   } catch {}
 }
+
+function renderMembers() {
+  const list = document.getElementById('memberList');
+  if (!list) return;
+  const members = familyData.members || [];
+
+  if (members.length === 0) {
+    list.innerHTML = '<div class="empty-list">No family members yet. Add members to scale recipes and track dietary needs.</div>';
+    return;
+  }
+
+  const adults = members.filter(m => m.type === 'adult').length;
+  const children = members.filter(m => m.type === 'child').length;
+
+  list.innerHTML = '';
+  members.forEach((member, idx) => {
+    const div = document.createElement('div');
+    div.className = 'member-item';
+    div.innerHTML = `
+      <div class="member-info">
+        <span class="member-name">${esc(member.name)}</span>
+        <span class="member-type">${member.type}</span>
+        ${member.dietary ? `<span class="member-dietary">${esc(member.dietary)}</span>` : ''}
+      </div>
+      <button class="member-remove" data-idx="${idx}">remove</button>
+    `;
+    list.appendChild(div);
+  });
+
+  // Summary row
+  const summary = document.createElement('div');
+  summary.className = 'member-summary';
+  summary.textContent = `${members.length} member${members.length !== 1 ? 's' : ''} — ${adults} adult${adults !== 1 ? 's' : ''}${children ? `, ${children} child${children !== 1 ? 'ren' : ''}` : ''}`;
+  list.appendChild(summary);
+
+  list.querySelectorAll('.member-remove').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx);
+      const removed = familyData.members[idx];
+      logAction('user', 'member removed', removed.name);
+      familyData.members.splice(idx, 1);
+      saveFamily();
+      renderMembers();
+    });
+  });
+}
+
+// Add member button
+document.getElementById('addMemberBtn')?.addEventListener('click', () => {
+  const name = prompt('Name:');
+  if (!name) return;
+  const type = prompt('Type (adult or child):', 'adult');
+  if (type !== 'adult' && type !== 'child') { alert('Must be "adult" or "child"'); return; }
+  const dietary = prompt('Dietary notes (optional — e.g. "vegetarian", "no dairy"):', '');
+
+  if (!familyData.members) familyData.members = [];
+  const member = { name: name.trim(), type };
+  if (dietary && dietary.trim()) member.dietary = dietary.trim();
+  familyData.members.push(member);
+  logAction('user', 'member added', `${member.name} (${member.type}${member.dietary ? ', ' + member.dietary : ''})`);
+  saveFamily();
+  renderMembers();
+});
 
 function renderWeekGrid() {
   const grid = document.getElementById('weekGrid');
