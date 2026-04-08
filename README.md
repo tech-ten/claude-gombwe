@@ -180,57 +180,49 @@ Each channel is a separate conversation with its own memory.
 
 ---
 
-## Grocery Automation (Woolworths & Coles)
+## Family Management
 
-Search products, compare prices, and add to cart at both Woolworths and Coles — from Discord, the terminal, or on a weekly schedule.
+Meal planning, grocery lists, and ordering — from Discord, the web dashboard, or natural language.
 
-### First-time setup (2 minutes)
+### Three ways to interact
+
+**1. Natural language (AI-powered via MCP):**
+```
+You (Discord):  Let's do butter chicken on Saturday
+Gombwe:          Added dinner on Sat: Butter chicken
+                 Shopping list: +chicken thighs, coconut cream, tikka paste, rice...
+```
+
+**2. Slash commands (instant, no AI cost):**
+```
+/dinner sat Butter chicken        Add a meal
+/breakfast tomorrow Pancakes      Works with day names, today, tomorrow
+/list milk, eggs, bread           Add to shopping list
+/buy                              Order everything on the list
+/buy hair remover                 Add + order specific items
+/meals                            View weekly plan, list, pantry
+```
+
+**3. Without the slash (pattern-matched, still instant):**
+```
+dinner sat Butter chicken         Same as /dinner — just drop the /
+```
+
+### Grocery ordering (Woolworths & Coles)
 
 ```bash
-gombwe grocery-setup
+gombwe grocery-setup              # One-time login (saves Chrome session)
 ```
 
-Chrome opens with Woolworths and Coles login pages. Log in to both. Press Enter. Your session is saved — you won't need to log in again.
+Then from Discord: `/buy` or "order the groceries". See [docs/GROCERY.md](docs/GROCERY.md) for full setup.
 
-### Ordering groceries
+### How it works
 
-**From Discord:**
-```
-/grocery-order milk 2L, eggs 12 pack, Masterfoods BBQ Sauce, bread, chicken breast
-```
-
-**From terminal:**
-```bash
-# Compare prices across both stores
-gombwe grocery "milk 2L" "eggs" "bread" "chicken" --compare
-
-# Smart split — cheapest from each store, respects delivery minimums
-gombwe grocery "milk" "eggs" "bread" "chicken" "butter" "bananas" --split
-
-# Order from a specific store
-gombwe grocery "milk" "eggs" "bread" --store woolworths
-```
-
-### What happens
-
-1. Chrome launches automatically with your saved login
-2. Searches Woolworths internal API (instant, real prices)
-3. Searches Coles from your logged-in session (real prices)
-4. Compares prices side by side
-5. Smart split keeps each order above the delivery minimum
-6. Adds items to your cart — you just check out
-
-### Weekly schedule
-
-```
-/job /grocery-order review my usual list --schedule "0 9 * * 0"
-```
-
-Every Sunday morning, gombwe prepares your cart and sends the results to Discord.
-
-### How it gets cheaper each week
-
-The grocery skill caches your brand preferences. First order: it searches everything. Second order: it already knows you want Masterfoods BBQ Sauce (not any other brand), Dairy Farmers milk (not homebrand). By the third week, most items are instant matches — near-zero search cost.
+- Meals, grocery lists, and pantry are stored in `~/.claude-gombwe/data/family.json`
+- Adding a meal auto-extracts ingredients and adds them to the shopping list
+- Non-food items (toilet paper, shampoo, batteries) are auto-sorted to a separate household list
+- Successful orders move items from the shopping list to pantry
+- The MCP server (`gombwe-family`) gives the AI structured tools — `add_meal`, `view_meals`, `add_to_list`, `view_list`, `remove_meal`, `remove_from_list` — so natural language always works reliably
 
 ---
 
@@ -272,6 +264,7 @@ gombwe grocery-setup                # One-time Woolworths & Coles login
 gombwe grocery "items" --split      # Smart split grocery order
 gombwe grocery "items" --compare    # Compare prices only
 gombwe grocery "items" --store woolworths  # Order from specific store
+gombwe up                           # Start everything (gateway + proxy + channels)
 ```
 
 ### Chat (works in terminal, Discord, Telegram, and web dashboard)
@@ -286,6 +279,18 @@ Type `/` to see all commands with autocomplete. Key ones:
 /fix <description>      Same as /task
 /model opus             Switch to Opus (or sonnet, haiku)
 /set discord.token X    Configure from chat
+
+# Family
+/dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)
+/breakfast <day> <meal> Add breakfast
+/lunch <day> <meal>     Add lunch
+/list                   View shopping list
+/list milk, eggs        Add items to list
+/buy                    Order everything on the list
+/buy hair remover       Add + order specific items
+/meals                  View weekly plan, list, pantry
+
+# Skills
 /email-digest           Check and summarize email
 /github-review          Review PRs and issues
 /morning-briefing       Full daily briefing
@@ -300,10 +305,11 @@ Type `/` to see all commands with autocomplete. Key ones:
 
 ## Skills
 
-14 built-in skills. Type the name in any chat to run it.
+15 built-in skills. Type the name in any chat to run it.
 
 | Skill | What it does | Needs |
 |-------|-------------|-------|
+| `/meals` | View weekly plan, grocery list, pantry (direct — no AI) | Nothing |
 | `/grocery-order` | Search, compare prices, add to cart at Woolworths & Coles | One-time login |
 | `/email-digest` | Inbox summary by priority with draft replies | Gmail |
 | `/github-review` | PRs needing review, failing CI, stale PRs | GitHub |
@@ -353,6 +359,8 @@ Phone / Terminal / Browser / Cron / Triggers
     v
 Gombwe Gateway (localhost:18790)
     |-- Channel adapters (Discord, Telegram, Web)
+    |-- Command router (/dinner, /list, /buy — instant, no AI)
+    |-- Intent detection (pattern-matched natural language)
     |-- Agent runtime (completion loop)
     |-- Session manager (claude --resume)
     |-- Skill system + native tools
@@ -366,7 +374,9 @@ Gombwe Gateway (localhost:18790)
 claude -p / claude --resume (your subscription)
     |
     v
-MCP Servers (Gmail, GitHub, Slack, Calendar...)
+MCP Servers
+    |-- gombwe-family (built-in: meals, grocery list, pantry)
+    |-- Gmail, GitHub, Slack, Calendar (external)
 ```
 
 ## How the Completion Loop Works

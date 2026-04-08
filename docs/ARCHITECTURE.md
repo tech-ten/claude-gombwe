@@ -53,6 +53,7 @@ Wraps the `claude` CLI. Two modes:
 **Chat mode** (`agent.chat()`):
 - Calls `claude -p "message" --output-format stream-json --verbose --dangerously-skip-permissions`
 - Uses `--resume <sessionId>` for follow-up messages in the same conversation
+- Passes `--mcp-config` with built-in MCP servers (e.g., `gombwe-family` for meal/grocery management)
 - Claude keeps full internal state (every file read, command run, decision made)
 - Returns the response and the session ID for next time
 
@@ -73,6 +74,7 @@ The completion loop is what makes gombwe different from just running `claude -p`
 - `--dangerously-skip-permissions` — headless mode can't prompt for approvals
 - `--resume <id>` — continue an existing conversation
 - `--model <name>` — model selection
+- `--mcp-config <json>` — built-in MCP servers (auto-configured by gateway)
 
 ### 3. Session Manager (`src/session.ts`)
 
@@ -199,9 +201,23 @@ Config lives at `~/.claude-gombwe/gombwe.json`:
 
 ### 10. Service Setup (`src/setup.ts`)
 
-Manages MCP server connections. `gombwe connect <service>` writes to `~/.claude/settings.json` — the same config file Claude Code reads. This means MCP servers configured through gombwe are available to all Claude Code sessions.
+Manages external MCP server connections. `gombwe connect <service>` writes to `~/.claude/settings.json` — the same config file Claude Code reads. This means MCP servers configured through gombwe are available to all Claude Code sessions.
 
-### 11. Proxy (`src/proxy.ts`)
+### 11. Built-in MCP Servers (`src/mcp/`)
+
+Gombwe ships its own MCP servers that are auto-registered with the agent runtime. These give Claude structured tools instead of relying on text instructions.
+
+**gombwe-family** (`src/mcp/family.ts`):
+- Tools: `add_meal`, `remove_meal`, `view_meals`, `add_to_list`, `view_list`, `remove_from_list`
+- Reads/writes `~/.claude-gombwe/data/family.json`
+- Handles day resolution (fuzzy matching: "satruday" → Saturday), food vs non-food categorization
+- Auto-extracts ingredients when adding a meal (calls the gateway's `/api/family/ingredients` endpoint)
+- Passed to Claude via `--mcp-config` as inline JSON — no config files needed
+
+**Why MCP instead of prompt injection:**
+The previous approach injected a wall of JSON context into every food-related message and hoped Claude would parse and modify the file correctly. MCP gives Claude callable tools with typed parameters — Claude natively decides when to call `add_meal(day: "saturday", slot: "dinner", meal: "Butter chicken")`. No keywords, no wasted context, no hoping.
+
+### 12. Proxy (`src/proxy.ts`)
 
 OpenAI-compatible API proxy (experimental). Routes requests through `claude -p` so tools expecting the OpenAI API format can use your subscription. Includes model mapping and fallback chain. This was built as an experiment and is not the primary use case.
 
@@ -213,9 +229,13 @@ OpenAI-compatible API proxy (experimental). Routes requests through `claude -p` 
 Discord message
   → DiscordChannel.onMessage()
   → Gateway message handler
-  → Is it a command? Check handleCommand()
-  → Is session in task mode? Run agent.runTask()
-  → Default: Run agent.chat() with --resume
+  → Is it a /command? → handleCommand() (instant, no AI)
+  → Does it match a family pattern? (e.g. "dinner sat tacos") → handleCommand()
+  → Is session in task mode? → agent.runTask()
+  → Default: agent.chat() with --resume + --mcp-config
+      → Claude sees MCP tools (add_meal, add_to_list, etc.)
+      → If food-related, Claude calls the right tool
+      → If not, Claude just chats normally
   → Response sent back via channel.send()
   → Also broadcast via WebSocket to dashboard
 ```
@@ -259,9 +279,11 @@ claude-gombwe/
 │   ├── scheduler.ts       # Cron job scheduling
 │   ├── triggers.ts        # Event trigger engine
 │   ├── workflows.ts       # Multi-step workflow engine
-│   ├── setup.ts           # MCP service connection manager
+│   ├── setup.ts           # External MCP service connection manager
 │   ├── proxy.ts           # OpenAI-compatible API proxy
 │   ├── types.ts           # TypeScript interfaces
+│   ├── mcp/
+│   │   └── family.ts      # Family MCP server (meals, grocery, pantry)
 │   └── channels/
 │       ├── web.ts         # Web dashboard channel
 │       ├── telegram.ts    # Telegram bot
@@ -270,7 +292,9 @@ claude-gombwe/
 │   ├── index.html         # Dashboard HTML
 │   ├── app.js             # Dashboard JavaScript
 │   └── style.css          # Dashboard styles
-├── skills/                # Bundled skills (13)
+├── scripts/
+│   └── meals-view.mjs     # Formatted meal plan viewer (used by meals skill)
+├── skills/                # Bundled skills (15)
 │   ├── email-digest/SKILL.md
 │   ├── github-review/SKILL.md
 │   ├── morning-briefing/SKILL.md
