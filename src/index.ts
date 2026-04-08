@@ -480,6 +480,51 @@ program
     }
   });
 
+// --- Grocery ---
+
+program
+  .command('grocery-setup')
+  .description('One-time login to Woolworths & Coles (saves session for future orders)')
+  .action(async () => {
+    const { execSync } = await import('node:child_process');
+    execSync('node scripts/chrome-setup.mjs', { cwd: import.meta.dirname ? import.meta.dirname + '/..' : process.cwd(), stdio: 'inherit' });
+  });
+
+program
+  .command('grocery')
+  .description('Compare prices and order groceries from Woolworths & Coles')
+  .argument('[items...]', 'Items to order')
+  .option('--store <store>', 'Order from specific store (woolworths/coles)')
+  .option('--compare', 'Compare prices only, don\'t order')
+  .option('--split', 'Smart split — cheapest items from each store')
+  .action(async (items, opts) => {
+    const { execSync } = await import('node:child_process');
+    const scriptDir = import.meta.dirname ? import.meta.dirname + '/..' : process.cwd();
+
+    if (items.length === 0) {
+      console.log('Usage: gombwe grocery "milk 2L" "eggs" "bread" --split');
+      return;
+    }
+
+    let cmd;
+    if (opts.compare) {
+      cmd = `node scripts/grocery.mjs compare ${items.map((i: string) => `"${i}"`).join(' ')}`;
+    } else if (opts.split) {
+      cmd = `node scripts/grocery.mjs split ${items.map((i: string) => `"${i}"`).join(' ')}`;
+    } else if (opts.store) {
+      cmd = `node scripts/grocery.mjs order ${opts.store} ${items.map((i: string) => `"${i}"`).join(' ')}`;
+    } else {
+      cmd = `node scripts/grocery.mjs split ${items.map((i: string) => `"${i}"`).join(' ')}`;
+    }
+
+    try {
+      execSync(cmd, { cwd: scriptDir, stdio: 'inherit' });
+    } catch {
+      console.error('Grocery order failed. Make sure Chrome is running with your saved session.');
+      console.error('Run "gombwe grocery-setup" if this is your first time.');
+    }
+  });
+
 // --- Service management ---
 
 program
