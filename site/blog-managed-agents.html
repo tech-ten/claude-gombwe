@@ -170,6 +170,9 @@
   <!-- Nav -->
   <nav class="nav">
     <a href="/" class="nav-brand">agents<em>formation</em></a>
+    <button class="nav-toggle" aria-label="Menu" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
     <div class="nav-links">
       <a href="/" class="nav-link">Home</a>
       <a href="https://gombwe.com" class="nav-link">Gombwe</a>
@@ -292,7 +295,7 @@
     </p>
 
     <p>
-      That's the deal. And it's not necessarily unfair: Anthropic provides the model, the infrastructure, the distribution. But it does mean the tools that community developers build are only accessible to people who can afford a subscription. The developers who build for emerging markets see their work locked behind a paywall set by a company in San Francisco.
+      That's the deal. And it's not necessarily unfair: Anthropic provides the model, the infrastructure, the distribution. But it does mean the tools that community developers build are only accessible to people who can afford a subscription. Sandbox compute is included for subscribers, and billed at $0.08/hr for API users. What's less clear is what happens when an enterprise builds a managed agent product and advertises it to the public: who pays for those end user sessions? The enterprise? The end user? That billing model hasn't been addressed yet.
     </p>
 
     <h2>What we're building instead</h2>
