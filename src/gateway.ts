@@ -374,13 +374,19 @@ export class Gateway {
 
       case 'cancel': {
         const taskId = args[0];
-        if (!taskId) { await reply('Usage: /cancel <task-id>'); return true; }
-        const found = this.agent.listTasks().find(t => t.id.startsWith(taskId));
+        let found;
+        if (taskId) {
+          found = this.agent.listTasks().find(t => t.id.startsWith(taskId));
+        } else {
+          // No ID given — cancel the most recent running task
+          const running = this.agent.listTasks({ status: 'running' });
+          found = running[0]; // listTasks returns newest first
+        }
         if (found) {
           this.agent.cancelTask(found.id);
-          await reply(`Cancelled task ${found.id.slice(0, 8)}`);
+          await reply(`Cancelled task ${found.id.slice(0, 8)} — ${found.prompt.slice(0, 50)}`);
         } else {
-          await reply('Task not found.');
+          await reply('No running tasks to cancel.');
         }
         return true;
       }
