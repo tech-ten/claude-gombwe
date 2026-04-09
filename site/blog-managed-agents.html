@@ -202,7 +202,7 @@
   <article class="blog-content">
 
     <p>
-      The model is the product. Everything else is packaging. That is the core reaction I keep coming back to after a week in which Anthropic blocked third-party agent harnesses, previewed a model too dangerous to release, and then launched a hosted agent platform that bundles commodity infrastructure with the only thing developers actually need: the intelligence.
+      This has been one of the most consequential weeks in the short history of AI agents. Anthropic made a series of moves that clarify where they see the future of agent infrastructure. For those of us building in this space, it opens up important questions about where agents should run, who should have access to them, and what role the model plays versus the infrastructure around it.
     </p>
 
     <p>
@@ -214,7 +214,7 @@
     <div class="blog-timeline">
       <div class="blog-timeline-item">
         <span class="blog-timeline-date">April 4</span>
-        <span class="blog-timeline-text"><strong>Anthropic blocks OpenClaw</strong> from using Claude subscription credits. Third-party agent harnesses now require pay-as-you-go API billing. Users who were paying $20/month are suddenly facing potential costs of thousands per month for the same workflows.</span>
+        <span class="blog-timeline-text"><strong>Anthropic updates billing for third-party harnesses.</strong> Tools like OpenClaw now require pay-as-you-go API billing instead of subscription credits. This shifts the economics for developers who were building on top of Claude subscriptions.</span>
       </div>
       <div class="blog-timeline-item">
         <span class="blog-timeline-date">April 7</span>
@@ -235,7 +235,7 @@
     </div>
 
     <p>
-      Read sequentially, a pattern emerges. Anthropic shut down a third-party harness, demonstrated model superiority, and then offered their own hosted alternative. This suggests a platform play. Meanwhile, NVIDIA, OpenClaw, and Gombwe are all building agent runtimes that run locally.
+      It's a busy week that signals where the industry is heading. Anthropic is investing heavily in hosted agent infrastructure. At the same time, NVIDIA, OpenClaw, and Gombwe are all building agent runtimes that run locally. Two different visions for how agents should work, and both have merit.
     </p>
 
     <h2>What managed agents actually are</h2>
@@ -261,25 +261,25 @@
     <h2>The value question</h2>
 
     <p>
-      Here is the question I think deserves more attention: <strong>what exactly are you paying for?</strong>
+      Managed agents bundle the model with infrastructure. It's worth understanding what each part of that bundle provides:
     </p>
 
     <p>
-      An agent has three parts: the model (intelligence), the tools (your code), and the runtime (infrastructure to run your code). The model is the only part that Anthropic uniquely provides. The sandbox is a container. The harness is a loop. The session store is a database. These are standard infrastructure components that any developer can run on their own machine, a $5 VPS, or their existing cloud provider.
+      An agent has three parts: the model (intelligence), the tools (your code), and the runtime (infrastructure to run your code). Anthropic's unique contribution is the model. The sandbox, harness, and session store are standard infrastructure components: containers, loops, and databases. Developers can run these on their own machines, a VPS, or their existing cloud provider.
     </p>
 
     <p>
-      Managed agents bundle all three together and charge for the package. Sandbox compute is included for Claude subscribers ($20/month minimum) and billed at $0.08/hr for API users. But the infrastructure being bundled is not novel. It's Docker, a database, and a retry loop. Enterprises already pay millions to cloud providers for exactly this. Individual developers can run it on their laptops.
+      Managed agents bundle all three together as a convenience. Sandbox compute is included for Claude subscribers ($20/month minimum) and billed at $0.08/hr for API users. The convenience is real, especially for teams that want to skip the infrastructure setup. But it's worth noting that the infrastructure components are widely available. Enterprises already run containers on their cloud providers. Individual developers can run them on their laptops.
     </p>
 
     <p>
-      The community is already proving this. OpenClaw built an open-source agent harness (before Anthropic blocked it from using subscription credits). NVIDIA released NemoClaw, which runs on Docker Desktop. Gombwe has been running autonomously on a home machine since before managed agents was announced. The harness is not the hard part.
+      The community is already exploring this alternative. OpenClaw built an open-source agent harness. NVIDIA released NemoClaw, which runs on Docker Desktop. Gombwe has been running autonomously on a home machine since before managed agents was announced. These projects demonstrate that the harness layer is something the community can and will build independently.
     </p>
 
     <h2>The efficiency question</h2>
 
     <p>
-      There is a deeper architectural concern. Managed agents put the model in the middle of everything: every tool call, every data fetch, every decision goes through Claude. But much of what agents do is deterministic work that does not require intelligence.
+      There is an interesting architectural trade-off worth considering. Managed agents route every tool call through the model: every data fetch and every decision goes through Claude. This is powerful for complex reasoning chains, but much of what agents do is deterministic work that does not require intelligence.
     </p>
 
     <p>
@@ -291,7 +291,7 @@
     </p>
 
     <p>
-      Gombwe already separates these concerns. Scripts handle deterministic work (search, compare, add to cart). The results are injected into the prompt as context. Claude reasons about the results and talks to the user. The model only runs when intelligence is actually needed. In a managed agent, every step would burn tokens, because the model mediates every tool call.
+      Gombwe takes a different approach by separating these concerns. Scripts handle deterministic work (search, compare, add to cart). The results are injected into the prompt as context. Claude reasons about the results and talks to the user. The model only runs when intelligence is actually needed. This hybrid approach can be more efficient for use cases where most of the work is structured and predictable.
     </p>
 
     <blockquote>
@@ -301,7 +301,7 @@
     <h2>The local access question</h2>
 
     <p>
-      Managed agents run in Anthropic's cloud, in a sandboxed container with no access to the user's machine. For many real-world agent use cases, this is the wrong architecture.
+      Managed agents run in Anthropic's cloud, in a sandboxed container with no access to the user's machine. This is excellent for security and isolation, but it does create constraints for certain use cases.
     </p>
 
     <p>
@@ -309,13 +309,13 @@
     </p>
 
     <p>
-      The agent needs to be where the data is. For consumer use cases that involve personal accounts, local files, or saved sessions, that means running locally. A cloud sandbox is appropriate for cloud-native work like code generation or data analysis. But for personal agents that interact with the real world on behalf of a specific user, local execution is not just cheaper: it is the only architecture that works.
+      For consumer use cases that involve personal accounts, local files, or saved sessions, the agent needs to be where the data is. A cloud sandbox works well for cloud-native tasks like code generation or data analysis. But for personal agents that interact with the real world on behalf of a specific user, local execution offers advantages that a remote sandbox cannot match.
     </p>
 
     <h2>The access question</h2>
 
     <p>
-      Even setting aside the value, efficiency, and architecture arguments, there is the straightforward question of who can access these agents at all.
+      Beyond the architectural considerations, there is also a question of accessibility.
     </p>
 
     <p>
@@ -327,7 +327,7 @@
     </p>
 
     <p>
-      This matters because the domain-specific tools are built by the community. Anthropic doesn't build Australian grocery search tools, or Zimbabwean ones, or Nigerian ones. They build the infrastructure: the sandbox, the harness, the session persistence. The tools come from developers like me, publishing MCP servers, writing for free, receiving no revenue share. Anthropic lists them in their directory. The customer pays Anthropic. The tool provider gets nothing.
+      This is particularly relevant because the domain-specific tools are built by the community. Anthropic builds excellent infrastructure: the sandbox, the harness, the session persistence. But the tools that make agents useful for specific markets come from independent developers, publishing MCP servers and building integrations for their local contexts. There's an opportunity for better alignment between the value these developers create and how they're compensated.
     </p>
 
     <p>
@@ -348,13 +348,13 @@
     </ul>
 
     <p>
-      These are real needs. But they describe a subset of agent use cases, not the default. The default should be open runtimes on infrastructure you already have: your machine, your cloud provider, your Docker Desktop.
+      These are real needs. Alongside these, there's room for open runtimes on infrastructure developers already have: their own machines, their cloud providers, their Docker Desktop. Both approaches can coexist.
     </p>
 
-    <h2>What we're building instead</h2>
+    <h2>What we're building alongside</h2>
 
     <p>
-      I think there's a parallel path that needs to exist. One where the agent runs where the data is. Where deterministic work is handled by scripts, and the model is called only when reasoning is needed. Where the tools are accessible to anyone, not just paying subscribers. Where the agent lives where the customer already is: WhatsApp, Telegram, Discord, SMS, not inside a chat window that requires a subscription.
+      We think there's a complementary path worth exploring. One where the agent runs where the data is. Where deterministic work is handled by scripts, and the model is called only when reasoning is needed. Where the tools are accessible to anyone, including people who can't afford a subscription. Where the agent lives where the customer already is: WhatsApp, Telegram, Discord, SMS.
     </p>
 
     <p>
@@ -378,15 +378,15 @@
     <h2>The bigger picture</h2>
 
     <p>
-      The model is the product. The harness, the sandbox, the session store: that is infrastructure. Multiple projects are already proving that agent runtimes can run locally, openly, on hardware you already own. Anthropic blocking third-party harnesses while launching their own suggests they see the infrastructure layer as a revenue opportunity, not a commodity. I think the community disagrees.
+      Anthropic's managed agents represent a significant step forward for the industry. The architecture is sound, the engineering is impressive, and for many teams it will be the right choice. At the same time, multiple projects are demonstrating that agent runtimes can run locally, openly, on hardware developers already own. The ecosystem is big enough for both approaches.
     </p>
 
     <p>
-      The value is in two places: the <strong>domain-specific tools</strong> (the code that knows how to search Woolworths, query an energy retailer, or book a flight) and the <strong>access layer</strong> (who can use these tools, through what channels, at what price). Neither of these requires Anthropic's cloud.
+      We believe the most exciting opportunities are in two places: the <strong>domain-specific tools</strong> (the code that knows how to search Woolworths, query an energy retailer, or book a flight) and the <strong>access layer</strong> (who can use these tools, through what channels, at what price). These can be built on top of any infrastructure, managed or self-hosted.
     </p>
 
     <p>
-      We think agents should run where the data is, use the model only when reasoning is needed, and be accessible to anyone, not just people who can afford a $20/month subscription. We could be wrong about the timing. But the direction seems clear.
+      We're excited about a future where agents run where the data is, use the model only when reasoning is needed, and are accessible to anyone regardless of what they can afford. Managed agents and open runtimes will both play a role in getting there. We could be wrong about the timing. But the direction seems clear.
     </p>
 
     <div class="blog-cta">
