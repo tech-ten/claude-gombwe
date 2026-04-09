@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blog — Agents Formation</title>
+  <meta name="description" content="Writing about AI agents, MCP servers, and the future of customer interaction. From Melbourne, Australia.">
+  <meta property="og:title" content="Blog — Agents Formation">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://agentsform.ai/blog">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,300;1,14..32,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .blog-index-hero {
+      min-height: auto;
+      padding: 160px 40px 60px;
+    }
+    .blog-index-hero .hero-title {
+      font-size: clamp(34px, 5.5vw, 56px);
+    }
+    .blog-list {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 40px 100px;
+    }
+    .blog-entry {
+      display: block;
+      padding: 36px 0;
+      border-bottom: 1px solid var(--border);
+      transition: transform 200ms;
+    }
+    .blog-entry:first-child {
+      border-top: 1px solid var(--border);
+    }
+    .blog-entry:hover {
+      transform: translateX(4px);
+    }
+    .blog-entry-date {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--ink-3);
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+      display: block;
+    }
+    .blog-entry-title {
+      font-family: var(--serif);
+      font-size: 26px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      margin-bottom: 10px;
+      line-height: 1.25;
+    }
+    .blog-entry-title em {
+      font-style: italic;
+      color: var(--accent);
+    }
+    .blog-entry-desc {
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--ink-2);
+      font-weight: 300;
+    }
+    .blog-entry-tag {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-top: 12px;
+    }
+
+    @media (max-width: 768px) {
+      .blog-index-hero { padding: 120px 24px 40px; }
+      .blog-list { padding: 0 24px 80px; }
+      .blog-entry-title { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="nav">
+    <a href="/" class="nav-brand">agents<em>formation</em></a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Home</a>
+      <a href="https://gombwe.com" class="nav-link">Gombwe</a>
+      <a href="registry.html" class="nav-link">MCP Registry</a>
+      <a href="blog.html" class="nav-link active">Blog</a>
+      <a href="https://github.com/tech-ten" class="nav-cta" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero blog-index-hero" id="top">
+    <div class="hero-bg"></div>
+    <div class="hero-inner">
+      <p class="hero-kicker">From Melbourne, Australia</p>
+      <h1 class="hero-title">
+        Blog
+      </h1>
+      <p class="hero-sub">
+        Writing about AI agents, MCP servers, and the future of customer interaction.
+      </p>
+    </div>
+  </header>
+
+  <!-- Posts -->
+  <div class="blog-list">
+
+    <a href="blog-managed-agents.html" class="blog-entry">
+      <span class="blog-entry-date">10 April 2026</span>
+      <h2 class="blog-entry-title">Managed Agents and <em>Who They Leave Behind</em></h2>
+      <p class="blog-entry-desc">Anthropic's managed agents are elegant engineering. But they come with a $20/month paywall that locks out most of the world. A reaction to the announcement, and what we're building instead.</p>
+      <span class="blog-entry-tag">Managed agents &middot; MCP &middot; Access</span>
+    </a>
+
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer footer-sticky">
+    <div class="container footer-inner">
+      <a href="/" class="nav-brand">agents<em>formation</em></a>
+      <div class="footer-center">
+        Agents Formation, Melbourne, Australia
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/tech-ten" target="_blank" rel="noopener">GitHub</a>
+        <a href="registry.html">MCP Registry</a>
+        <a href="https://gombwe.com">gombwe.com</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
