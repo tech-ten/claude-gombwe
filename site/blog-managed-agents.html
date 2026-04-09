@@ -199,11 +199,11 @@
   <article class="blog-content">
 
     <p>
-      This week has been one of the most consequential in the short history of AI agents. In the span of four days, Anthropic blocked third-party agent harnesses, previewed a model too dangerous to release, and then launched a hosted agent platform that promises to get teams to production ten times faster. I want to talk about what managed agents are, what they mean for people building in this space, and why I think the most important question is one that nobody is asking yet.
+      This week has been one of the most consequential in the short history of AI agents. In the span of four days, Anthropic blocked third-party agent harnesses, previewed a model too dangerous to release, and then launched a hosted agent platform that promises to get teams to production ten times faster. I want to talk about what managed agents are, what they mean for people building in this space, and a question that deserves more attention: who actually gets to use them?
     </p>
 
     <p>
-      But first, some context on where I'm coming from. I'm the founder of <a href="https://agentsform.ai">Agents Formation</a>, a small outfit in Melbourne building AI-native skill integrations for Australian businesses. Our thesis is simple: the primary interface between businesses and customers is shifting from websites and apps to callable skills that AI agents execute on behalf of users. We've been testing that thesis with <a href="https://gombwe.com">Gombwe</a>, an open-source autonomous agent runtime built on Claude. It orders groceries, switches utility plans, manages family schedules, and runs in production for a real household. It was published to npm on April 7, the day before managed agents was announced.
+      But first, some context on where I'm coming from. At <a href="https://agentsform.ai">Agents Formation</a>, a small outfit in Melbourne, we're building AI-native skill integrations for Australian businesses. Our thesis is simple: the primary interface between businesses and customers is shifting from websites and apps to callable skills that AI agents execute on behalf of users. We've been testing that thesis with <a href="https://gombwe.com">Gombwe</a>, an open-source autonomous agent runtime built on Claude. It orders groceries, switches utility plans, manages family schedules, and runs in production for a real household. It was published to npm on April 7, the day before managed agents was announced.
     </p>
 
     <p>
@@ -223,7 +223,7 @@
       </div>
       <div class="blog-timeline-item">
         <span class="blog-timeline-date">April 7</span>
-        <span class="blog-timeline-text"><strong>Gombwe v0.1.0 published to npm.</strong> An autonomous agent runtime with 15 skills, 21 native tools, multi-channel support, and a live grocery ordering flow. Built on Claude. Not a prototype.</span>
+        <span class="blog-timeline-text"><strong>Gombwe v0.1.0 published to npm.</strong> An autonomous agent runtime with 15 skills, 21 native tools, multi-channel support, and a live grocery ordering flow. Built on Claude.</span>
       </div>
       <div class="blog-timeline-item">
         <span class="blog-timeline-date">April 8-9</span>
@@ -232,7 +232,7 @@
     </div>
 
     <p>
-      Read sequentially, the message is clear: Anthropic wants to own the full agent stack. They shut down third-party harnesses, demonstrated model superiority, and then offered their own hosted alternative. This is a platform play.
+      Read sequentially, a pattern emerges. Anthropic shut down third-party harnesses, demonstrated model superiority, and then offered their own hosted alternative. This suggests a platform play.
     </p>
 
     <h2>What managed agents actually are</h2>
@@ -242,23 +242,23 @@
     </p>
 
     <ol>
-      <li><strong>Session</strong> (state) — a durable, append-only event log that persists across crashes and can be queried by the agent</li>
-      <li><strong>Harness</strong> (brain) — a stateless inference loop that calls Claude and routes tool calls, rebootable without losing context</li>
-      <li><strong>Sandbox</strong> (hands) — execution environments provisioned on-demand, exposed as tools via a generic <code>execute(name, input) &rarr; string</code> interface</li>
+      <li><strong>Session</strong> (state): a durable, append-only event log that persists across crashes and can be queried by the agent</li>
+      <li><strong>Harness</strong> (brain): a stateless inference loop that calls Claude and routes tool calls, rebootable without losing context</li>
+      <li><strong>Sandbox</strong> (hands): execution environments provisioned on-demand, exposed as tools via a generic <code>execute(name, input) &rarr; string</code> interface</li>
     </ol>
 
     <p>
-      It's genuinely good engineering. The decoupling means any component can fail and be replaced without losing the session. The sandbox interface is intentionally generic — Anthropic's words: <em>"We're opinionated about the shape of these interfaces, not about what runs behind them."</em> MCP servers, shell scripts, browser automation — it all looks the same to the harness.
+      It's genuinely good engineering. The decoupling means any component can fail and be replaced without losing the session. The sandbox interface is intentionally generic. In Anthropic's words: <em>"We're opinionated about the shape of these interfaces, not about what runs behind them."</em> MCP servers, shell scripts, browser automation: it all looks the same to the harness.
     </p>
 
     <p>
-      From a developer's perspective, you define your agent's tasks, connect your tools via MCP servers, configure an environment, and Anthropic handles the rest. No provisioning containers, no managing state, no building retry logic. For someone who has never deployed an agent before, this is transformative.
+      From a developer's perspective, you define your agent's tasks, connect your tools via MCP servers, configure an environment, and Anthropic handles the rest: no provisioning containers, no managing state, no building retry logic. For someone who has never deployed an agent before, this is transformative.
     </p>
 
     <h2>What's missing</h2>
 
     <p>
-      Several developers have noted that managed agents can't run on a schedule. There's no cron. No heartbeat. You can't say "wake up every 30 minutes and check for new tasks." The agent runs when you trigger it via API or chat, and then it stops. For anyone building always-on assistants — the kind that monitor, react, and act autonomously — this is a significant gap.
+      Several developers have noted that managed agents can't run on a schedule. There's no cron. No heartbeat. You can't say "wake up every 30 minutes and check for new tasks." The agent runs when you trigger it via API or chat, and then it stops. For anyone building always-on assistants (the kind that monitor, react, and act autonomously) this is a significant gap.
     </p>
 
     <p>
@@ -266,10 +266,10 @@
     </p>
 
     <p>
-      Anthropic has teased upcoming features — outcomes (self-evaluation), multi-agent orchestration, and persistent memory across sessions. These will address some of the gaps. But they're not available yet.
+      Anthropic has teased upcoming features: outcomes (self-evaluation), multi-agent orchestration, and persistent memory across sessions. These will address some of the gaps. But they're not available yet.
     </p>
 
-    <h2>The question nobody is asking</h2>
+    <h2>The access question</h2>
 
     <p>
       Here's what I keep coming back to: <strong>who gets to use these agents?</strong>
@@ -288,11 +288,11 @@
     </blockquote>
 
     <p>
-      This matters because the tools are built by the community. Anthropic doesn't build Australian grocery search tools, or Zimbabwean ones, or Nigerian ones. They build the infrastructure — the sandbox, the harness, the session persistence. The domain-specific tools come from developers like me, publishing MCP servers, writing for free, receiving no revenue share. Anthropic lists them in their directory. The customer pays Anthropic. The tool provider gets nothing.
+      This matters because the tools are built by the community. Anthropic doesn't build Australian grocery search tools, or Zimbabwean ones, or Nigerian ones. They build the infrastructure: the sandbox, the harness, the session persistence. The domain-specific tools come from developers like me, publishing MCP servers, writing for free, receiving no revenue share. Anthropic lists them in their directory. The customer pays Anthropic. The tool provider gets nothing.
     </p>
 
     <p>
-      That's the deal. And it's not necessarily unfair — Anthropic provides the model, the infrastructure, the distribution. But it does mean the tools that community developers build are only accessible to people who can afford a subscription. The developers who build for emerging markets see their work locked behind a paywall set by a company in San Francisco.
+      That's the deal. And it's not necessarily unfair: Anthropic provides the model, the infrastructure, the distribution. But it does mean the tools that community developers build are only accessible to people who can afford a subscription. The developers who build for emerging markets see their work locked behind a paywall set by a company in San Francisco.
     </p>
 
     <h2>What we're building instead</h2>
@@ -302,11 +302,11 @@
     </p>
 
     <p>
-      But I think there's a parallel path that needs to exist. One where the tools are accessible to anyone, not just paying subscribers. Where the agent lives where the customer already is — WhatsApp, Telegram, Discord, SMS — not inside a chat window that requires a subscription. Where data stays in the country it comes from. Where the pricing can be per-transaction, or free, or whatever the market demands.
+      But I think there's a parallel path that needs to exist. One where the tools are accessible to anyone, not just paying subscribers. Where the agent lives where the customer already is: WhatsApp, Telegram, Discord, SMS, not inside a chat window that requires a subscription. Where data stays in the country it comes from. Where the pricing can be per-transaction, or free, or whatever the market demands.
     </p>
 
     <p>
-      That's what we're building at Agents Formation. We call it <strong>Gombwe Managed Agents</strong> — a multi-tenant platform where customers interact with AI agents over messaging channels to search, compare, and buy from real businesses. Starting with Australian grocery (Woolworths and Coles), expanding to flights, energy, insurance, and eventually African markets.
+      That's what we're building at Agents Formation. We call it <strong>Gombwe Managed Agents</strong>: a multi-tenant platform where customers interact with AI agents over messaging channels to search, compare, and buy from real businesses. Starting with Australian grocery (Woolworths and Coles), expanding to flights, energy, insurance, and eventually African markets.
     </p>
 
     <p>
@@ -318,14 +318,14 @@
       <li><strong>Any channel.</strong> WhatsApp, Telegram, Discord, web. Not locked to Claude's interface.</li>
       <li><strong>Any model.</strong> Claude for complex reasoning, Haiku for simple lookups, open-source models where cost matters. Match the model to the task.</li>
       <li><strong>Australian data sovereignty.</strong> Hosted on AWS Sydney. Customer data stays in Australia.</li>
-      <li><strong>End-to-end transactions.</strong> Not just search and compare — actually add to cart, confirm, and buy. The transactional layer that no MCP standard addresses yet.</li>
+      <li><strong>End-to-end transactions.</strong> Not just search and compare, but actually add to cart, confirm, and buy. The transactional layer that no MCP standard addresses yet.</li>
       <li><strong>Direct retailer relationships.</strong> We're in Melbourne. We can negotiate API access, affiliate commissions, and partnerships that a company in San Francisco never will.</li>
     </ul>
 
     <h2>The bigger picture</h2>
 
     <p>
-      I think we're at an inflection point. The runtime layer — the brain, the sandbox, the session management — is getting commoditised. Anthropic offers it. Google will. OpenAI will. That's infrastructure.
+      I think we're at an inflection point. The runtime layer (the brain, the sandbox, the session management) is getting commoditised. Anthropic offers it. Google will. OpenAI will. That's infrastructure.
     </p>
 
     <p>
@@ -346,10 +346,10 @@
         We're looking for early users, retail partners, and anyone thinking about agent commerce in Australia or Africa.
       </p>
       <div style="display: flex; gap: 14px; flex-wrap: wrap;">
-        <a href="https://gombwe.com" class="btn btn-primary" style="background: var(--accent); text-decoration: none;">Gombwe</a>
-        <a href="https://agentsform.ai/registry.html" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark); text-decoration: none;">MCP Registry</a>
-        <a href="https://github.com/tech-ten" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark); text-decoration: none;">GitHub</a>
-        <a href="mailto:tendai@agentsform.ai" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark); text-decoration: none;">Get in touch</a>
+        <a href="https://gombwe.com" class="btn btn-primary" style="background: var(--accent); color: #fff; text-decoration: none;">Gombwe</a>
+        <a href="https://agentsform.ai/registry.html" class="btn btn-ghost" style="border-color: var(--ink-on-dark); color: var(--ink-on-dark); text-decoration: none;">MCP Registry</a>
+        <a href="https://github.com/tech-ten" class="btn btn-ghost" style="border-color: var(--ink-on-dark); color: var(--ink-on-dark); text-decoration: none;">GitHub</a>
+        <a href="mailto:tendai@agentsform.ai" class="btn btn-ghost" style="border-color: var(--ink-on-dark); color: var(--ink-on-dark); text-decoration: none;">Get in touch</a>
       </div>
     </div>
 
