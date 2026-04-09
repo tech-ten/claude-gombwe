@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Australian MCP Registry — Agents Formation</title>
+  <meta name="description" content="Machine-readable registry of MCP servers for Australian services. Queryable JSON API for AI assistant discovery.">
+  <meta property="og:title" content="Australian MCP Registry — Agents Formation">
+  <meta property="og:description" content="MCP servers for Australian services. JSON API at /api/registry.json">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://agentsform.ai/registry">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,300;1,14..32,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .registry-hero {
+      min-height: auto;
+      padding: 160px 40px 80px;
+    }
+    .registry-hero .hero-title {
+      font-size: clamp(36px, 6vw, 60px);
+    }
+
+    /* API endpoint banner */
+    .api-banner {
+      background: var(--bg-dark);
+      border: 1px solid var(--border-dark);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .api-banner-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .api-banner-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #5EC269;
+    }
+    .api-banner-url {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--ink-on-dark);
+      font-weight: 500;
+    }
+    .api-banner-copy {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--ink-3-dark);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-dark);
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 200ms;
+    }
+    .api-banner-copy:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--ink-on-dark);
+    }
+
+    /* Stats */
+    .registry-stats {
+      display: flex;
+      gap: 48px;
+      margin-bottom: 48px;
+    }
+    .registry-stat-num {
+      display: block;
+      font-family: var(--serif);
+      font-size: 42px;
+      font-weight: 400;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .registry-stat-label {
+      font-size: 13px;
+      color: var(--ink-3);
+    }
+
+    /* Server entries */
+    .registry-list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-bottom: 64px;
+    }
+    .registry-entry {
+      background: var(--bg-dark);
+      border: 1px solid var(--border-dark);
+      border-radius: 16px;
+      padding: 40px 36px;
+      color: var(--ink-on-dark);
+      position: relative;
+      overflow: hidden;
+    }
+    .registry-entry::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+    .registry-entry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .registry-entry-meta {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .registry-entry-name {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    .registry-entry-version {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--accent);
+      background: rgba(196, 98, 42, 0.1);
+      border: 1px solid rgba(196, 98, 42, 0.2);
+      padding: 4px 10px;
+      border-radius: 12px;
+    }
+    .registry-entry-status {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .registry-entry-status.live { color: #5EC269; }
+    .registry-entry-status.planned { color: var(--ink-4); }
+    .registry-entry-desc {
+      font-size: 16px;
+      line-height: 1.75;
+      color: var(--ink-2-dark);
+      font-weight: 300;
+      margin-bottom: 20px;
+      max-width: 680px;
+    }
+    .registry-entry-transport {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .registry-entry-transport span {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--ink-3-dark);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-dark);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .registry-entry-tools {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-bottom: 24px;
+      border: 1px solid var(--border-dark);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .registry-entry-tool {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-dark);
+    }
+    .registry-entry-tool:last-child { border-bottom: none; }
+    .registry-entry-tool code {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent);
+      min-width: 160px;
+      flex-shrink: 0;
+    }
+    .registry-entry-tool span {
+      font-size: 13px;
+      color: var(--ink-3-dark);
+      font-weight: 300;
+    }
+    .registry-entry-install {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--ink-on-dark);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-dark);
+      padding: 14px 20px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+      display: block;
+      font-weight: 500;
+    }
+    .registry-entry-config {
+      margin-bottom: 24px;
+    }
+    .registry-entry-config summary {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--ink-3-dark);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 8px 0;
+    }
+    .registry-entry-config pre {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-2-dark);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-dark);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-top: 8px;
+      overflow-x: auto;
+      line-height: 1.7;
+    }
+    .registry-entry-links {
+      display: flex;
+      gap: 12px;
+    }
+    .registry-entry-categories {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    .registry-entry-category {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--ink-3-dark);
+      border: 1px solid var(--border-dark);
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+
+    /* Planned grid */
+    .registry-planned {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .registry-planned-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 24px;
+      border-left: 3px solid var(--border);
+    }
+    .registry-planned-name {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+    .registry-planned-desc {
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: var(--ink-2);
+      font-weight: 300;
+      margin-bottom: 12px;
+    }
+    .registry-planned-categories {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .registry-planned-categories span {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--ink-3);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .registry-planned-status {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-4);
+    }
+
+    /* Submit */
+    .registry-submit {
+      text-align: center;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+    .registry-submit p {
+      font-size: 17px;
+      line-height: 1.75;
+      color: var(--ink-2-dark);
+      font-weight: 300;
+      margin-bottom: 32px;
+    }
+
+    /* Loading */
+    .registry-loading {
+      text-align: center;
+      padding: 60px 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--ink-3);
+    }
+
+    @media (max-width: 768px) {
+      .registry-hero { padding: 120px 24px 60px; }
+      .registry-stats { flex-direction: column; gap: 24px; }
+      .registry-planned { grid-template-columns: 1fr; }
+      .registry-entry-header { flex-direction: column; }
+      .registry-entry-tool { flex-direction: column; gap: 4px; align-items: flex-start; }
+      .registry-entry-tool code { min-width: auto; }
+      .api-banner { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="nav">
+    <a href="/" class="nav-brand">agents<em>formation</em></a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Home</a>
+      <a href="https://gombwe.com" class="nav-link">Gombwe</a>
+      <a href="https://github.com/tech-ten" class="nav-cta" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero registry-hero" id="top">
+    <div class="hero-bg"></div>
+    <div class="hero-inner">
+      <p class="hero-kicker">Australian MCP Registry</p>
+      <h1 class="hero-title">
+        MCP servers for<br>
+        <em>Australian services.</em>
+      </h1>
+      <p class="hero-sub">
+        Machine-readable registry of MCP servers for Australian businesses.
+        Query the JSON API directly, or browse below.
+        Any MCP-compatible client can discover and connect to these servers.
+      </p>
+    </div>
+  </header>
+
+  <!-- API Endpoint -->
+  <section class="section" style="padding-top: 0; padding-bottom: 40px;">
+    <div class="container">
+      <div class="api-banner">
+        <div class="api-banner-left">
+          <span class="api-banner-label">JSON API</span>
+          <a href="/api/registry.json" class="api-banner-url" target="_blank">agentsform.ai/api/registry.json</a>
+        </div>
+        <button class="api-banner-copy" onclick="navigator.clipboard.writeText('https://agentsform.ai/api/registry.json');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy URL',1500)">Copy URL</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats (populated from JSON) -->
+  <section class="section" style="padding-top: 0;">
+    <div class="container">
+      <div class="registry-stats" id="stats">
+        <div class="registry-loading">Loading registry...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Published servers (populated from JSON) -->
+  <section class="section" style="padding-top: 0;">
+    <div class="container">
+      <span class="section-label">Published</span>
+      <h2 class="section-title">Available now.</h2>
+      <div class="registry-list" id="servers"></div>
+    </div>
+  </section>
+
+  <!-- Planned servers (populated from JSON) -->
+  <section class="section section-alt">
+    <div class="container">
+      <span class="section-label">Roadmap</span>
+      <h2 class="section-title">Coming next.</h2>
+      <p class="section-desc">
+        Each server is standalone, open source, and follows the same pattern.
+        Install globally, add to your AI assistant config, and go.
+      </p>
+      <div class="registry-planned" id="planned"></div>
+    </div>
+  </section>
+
+  <!-- Submit -->
+  <section class="section section-cta">
+    <div class="container">
+      <div class="registry-submit">
+        <span class="section-label" style="text-align: center; display: block; padding-left: 0;">Submit your server</span>
+        <h2 class="section-title" style="text-align: center;">
+          Built an Australian<br>
+          <em>MCP server?</em>
+        </h2>
+        <p>
+          We list every MCP server built for Australian services.
+          Open source or commercial. Submit your server JSON
+          following the registry schema and we'll add it.
+        </p>
+        <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;">
+          <a href="mailto:tendai@agentsform.ai" class="btn btn-primary" style="background: var(--accent);">Submit a server</a>
+          <a href="/api/registry.json" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark);">View schema</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer footer-sticky">
+    <div class="container footer-inner">
+      <a href="/" class="nav-brand">agents<em>formation</em></a>
+      <div class="footer-center">
+        Agents Formation, Melbourne, Australia
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/tech-ten" target="_blank" rel="noopener">GitHub</a>
+        <a href="/api/registry.json">API</a>
+        <a href="https://agentsform.ai">agentsform.ai</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    async function loadRegistry() {
+      const res = await fetch('/api/registry.json');
+      const data = await res.json();
+      renderStats(data);
+      renderServers(data.servers);
+      renderPlanned(data.planned);
+    }
+
+    function renderStats(data) {
+      const published = data.servers.length;
+      const tools = data.servers.reduce((sum, s) => sum + (s.tools ? s.tools.length : 0), 0);
+      const planned = data.planned.length;
+      const categories = new Set(data.servers.flatMap(s => s.categories || []));
+
+      document.getElementById('stats').innerHTML = `
+        <div><span class="registry-stat-num">${published}</span><span class="registry-stat-label">Published servers</span></div>
+        <div><span class="registry-stat-num">${tools}</span><span class="registry-stat-label">Tools available</span></div>
+        <div><span class="registry-stat-num">${planned}</span><span class="registry-stat-label">Planned servers</span></div>
+        <div><span class="registry-stat-num">${categories.size}</span><span class="registry-stat-label">Categories</span></div>
+      `;
+    }
+
+    function renderServers(servers) {
+      const container = document.getElementById('servers');
+      container.innerHTML = servers.map(s => {
+        const toolRows = (s.tools || []).map(t =>
+          `<div class="registry-entry-tool"><code>${t.name}</code><span>${t.description.split('.')[0]}</span></div>`
+        ).join('');
+
+        const categories = (s.categories || []).map(c =>
+          `<span class="registry-entry-category">${c}</span>`
+        ).join('');
+
+        const transports = (s.transport || []).map(t =>
+          `<span>${t}</span>`
+        ).join('');
+
+        const npmPkg = s.packages?.npm;
+        const configJson = JSON.stringify({
+          mcpServers: {
+            [s.name]: {
+              command: s.runtime.command,
+              ...(s.runtime.args.length > 0 ? { args: s.runtime.args } : {})
+            }
+          }
+        }, null, 2);
+
+        return `
+          <div class="registry-entry">
+            <div class="registry-entry-header">
+              <div>
+                <div class="registry-entry-meta">
+                  <span class="registry-entry-name">${s.name}</span>
+                  <span class="registry-entry-version">v${s.version}</span>
+                </div>
+              </div>
+              <span class="registry-entry-status live">&#9679; ${s.status}</span>
+            </div>
+            <p class="registry-entry-desc">${s.description}</p>
+            <div class="registry-entry-categories">${categories}</div>
+            <div class="registry-entry-transport">${transports}</div>
+            <div class="registry-entry-tools">${toolRows}</div>
+            <code class="registry-entry-install">npm install -g ${npmPkg ? npmPkg.name : s.name}</code>
+            <details class="registry-entry-config">
+              <summary>Claude Desktop / Cursor config</summary>
+              <pre>${configJson}</pre>
+            </details>
+            <div class="registry-entry-links">
+              <a href="${s.repository}" class="btn btn-primary" target="_blank" rel="noopener">GitHub</a>
+              ${npmPkg ? `<a href="${npmPkg.url}" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark);" target="_blank" rel="noopener">npm</a>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderPlanned(planned) {
+      const container = document.getElementById('planned');
+      container.innerHTML = planned.map(s => {
+        const categories = (s.categories || []).map(c =>
+          `<span>${c}</span>`
+        ).join('');
+
+        return `
+          <div class="registry-planned-card">
+            <p class="registry-planned-name">${s.name}</p>
+            <p class="registry-planned-desc">${s.description}</p>
+            <div class="registry-planned-categories">${categories}</div>
+            <span class="registry-planned-status">${s.status}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    loadRegistry();
+  </script>
+</body>
+</html>
