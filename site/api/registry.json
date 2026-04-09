@@ -1,0 +1,105 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "registry": {
+    "name": "Australian MCP Registry",
+    "description": "Open registry of MCP servers for Australian services",
+    "maintainer": "Agents Formation",
+    "url": "https://agentsform.ai/registry",
+    "contact": "tendai@agentsform.ai"
+  },
+  "servers": [
+    {
+      "name": "au-grocery-mcp",
+      "version": "0.1.0",
+      "description": "Australian grocery MCP server. Search products, compare prices, and get details across Woolworths and Coles.",
+      "author": "Agents Formation",
+      "license": "MIT",
+      "repository": "https://github.com/tech-ten/au-grocery-mcp",
+      "homepage": "https://agentsform.ai",
+      "status": "published",
+      "packages": {
+        "npm": {
+          "name": "au-grocery-mcp",
+          "version": "0.1.0",
+          "url": "https://www.npmjs.com/package/au-grocery-mcp"
+        }
+      },
+      "runtime": {
+        "command": "au-grocery-mcp",
+        "args": [],
+        "env": {}
+      },
+      "transport": ["stdio"],
+      "tools": [
+        {
+          "name": "search_products",
+          "description": "Search for grocery products across Australian supermarkets. Returns product names, prices, and availability.",
+          "parameters": {
+            "query": { "type": "string", "description": "Search term, e.g. 'organic milk', 'sourdough bread'" },
+            "store": { "type": "string", "enum": ["woolworths", "coles", "both"], "default": "both", "description": "Which store to search" },
+            "limit": { "type": "number", "minimum": 1, "maximum": 20, "default": 5, "description": "Max results per store" }
+          }
+        },
+        {
+          "name": "compare_prices",
+          "description": "Compare prices for a list of grocery items across Woolworths and Coles. Returns the cheapest option for each item and total savings.",
+          "parameters": {
+            "items": { "type": "array", "items": { "type": "string" }, "description": "List of items to compare, e.g. ['milk 2L', 'bread', 'eggs']" }
+          }
+        },
+        {
+          "name": "get_product_detail",
+          "description": "Get detailed information about a specific Woolworths product including ingredients, nutrition, and pricing.",
+          "parameters": {
+            "stockcode": { "type": "string", "description": "Woolworths product stockcode" }
+          }
+        },
+        {
+          "name": "get_categories",
+          "description": "List all product categories available at Woolworths.",
+          "parameters": {}
+        }
+      ],
+      "categories": ["shopping", "grocery", "australia", "price-comparison"],
+      "updated": "2026-04-10"
+    }
+  ],
+  "planned": [
+    {
+      "name": "au-flights-mcp",
+      "description": "Search and compare domestic and international flights from Australian carriers.",
+      "categories": ["travel", "flights", "australia"],
+      "status": "planned"
+    },
+    {
+      "name": "au-energy-mcp",
+      "description": "Compare electricity and gas plans across Australian energy retailers.",
+      "categories": ["utilities", "energy", "australia"],
+      "status": "planned"
+    },
+    {
+      "name": "au-insurance-mcp",
+      "description": "Get car, home, and health insurance quotes from Australian providers.",
+      "categories": ["finance", "insurance", "australia"],
+      "status": "planned"
+    },
+    {
+      "name": "au-vehicle-hire-mcp",
+      "description": "Search and book car, truck, and van rentals across Australian cities.",
+      "categories": ["transport", "vehicle-hire", "australia"],
+      "status": "planned"
+    },
+    {
+      "name": "au-telco-mcp",
+      "description": "Compare mobile, broadband, and NBN plans from Australian telcos.",
+      "categories": ["utilities", "telco", "australia"],
+      "status": "planned"
+    },
+    {
+      "name": "au-gov-mcp",
+      "description": "Check eligibility, application status, and service availability for Australian government services.",
+      "categories": ["government", "australia"],
+      "status": "planned"
+    }
+  ]
+}

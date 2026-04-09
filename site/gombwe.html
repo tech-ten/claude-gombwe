@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gombwe — Autonomous agent runtime built on Claude</title>
+  <meta name="description" content="An open-source autonomous agent runtime that executes real transactions. Grocery ordering, utility switching, system monitoring, and 15 declarative skills.">
+  <meta property="og:title" content="Gombwe — Autonomous agent runtime built on Claude">
+  <meta property="og:description" content="Open-source agent that doesn't just answer questions. It executes real transactions in the real world.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://gombwe.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,300;1,14..32,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="gombwe.css">
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="nav">
+    <a href="/" class="nav-brand">gombwe</a>
+    <div class="nav-links">
+      <a href="#skills" class="nav-link">Skills</a>
+      <a href="#custom" class="nav-link">Custom skills</a>
+      <a href="#native-tools" class="nav-link">Native tools</a>
+      <a href="#install" class="nav-link">Install</a>
+      <a href="https://agentsform.ai" class="nav-link">Agents Formation</a>
+      <a href="https://github.com/tech-ten/claude-gombwe" class="nav-cta" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero gombwe-hero" id="top">
+    <div class="hero-bg"></div>
+    <div class="hero-inner">
+      <p class="hero-kicker">Open source. MIT licensed. In production.</p>
+      <h1 class="hero-title">
+        An agent that<br>
+        <em>actually does things.</em>
+      </h1>
+      <p class="hero-sub">
+        Gombwe is an autonomous agent runtime built on Anthropic's Claude.
+        It doesn't just answer questions. It orders your groceries,
+        switches your utility plans, monitors your systems,
+        and manages your family's schedule.
+      </p>
+      <div class="hero-actions">
+        <a href="#install" class="btn btn-primary">Install</a>
+        <a href="https://github.com/tech-ten/claude-gombwe" class="btn btn-ghost" target="_blank" rel="noopener">View source</a>
+        <a href="https://agentsform.ai" class="btn btn-ghost">Our thesis</a>
+      </div>
+    </div>
+    <div class="hero-stat-bar">
+      <div class="hero-stat">
+        <span class="hero-stat-num">15 skills</span>
+        <span class="hero-stat-label">Declarative YAML definitions</span>
+      </div>
+      <div class="hero-stat-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num">21 native tools</span>
+        <span class="hero-stat-label">Shell + MCP integrations</span>
+      </div>
+      <div class="hero-stat-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num">Multi-channel</span>
+        <span class="hero-stat-label">Discord, Telegram, Web</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Examples: what this enables -->
+  <section class="section" id="examples">
+    <div class="container">
+      <span class="section-label">The future of customer interaction</span>
+      <h2 class="section-title">
+        A customer talks<br>
+        <em>to their AI.</em>
+      </h2>
+      <p class="section-desc">
+        In Claude, ChatGPT, Gemini, or any assistant. The customer speaks naturally.
+        The agent finds the right skill, executes it, and reports back.
+        Gombwe is built for this world.
+      </p>
+      <div class="examples-grid">
+        <div class="example-card">
+          <p class="example-prompt">"Book me a flight to Sydney on Sunday, returning Monday. Window seat if possible."</p>
+          <p class="example-outcome">The agent queries airline skills, compares prices across carriers, selects the best option, books the ticket, and sends the confirmation.</p>
+          <span class="example-industry">Airlines</span>
+        </div>
+        <div class="example-card">
+          <p class="example-prompt">"Get me a moving truck next weekend. I'm moving from Carlton to Footscray."</p>
+          <p class="example-outcome">The agent checks availability across rental providers, compares rates for the right truck size, books the slot, and confirms pickup details.</p>
+          <span class="example-industry">Vehicle hire</span>
+        </div>
+        <div class="example-card">
+          <p class="example-prompt">"Order the usual groceries but swap the chicken for lamb this week."</p>
+          <p class="example-outcome">The agent loads your preferences, adjusts the list, compares prices across stores, builds the cheapest basket, and places the order.</p>
+          <span class="example-industry">Retail / Gombwe</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured: Digital Family Assistant -->
+  <section class="section section-dark" id="custom">
+    <div class="container">
+      <span class="section-label">Custom skills in production</span>
+      <h2 class="section-title">
+        Built for real life,<br>
+        <em>not demos.</em>
+      </h2>
+      <p class="section-desc">
+        These skills run every day for a real family in Melbourne.
+        They handle real money, real stores, and real deadlines.
+      </p>
+
+      <div class="featured-grid">
+        <!-- Grocery / Family -->
+        <div class="featured-card">
+          <div class="featured-card-inner">
+            <span class="proof-label">Live in production</span>
+            <h3 class="featured-title">Digital family assistant</h3>
+            <p class="featured-desc">
+              A single agent manages the household. Weekly meal planning with
+              automatic ingredient extraction. Price comparison across
+              Coles and Woolworths. Grocery ordering with the cheapest basket
+              delivered to your door. School schedule management. Dietary needs
+              and pantry tracking. Family member profiles.
+            </p>
+            <div class="featured-skills-used">
+              <span class="featured-skill-tag">grocery-order</span>
+              <span class="featured-skill-tag">meals</span>
+            </div>
+            <div class="featured-flow">
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">1</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Meal plan set</span>
+                  <span class="featured-flow-detail">Weekly meals planned around family preferences, dietary needs, and what's in the pantry</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">2</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Ingredients extracted</span>
+                  <span class="featured-flow-detail">Recipes parsed, quantities calculated, pantry stock subtracted</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">3</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Prices compared live</span>
+                  <span class="featured-flow-detail">Woolworths and Coles searched in real-time, cheapest option per item selected</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">4</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">User confirms</span>
+                  <span class="featured-flow-detail">Two-phase ordering: cart reviewed, prices shown, confirmation requested before checkout</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">5</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Order placed, delivered</span>
+                  <span class="featured-flow-detail">Payment processed, delivery scheduled, family notified</span>
+                </div>
+              </div>
+            </div>
+            <div class="featured-tools">
+              <span class="featured-tools-label">Tools used:</span>
+              <code>buy-auto</code>
+              <code>buy-woolworths</code>
+              <code>buy-coles</code>
+              <code>confirm-checkout-woolworths</code>
+              <code>confirm-checkout-coles</code>
+              <code>load-preferences</code>
+              <code>view-all</code>
+              <code>view-week</code>
+              <code>view-grocery</code>
+              <code>view-pantry</code>
+              <code>view-recipes</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- Utility auto-switching -->
+        <div class="featured-card">
+          <div class="featured-card-inner">
+            <span class="proof-label">Live in production</span>
+            <h3 class="featured-title">Utility plan auto-switching</h3>
+            <p class="featured-desc">
+              Continuously monitors energy, internet, and phone plans across providers.
+              When a cheaper option exists, it switches automatically.
+              Not once a year at renewal, but whenever the savings justify it.
+            </p>
+            <div class="featured-flow">
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">1</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Plans scraped</span>
+                  <span class="featured-flow-detail">Current rates pulled from energy, internet, and phone providers</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">2</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Savings calculated</span>
+                  <span class="featured-flow-detail">Compared against current plan, factoring in exit fees and contract terms</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">3</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">User notified</span>
+                  <span class="featured-flow-detail">Savings breakdown sent via Discord or Telegram with recommendation</span>
+                </div>
+              </div>
+              <div class="featured-flow-step">
+                <span class="featured-flow-num">4</span>
+                <div class="featured-flow-content">
+                  <span class="featured-flow-title">Switch executed</span>
+                  <span class="featured-flow-detail">Plan changed, confirmation received, records updated</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- All Skills -->
+  <section class="section" id="skills">
+    <div class="container">
+      <span class="section-label">15 skills and counting</span>
+      <h2 class="section-title">
+        Every skill is<br>
+        <em>a YAML file.</em>
+      </h2>
+      <p class="section-desc">
+        Skills are declarative definitions that tell the agent what to do,
+        what tools to use, and how to verify success. Add a folder,
+        write a SKILL.md, and the agent picks it up.
+      </p>
+
+      <!-- Skills with tools -->
+      <div class="skills-category">
+        <h3 class="skills-category-title">
+          <span class="skills-category-icon">&#9881;</span>
+          Skills with native tools
+        </h3>
+        <p class="skills-category-desc">
+          These skills have shell scripts and MCP integrations that give the agent
+          direct access to APIs, browsers, and system commands.
+        </p>
+        <div class="skills-grid">
+          <div class="skill-card skill-card-tools">
+            <div class="skill-header">
+              <h4 class="skill-name">grocery-order</h4>
+              <span class="skill-tool-count">6 tools</span>
+            </div>
+            <p class="skill-desc">Order groceries from Woolworths or Coles. Search, compare prices, build cart, pay, schedule delivery.</p>
+            <div class="skill-tools">
+              <code>buy-auto</code>
+              <code>buy-woolworths</code>
+              <code>buy-coles</code>
+              <code>confirm-checkout-woolworths</code>
+              <code>confirm-checkout-coles</code>
+              <code>load-preferences</code>
+            </div>
+          </div>
+          <div class="skill-card skill-card-tools">
+            <div class="skill-header">
+              <h4 class="skill-name">meals</h4>
+              <span class="skill-tool-count">5 tools</span>
+            </div>
+            <p class="skill-desc">View weekly meal plan, grocery list, pantry inventory, and recipes. Direct execution for instant access.</p>
+            <div class="skill-tools">
+              <code>view-all</code>
+              <code>view-week</code>
+              <code>view-grocery</code>
+              <code>view-pantry</code>
+              <code>view-recipes</code>
+            </div>
+          </div>
+          <div class="skill-card skill-card-tools">
+            <div class="skill-header">
+              <h4 class="skill-name">system-health</h4>
+              <span class="skill-tool-count">4 tools</span>
+            </div>
+            <p class="skill-desc">Check system health. Disk usage, memory, CPU, running processes, uptime.</p>
+            <div class="skill-tools">
+              <code>disk-usage</code>
+              <code>memory</code>
+              <code>top-processes</code>
+              <code>uptime</code>
+            </div>
+          </div>
+          <div class="skill-card skill-card-tools">
+            <div class="skill-header">
+              <h4 class="skill-name">api-health</h4>
+              <span class="skill-tool-count">3 tools</span>
+            </div>
+            <p class="skill-desc">Check if your APIs and websites are up and responding correctly.</p>
+            <div class="skill-tools">
+              <code>check-url</code>
+              <code>check-dns</code>
+              <code>check-ports</code>
+            </div>
+          </div>
+          <div class="skill-card skill-card-tools">
+            <div class="skill-header">
+              <h4 class="skill-name">git-digest</h4>
+              <span class="skill-tool-count">3 tools</span>
+            </div>
+            <p class="skill-desc">Summarize recent git activity across your projects. Commits, branches, uncommitted changes.</p>
+            <div class="skill-tools">
+              <code>recent-commits</code>
+              <code>uncommitted-changes</code>
+              <code>branch-status</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI-only skills -->
+      <div class="skills-category">
+        <h3 class="skills-category-title">
+          <span class="skills-category-icon">&#9672;</span>
+          AI prompt skills
+        </h3>
+        <p class="skills-category-desc">
+          These skills use Claude's reasoning directly. No shell scripts needed.
+          The skill definition guides the agent's analysis and output format.
+        </p>
+        <div class="skills-grid skills-grid-compact">
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">morning-briefing</h4>
+            <p class="skill-desc">Daily briefing combining calendar, email, tasks, and news into one summary.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">email-digest</h4>
+            <p class="skill-desc">Summarize unread emails grouped by priority. Flag urgent ones.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">code-review</h4>
+            <p class="skill-desc">Review code changes for bugs, security issues, and improvements.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">github-review</h4>
+            <p class="skill-desc">Review GitHub repos for issues, PRs, and action items that need attention.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">security-audit</h4>
+            <p class="skill-desc">Scan code and dependencies for security vulnerabilities.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">deploy-check</h4>
+            <p class="skill-desc">Pre-deployment checklist. Verify everything is ready to ship.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">web-monitor</h4>
+            <p class="skill-desc">Monitor URLs for changes, price drops, or new content.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">meeting-prep</h4>
+            <p class="skill-desc">Prepare briefing notes and talking points for upcoming meetings.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">content-ideas</h4>
+            <p class="skill-desc">Generate content ideas from trending topics in your niche.</p>
+          </div>
+          <div class="skill-card skill-card-ai">
+            <h4 class="skill-name">cleanup</h4>
+            <p class="skill-desc">Clean up and organize files, repos, or project structure.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Native Tools / MCP -->
+  <section class="section section-dark" id="native-tools">
+    <div class="container">
+      <span class="section-label">Architecture</span>
+      <h2 class="section-title">
+        Model native tools,<br>
+        <em>not wrappers.</em>
+      </h2>
+      <p class="section-desc" style="color: var(--ink-2-dark);">
+        Gombwe skills expose tools directly to Claude through the Model Context Protocol (MCP)
+        and shell scripts. The model decides when and how to use them. No orchestration
+        framework. No prompt chains. Just tools and a completion loop.
+      </p>
+
+      <div class="arch-grid">
+        <div class="arch-card">
+          <h4 class="arch-title">Shell tools</h4>
+          <p class="arch-desc">
+            Each skill can define shell scripts as tools. The agent calls them
+            with structured arguments and gets stdout back. Simple, debuggable,
+            and composable.
+          </p>
+          <div class="arch-example">
+            <code>skills/grocery-order/tools/buy-auto.mjs</code>
+          </div>
+        </div>
+        <div class="arch-card">
+          <h4 class="arch-title">MCP integration</h4>
+          <p class="arch-desc">
+            The gombwe-family MCP server provides family management tools
+            directly to Claude. Members, schedules, preferences. All available
+            as native tool calls.
+          </p>
+          <div class="arch-example">
+            <code>Model Context Protocol</code>
+          </div>
+        </div>
+        <div class="arch-card">
+          <h4 class="arch-title">Completion loop</h4>
+          <p class="arch-desc">
+            Tasks run in a loop with retries and verification.
+            The agent keeps working until the task succeeds or explicitly fails.
+            Two-phase ordering for anything involving money.
+          </p>
+          <div class="arch-example">
+            <code>Retry + verify + confirm</code>
+          </div>
+        </div>
+        <div class="arch-card">
+          <h4 class="arch-title">Declarative skills</h4>
+          <p class="arch-desc">
+            A skill is a folder with a SKILL.md file. Define the prompt,
+            list the tools, set scheduling. The runtime handles everything else.
+          </p>
+          <div class="arch-example">
+            <code>skills/my-skill/SKILL.md</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section class="section" id="install">
+    <div class="container">
+      <span class="section-label">Get started</span>
+      <h2 class="section-title">Install Gombwe.</h2>
+      <p class="section-desc">
+        One command. Installs Node.js if you don't have it.<br>
+        Works on macOS and Linux. Requires an Anthropic API key.
+      </p>
+      <div class="install-block">
+        <div class="install-step">
+          <span class="install-num">1</span>
+          <div class="install-code"><code>curl -fsSL https://gombwe.com/install.sh | bash</code></div>
+        </div>
+        <div class="install-step">
+          <span class="install-num">2</span>
+          <div class="install-code"><code>gombwe init</code></div>
+        </div>
+        <div class="install-step">
+          <span class="install-num">3</span>
+          <div class="install-code"><code>gombwe start</code></div>
+        </div>
+      </div>
+      <p class="install-note">
+        Open <code>localhost:18790</code> and your agent is ready.
+        Connect Discord, Telegram, or use the web dashboard.
+        Define skills. Schedule jobs. See what's possible.
+      </p>
+      <p class="install-note" style="margin-bottom: 0;">
+        Or install manually: <code>npm install -g claude-gombwe</code> (requires <a href="https://nodejs.org" style="color: var(--accent);">Node.js 18+</a>)
+      </p>
+
+      <!-- Terminal demo -->
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span>
+          <span class="terminal-dot"></span>
+          <span class="terminal-dot"></span>
+          <span class="terminal-title">gombwe</span>
+        </div>
+        <div class="terminal-body">
+          <div class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">gombwe start</span></div>
+          <div class="t-line t-out">Loading skills from ~/.claude-gombwe/skills/</div>
+          <div class="t-line t-out">  grocery-order    6 tools loaded</div>
+          <div class="t-line t-out">  meals            5 tools loaded</div>
+          <div class="t-line t-out">  system-health    4 tools loaded</div>
+          <div class="t-line t-out">  api-health       3 tools loaded</div>
+          <div class="t-line t-out">  git-digest       3 tools loaded</div>
+          <div class="t-line t-out">  + 10 AI-prompt skills</div>
+          <div class="t-line t-out t-accent">Dashboard running at http://localhost:18790</div>
+          <div class="t-line t-out">WebSocket ready. Discord connected. Telegram connected.</div>
+          <div class="t-line t-out">Scheduler active. 3 cron jobs loaded.</div>
+          <div class="t-line"><span class="t-prompt">$</span> <span class="t-cursor"></span></div>
+        </div>
+      </div>
+
+      <div class="install-links" style="margin-top: 40px;">
+        <a href="https://github.com/tech-ten/claude-gombwe" class="btn btn-primary" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://www.npmjs.com/package/claude-gombwe" class="btn btn-ghost" target="_blank" rel="noopener">npm</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="section section-dark" style="padding: 80px 0;">
+    <div class="container" style="max-width: 720px; text-align: center;">
+      <span class="section-label" style="display: inline-block; text-align: center; width: 100;">Built by Agents Formation</span>
+      <h2 class="section-title" style="font-family: var(--serif); font-size: clamp(34px, 5vw, 50px);">
+        Want to build<br>
+        <em>your own skills?</em>
+      </h2>
+      <p style="font-size: 17px; color: var(--ink-2-dark); font-weight: 300; line-height: 1.8; margin-bottom: 40px;">
+        We help organisations expose their services as AI-native skill integrations.
+        If your customers use AI assistants, those assistants need a way to reach you.
+      </p>
+      <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;">
+        <a href="https://agentsform.ai" class="btn btn-primary" style="background: var(--accent);">Learn more at agentsform.ai</a>
+        <a href="mailto:tendai@agentsform.ai" class="btn btn-ghost" style="border-color: var(--border-dark); color: var(--ink-on-dark);">tendai@agentsform.ai</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer footer-sticky gombwe-footer">
+    <div class="container">
+      <div class="gombwe-footer-grid">
+        <div class="gombwe-footer-col">
+          <a href="/" class="nav-brand">gombwe</a>
+          <p class="gombwe-footer-tagline">Autonomous agent runtime built on Claude.</p>
+        </div>
+        <div class="gombwe-footer-col">
+          <h5 class="gombwe-footer-heading">Install</h5>
+          <code class="gombwe-footer-code">npm install -g claude-gombwe</code>
+          <code class="gombwe-footer-code">gombwe init && gombwe start</code>
+        </div>
+        <div class="gombwe-footer-col">
+          <h5 class="gombwe-footer-heading">Put your business in your customers' hands</h5>
+          <p class="gombwe-footer-text">We help organisations become AI-native, so your services reach customers wherever their AI assistant lives.</p>
+          <a href="mailto:tendai@agentsform.ai" class="gombwe-footer-link">tendai@agentsform.ai</a>
+        </div>
+        <div class="gombwe-footer-col">
+          <h5 class="gombwe-footer-heading">Links</h5>
+          <a href="https://github.com/tech-ten/claude-gombwe" class="gombwe-footer-link" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://www.npmjs.com/package/claude-gombwe" class="gombwe-footer-link" target="_blank" rel="noopener">npm</a>
+          <a href="https://agentsform.ai" class="gombwe-footer-link">agentsform.ai</a>
+          <a href="https://agentsform.ai/registry.html" class="gombwe-footer-link">MCP Registry</a>
+          <a href="https://agentsformation.com" class="gombwe-footer-link">agentsformation.com</a>
+        </div>
+      </div>
+      <div class="gombwe-footer-bottom">
+        <span>Agents Formation, Melbourne, Australia</span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const navLinks = document.querySelectorAll('.nav-link');
+    const sections = Array.from(navLinks)
+      .map(link => {
+        const href = link.getAttribute('href');
+        if (!href || !href.startsWith('#')) return null;
+        const id = href.slice(1);
+        return { id, el: document.getElementById(id), link };
+      })
+      .filter(s => s && s.el);
+
+    function updateActiveNav() {
+      const scrollY = window.scrollY + 140;
+      let current = sections[0];
+      for (const s of sections) {
+        if (s.el.offsetTop <= scrollY) current = s;
+      }
+      navLinks.forEach(l => l.classList.remove('active'));
+      if (current) current.link.classList.add('active');
+    }
+
+    window.addEventListener('scroll', updateActiveNav, { passive: true });
+    updateActiveNav();
+  </script>
+</body>
+</html>
