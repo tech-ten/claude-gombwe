@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Who Owns AI-Commerce? — Agents Formation</title>
-  <meta name="description" content="AI agents are becoming the primary interface between businesses and customers. Who owns the tools layer, the data, and the commercial benefits? An argument for local developers and digital sovereignty.">
+  <meta name="description" content="AI agents are becoming the primary interface between businesses and customers. Who builds the tools, the channels, and the commercial layer? An argument for local developers and digital sovereignty.">
   <meta property="og:title" content="Who Owns AI-Commerce?">
   <meta property="og:description" content="AI agents are becoming the primary interface between businesses and customers. An argument for local developers, model portability, and digital sovereignty.">
   <meta property="og:type" content="article">
@@ -206,179 +206,140 @@
     </p>
 
     <p>
-      In this world, there are no websites to fall back on. No apps to browse. The agent decides which businesses are visible, which products get recommended, which provider gets the order. Whoever owns the agent layer owns the entire commercial relationship. That is not a technical question. It is an economic and political one. And it is the question this post is about.
+      Two days ago, Anthropic launched <a href="https://www.anthropic.com/engineering/managed-agents">managed agents</a>, and it prompted me to think carefully about who owns the layers that make AI-commerce work. What I found is that the model providers are building excellent infrastructure, and that the ecosystem is more open than I initially feared. But there are layers that nobody is building yet, and those layers will determine whether AI-commerce serves local markets or extracts from them.
     </p>
 
     <p style="font-family: var(--mono); font-size: 13px; color: var(--ink-3); border-left: 3px solid var(--border); padding-left: 16px; font-style: normal;">
-      This was written two days after Anthropic launched managed agents. Some of it will turn out to be wrong. I'll follow up with corrections as the picture becomes clearer.
+      This was written two days after launch. I am still unpacking what managed agents means. Some of this will turn out to be wrong, and I will write follow-up posts on the topics I am still working through: <a href="#further" style="color: var(--ink-3);">model lock-in, digital sovereignty, the economics of AI-commerce, and more</a>.
     </p>
 
-    <h2>The pattern</h2>
+    <h2>What Anthropic built</h2>
 
     <p>
-      We have watched this before. A US technology company builds a platform so useful that it becomes the default intermediary between businesses and customers. Amazon did it with retail. Google did it with search. Facebook did it with social. In each case, the platform started as infrastructure, became a marketplace, and ended up owning the customer relationship, the data, and the economics. Local businesses became tenants. Local markets became afterthoughts.
-    </p>
-
-    <p>
-      Two days ago, Anthropic launched <a href="https://www.anthropic.com/engineering/managed-agents">managed agents</a>. It is excellent engineering: a three-way decoupled architecture with crash-resilient sessions, hardened orchestration, and context engineering that represents real research. For enterprise deployments, it sets a new standard.
+      Managed agents is genuinely impressive engineering. A three-way decoupled architecture: sessions for durable state, a hardened harness for orchestration, and sandboxed execution environments for running code. Crash-resilient. Context-engineered. Research-backed improvements to structured task performance. For enterprise deployments, it sets a new standard.
     </p>
 
     <p>
-      But if every device becomes a prompt window, managed agents is not just an orchestration product. It is a bid to become the operating system of all commerce. The model, the orchestrator, the execution environment, the session store, the credential vault, and the customer relationship, all bundled into one offering from one US company. The domain-specific tools that make it useful for specific markets? Those are expected from the community, for free.
+      Importantly, managed agents is designed to be composable. The tools layer uses MCP, an open standard donated to the Linux Foundation. MCP servers can run anywhere: inside the sandbox, on a remote server, or on the developer's own infrastructure. The harness calls tools through a proxy. The developer retains ownership of their tools. This is a good design.
+    </p>
+
+    <p>
+      Rakuten deployed agents across five departments in a week. Sentry shipped a bug-fix agent with a single engineer. These are enterprise products where the business already has its own infrastructure, its own customer base, and its own tools. Managed agents provides the orchestrator. The enterprise owns everything else. For this use case, managed agents earns its place.
     </p>
 
     <h2>Five layers of AI-commerce</h2>
 
     <p>
-      To understand what is at stake, it helps to see what AI-commerce actually requires. There are five distinct layers. Who owns each one determines who captures the value. But the answer is different depending on whether the product serves an enterprise or a consumer.
+      But enterprise orchestration is one product category. AI-commerce is a different one. To see the difference, it helps to map the layers.
     </p>
 
-    <h3>Enterprise products</h3>
-
     <p>
-      Rakuten deployed agents across five departments in a week. Sentry shipped a bug-fix agent with a single engineer. These are enterprise products where the business already has its own infrastructure, its own customer base, and its own tools. Managed agents is the correct choice for the orchestrator layer here. The enterprise owns everything else.
+      AI-commerce requires five distinct layers. Who builds each one determines who captures the value.
     </p>
 
     <table class="arch-table">
       <thead>
         <tr>
           <th>Layer</th>
-          <th>Who owns it</th>
-          <th>Managed agents' role</th>
+          <th>What it does</th>
+          <th>Enterprise</th>
+          <th>Consumer</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td>Channels</td>
-          <td>The enterprise (their app, their portal, their API)</td>
-          <td>Not involved</td>
+          <td>Where users interact</td>
+          <td>Enterprise owns (their app, portal, API)</td>
+          <td>Local developers (WhatsApp, Discord, dashboard)</td>
         </tr>
         <tr>
           <td>Orchestrator</td>
-          <td>Anthropic (managed agents)</td>
-          <td>This is the product &mdash; hardened harness, crash recovery, context engineering</td>
+          <td>Session management, routing, user data</td>
+          <td>Managed agents &mdash; excellent fit</td>
+          <td>Local developers &mdash; needs persistent infra the sandbox doesn't provide</td>
         </tr>
         <tr>
           <td>Model</td>
-          <td>Anthropic (Claude)</td>
-          <td>Bundled with orchestrator. Model lock-in is an accepted trade-off for reliability</td>
+          <td>Reasoning, planning, tool selection</td>
+          <td>Claude (lock-in acceptable at enterprise scale)</td>
+          <td>Interchangeable &mdash; lock-in is a liability at consumer margins</td>
         </tr>
         <tr>
           <td>Tools</td>
-          <td>The enterprise (their internal MCP servers)</td>
-          <td>Consumes tools via MCP. Enterprise retains ownership</td>
-        </tr>
-        <tr>
-          <td>Retailer / data integration</td>
-          <td>The enterprise (their own systems)</td>
-          <td>Not involved</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p>
-      This works. The enterprise hands the orchestrator to Anthropic and keeps everything else. The lock-in risk is real but manageable: enterprises have contracts, negotiating power, and the resources to migrate if needed. Managed agents earns its place here.
-    </p>
-
-    <h3>Consumer products</h3>
-
-    <p>
-      Now consider a different product: an AI grocery assistant for Australian families. The user says "buy me Colgate toothpaste, cheapest option." The agent searches Woolworths, Coles, and Chemist Warehouse, compares prices, and adds the cheapest to the user's cart. The user manages everything from a dashboard: order history, spending, family preferences. They interact through WhatsApp or Discord, not a $20/month chat application. This is AI-commerce at the consumer level.
-    </p>
-
-    <table class="arch-table">
-      <thead>
-        <tr>
-          <th>Layer</th>
-          <th>Who should own it</th>
-          <th>What managed agents offers</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Channels</td>
-          <td>Local developers (WhatsApp, Discord, Telegram, dashboard)</td>
-          <td>Not included &mdash; build your own</td>
-        </tr>
-        <tr>
-          <td>Orchestrator</td>
-          <td>Local developers (user auth, sessions, persistent data)</td>
-          <td>Ephemeral sandbox &mdash; no persistent database, no user accounts, no uptime between sessions</td>
-        </tr>
-        <tr>
-          <td>Model</td>
-          <td>Interchangeable (Claude, GPT, Gemini, open-source)</td>
-          <td>Claude only. Model lock-in is a liability at consumer margins</td>
-        </tr>
-        <tr>
-          <td>Tools</td>
-          <td>Independent developers (cross-retailer comparison, price search)</td>
-          <td>Consumes tools via MCP. Developer retains ownership</td>
+          <td>Domain functions: search, compare, order</td>
+          <td>Enterprise owns (internal MCP servers)</td>
+          <td>Independent developers &mdash; the unbuilt layer</td>
         </tr>
         <tr>
           <td>Retailer integration</td>
+          <td>Connections to businesses</td>
+          <td>Enterprise owns (their systems)</td>
           <td>Independent developers today, retailers eventually</td>
-          <td>Not involved</td>
         </tr>
       </tbody>
     </table>
 
     <p>
-      Here, managed agents provides one layer out of five: model inference. The orchestrator is ephemeral, so the developer needs their own infrastructure for user data, authentication, and persistent sessions anyway. The channels are not included. The tools are the developer's. The model should be interchangeable because consumer margins cannot absorb lock-in risk. For consumer AI-commerce, managed agents is a component, not a foundation.
-    </p>
-
-    <h3>The takeaway</h3>
-
-    <p>
-      For enterprise, managed agents earns its place as the orchestrator. For consumer products, it provides model inference but not the persistent infrastructure that consumer products require: user accounts, data storage, channels, dashboards. A consumer AI-commerce product needs independent infrastructure that the developer owns, with the model as one interchangeable component inside it.
+      For enterprise, managed agents covers the orchestrator and model, and the enterprise keeps the rest. That is a clean split. The enterprise has contracts, negotiating power, and resources to migrate if needed.
     </p>
 
     <p>
-      I built <a href="https://gombwe.com">Gombwe</a> as a proof of concept: a personal agent that orders groceries, compares prices across Woolworths and Coles, and manages family schedules from a home machine in Melbourne. It runs on Discord and Telegram, uses scripts for deterministic work, and calls the model only when reasoning is needed. It is small, but it demonstrates what the consumer architecture looks like when the developer owns every layer.
+      For consumer products, the picture is different. The orchestrator needs persistent infrastructure: user accounts, order history, payment methods, family profiles. Managed agents' sandbox is ephemeral &mdash; it spins up for a session and is torn down after. A consumer product still needs its own servers, its own database, its own authentication. The model should be interchangeable because consumer margins cannot absorb vendor lock-in. And the tools layer &mdash; the cross-retailer comparison, the independent recommendations &mdash; does not exist yet. Nobody is building it.
     </p>
 
-    <h2>What local developers must own</h2>
+    <h2>What I built</h2>
 
     <p>
-      The tables above show the gap. For consumer AI-commerce, four out of five layers belong to local developers. These are not optional extras. They are the layers that determine whether AI-commerce serves consumers or extracts from them.
-    </p>
-
-    <p>
-      <strong>The proprietary functions layer.</strong> No retailer will build a tool that tells the customer a competitor has a better price. No AI company will build Australian grocery comparison tools. The cross-retailer search, price comparison, and independent recommendation layer must be built by independent developers. It can run anywhere: inside managed agents, as a local MCP server, or as a hosted service. What matters is that it is built independently of both the model provider and the retailers.
+      I published <a href="https://gombwe.com">Gombwe</a> to npm on April 7, the day before the managed agents announcement. Gombwe is an open-source personal agent: it orders groceries, compares prices across Woolworths and Coles, manages family schedules, and runs on a home machine in Melbourne. My family interacts through Discord. Nobody in my household knows or cares that Claude exists. They text "we need milk" and it happens.
     </p>
 
     <p>
-      <strong>The channels people actually use.</strong> Most people in Australia, let alone Zimbabwe or Nigeria, are not going to interact with AI through a $20/month chat application. They will use WhatsApp, Telegram, Discord, SMS. The channel layer that connects agents to the interfaces people already use does not exist inside managed agents. Local developers build this.
+      Building Gombwe taught me what the layers actually are. The model is one component. The tools &mdash; grocery search, price comparison, cart management &mdash; are another. The channels (Discord, Telegram) are another. The user data (meal plans, dietary preferences, purchase history) is another. And the deterministic work &mdash; searching a website, comparing prices, adding to cart &mdash; does not need a model at all. Scripts handle it in milliseconds for free. The model is called only when reasoning is needed.
     </p>
 
     <p>
-      <strong>The user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. This data must live in the developer's infrastructure, not the model provider's ephemeral session store. Managed agents' sandbox is torn down after each session: there is no persistent database, no user accounts, no uptime between sessions. Building a consumer product on it still requires your own servers, your own authentication, your own database. The model provider replaces one layer. The product is still yours to build, host, and own.
+      Gombwe is small. One household. But it demonstrated something important to me: the value is not in the model or the orchestrator. The value is in the layers around them. The tools that know Australian grocery. The channels that reach people where they are. The data that belongs to the user. Those are the layers that make AI-commerce useful, and they are the layers that do not exist yet for most markets and most domains.
+    </p>
+
+    <h2>The layers nobody is building</h2>
+
+    <p>
+      Managed agents is an excellent orchestrator. MCP is a good open standard. The model providers are building real infrastructure. But here is what none of them will build:
     </p>
 
     <p>
-      <strong>The zero-cost path.</strong> Searching a retailer's website is an HTTP request. Comparing prices is a sort. Adding to cart is a form submission. These are deterministic operations that cost nothing to execute. An architecture that routes every action through paid model inference burns money on work that does not require intelligence. Local developers can build systems where the model is called only when reasoning is needed, and scripts handle the rest for free.
+      <strong>The proprietary functions layer.</strong> Could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that tells the customer "Coles has chicken cheaper this week." No retailer will build the functions that work in the customer's interest: the cross-retailer search, the price comparison, the independent recommendations. No model provider will build it either &mdash; they build infrastructure, not Australian grocery tools. Independent developers must build this. It works inside managed agents, inside ChatGPT, inside any MCP-compatible client. The point is not where it runs. The point is that it must be independent of both the model provider and the retailers.
     </p>
 
     <p>
-      <strong>Model portability.</strong> Claude leads today. OpenAI, Google, and open-source alternatives are months behind at most. If a better model arrives next quarter, the tools, the channels, and the customer relationships should be portable. A model-agnostic architecture treats the model as a utility: call Claude for complex reasoning, a cheaper model for simple confirmations, an open-source model for zero-cost work. The tools, the channels, the user data, and the dashboard remain yours regardless of which model you call. Any business built entirely on one vendor's managed environment faces a migration, not a config change, when the market shifts.
-    </p>
-
-    <h2>Digital sovereignty</h2>
-
-    <p>
-      Managed agents runs on US infrastructure. For Australian customers, that means personal data, purchase history, and financial details processed offshore. For African markets, it is the same pattern that has played out with every previous platform: data extracted, value captured elsewhere.
+      <strong>The consumer channels.</strong> Most people in Australia, let alone Zimbabwe or Nigeria, are not going to interact with AI through a $20/month chat application. They will use WhatsApp, Telegram, Discord, SMS. The channel layer that connects AI-commerce to the interfaces people already use does not exist inside any model provider's product. It is a different layer, built by different people, for different markets.
     </p>
 
     <p>
-      This is not a theoretical concern. Europe is already moving away from US-owned collaboration platforms for sovereignty and independence reasons. The same AI companies building agent infrastructure are also defence contractors with national security obligations to their home governments. When the infrastructure that mediates all commerce in a country is owned, operated, and governed by a foreign company with defence ties, that is not a technology choice. It is a sovereignty decision.
+      <strong>The persistent user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. For a consumer product, this data must live in infrastructure the developer owns, not in an ephemeral sandbox session. When the user switches models &mdash; from Claude to GPT, or to an open-source alternative &mdash; their history and preferences should come with them. The user relationship belongs to the product, not to the model.
     </p>
 
     <p>
-      Building good models does not entitle a company to own the commerce layer of every country those models reach. The tools, the channels, and the domain logic that connect AI to local businesses should be built by local developers, hosted in local jurisdictions, and governed by local rules. <strong>AI-commerce</strong> is too important to be surrendered to a single country because that country builds good models. Models will commoditise. The commercial layer that sits on top of them is where the lasting value lives, and that layer should belong to the markets it serves.
+      <strong>The zero-cost path.</strong> Searching a retailer's website is an HTTP request. Comparing prices is a sort. Adding to cart is a form submission. These are deterministic operations that cost nothing to execute locally. An architecture that routes every action through paid model inference burns money on work that does not require intelligence. For a family comparing grocery prices or a student checking textbook costs, the economics point to calling the model only when reasoning is needed and handling the rest with scripts.
     </p>
 
+    <h2>The bigger questions</h2>
+
     <p>
-      When an Australian family orders groceries through an AI agent, the purchase data, the dietary preferences, the spending patterns, and the commercial margins should stay in Australia, governed by Australian law, benefiting Australian businesses and developers. The same principle applies to every country where AI-commerce takes root.
+      Writing this post, I found myself conflating several arguments that deserve their own treatment. Managed agents prompted me to think about them, but they are not critiques of managed agents. They are questions about AI-commerce itself:
+    </p>
+
+    <ul>
+      <li><strong>Model portability.</strong> What happens when a business builds entirely on one model vendor's infrastructure and a better model arrives? Is migration a config change or a rebuild? How should architectures be designed to treat models as interchangeable utilities?</li>
+      <li><strong>Digital sovereignty.</strong> Europe is moving away from US-owned platforms for sovereignty and independence reasons. The same AI companies building agent infrastructure are also defence contractors. When AI-commerce mediates a country's consumer transactions, where the infrastructure lives and who governs it becomes a political question, not a technical one.</li>
+      <li><strong>The economics of AI-commerce.</strong> Who captures the margin when an AI agent mediates a purchase? The model provider, the tool provider, the retailer, or the platform that owns the customer relationship? How does this compare to the economics of Amazon, Google, and Facebook?</li>
+      <li><strong>The end of websites.</strong> If every device becomes a prompt window, businesses that are not agent-accessible become invisible. What does this transition look like, and who builds the tools that make businesses discoverable by agents?</li>
+      <li><strong>Personal agents vs enterprise agents.</strong> Managed agents is designed for enterprise. What does the architecture look like for personal agents that run on a home machine, serve one household, and cost nothing beyond an existing subscription?</li>
+    </ul>
+
+    <p>
+      I will write about each of these separately. They are important enough to get right, and two days after an announcement is not enough time to get them right.
     </p>
 
     <h2>What we are building</h2>
@@ -389,19 +350,19 @@
 
     <ul>
       <li>The <a href="https://agentsform.ai/registry.html">Australian MCP Registry</a>: open-source, model-agnostic tools for Australian grocery, starting with Woolworths and Coles price comparison and ordering</li>
-      <li><a href="https://gombwe.com">Gombwe</a>: an open-source personal agent that lives in Discord and Telegram, orders groceries, manages family schedules, and runs on a home machine using an existing subscription</li>
+      <li><a href="https://gombwe.com">Gombwe</a>: an open-source personal agent that lives in Discord and Telegram, orders groceries, manages family schedules, and runs on a home machine</li>
       <li>Channel adapters for WhatsApp, Telegram, and Discord, so end users never need to know about AI subscriptions</li>
       <li>A dashboard for users to manage their agent interactions, order history, spending, and preferences</li>
     </ul>
 
     <p>
-      These tools are model-agnostic. They work with Claude today and will work with any model tomorrow. The architecture separates each layer so that the model can be swapped without touching the tools, the channels, or the user data.
+      These tools are model-agnostic. They work with Claude today and will work with any model tomorrow. The architecture separates each layer so that the model can be swapped without touching the tools, the channels, or the user data. Managed agents is one option for the orchestration layer. It is a good one for enterprise. For consumer products, we are building our own.
     </p>
 
     <h2>A call to action</h2>
 
     <p>
-      <strong>To Australian developers:</strong> the tools layer for AI-commerce in this country is unbuilt. Every domain, grocery, energy, insurance, travel, needs independent, cross-provider comparison tools that work in the customer's interest. Build them as MCP servers. Make them model-agnostic. Own the layer that the model providers will never build and the incumbents have no incentive to build fairly.
+      <strong>To Australian developers:</strong> the tools layer for AI-commerce in this country is unbuilt. Every domain &mdash; grocery, energy, insurance, travel &mdash; needs independent, cross-provider comparison tools that work in the customer's interest. Build them as MCP servers. Make them model-agnostic. They work inside managed agents, inside ChatGPT, inside any MCP-compatible client. Own the layer that the model providers will never build and the incumbents have no incentive to build fairly.
     </p>
 
     <p>
@@ -409,15 +370,15 @@
     </p>
 
     <p>
-      <strong>To policymakers:</strong> AI-commerce will determine who captures the economic value of consumer transactions in the next decade. If the orchestration layer, the user data, and the commercial tools are all owned by US model providers, Australian businesses become tenants again, the same way they became tenants of Amazon, Google, and Facebook. Policy should encourage local AI-commerce infrastructure: local hosting, local data governance, local tool development, and model portability so that no single foreign provider becomes a gatekeeper to Australian commerce.
+      <strong>To policymakers:</strong> AI-commerce will determine who captures the economic value of consumer transactions in the next decade. The model providers are building excellent infrastructure, but the layers around the model &mdash; the tools, the channels, the user data, the commercial logic &mdash; are the layers where value accrues. Policy should encourage local AI-commerce infrastructure: local tool development, local data governance, model portability, and competition in the orchestration layer so that no single foreign provider becomes a gatekeeper to Australian commerce.
     </p>
 
     <p>
-      Managed agents is excellent engineering. Anthropic, OpenAI, Google, and others will continue to build better models and better infrastructure. That is welcome. But the history of platform economics tells us that the layers between businesses and customers are too important to be owned by one company in one country. The model providers are not oblivious to this — they are simply building for a different problem. It falls to local developers, local businesses, and local policymakers to ensure that AI-commerce infrastructure is built locally, owned locally, and governed locally. The model is a utility. The value is in the layers around it. Those layers should belong to the developers, the businesses, and the countries they serve.
+      The model providers are building good infrastructure. The ecosystem is more open than it could have been, thanks in part to MCP being an open standard. But the history of platform economics tells us that the layers between businesses and customers are too important to be left unbuilt by the countries they serve. The model is a utility. The value is in the layers around it. Those layers should belong to the developers, the businesses, and the countries they serve.
     </p>
 
-    <p>
-      <em>It's been two days since the announcement. Some of what I've written here will turn out to be wrong, incomplete, or overtaken by events. I'll follow this up with corrections and deeper analysis as the picture becomes clearer. If that interests you, check back.</em>
+    <p id="further">
+      <em>It's been two days since the managed agents announcement. I am still working through what it means. I'll follow this up with deeper posts on model portability, digital sovereignty, the economics of AI-commerce, and the end of websites. If that interests you, check back.</em>
     </p>
 
     <div class="blog-cta">
