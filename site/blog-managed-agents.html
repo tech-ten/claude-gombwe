@@ -328,18 +328,40 @@
       We're also rethinking what Gombwe is architecturally. Today it wraps Claude Code as a harness. In the future, it could be a channel and orchestration layer that works with managed agents for complex reasoning and local scripts for deterministic work. The best architecture might not be "local vs cloud" but "local and cloud, each doing what it does best."
     </p>
 
+    <h2>The layer nobody is building</h2>
+
+    <p>
+      There's a bigger argument here that goes beyond personal agents versus managed agents. Our thesis at <a href="https://agentsform.ai">Agents Formation</a> has always been that the primary interface between businesses and customers is shifting from websites and apps to callable skills that AI agents execute on behalf of users. Managed agents accelerates that shift. But it also reveals a gap that neither Anthropic nor the retailers will fill.
+    </p>
+
+    <p>
+      Consider: could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that lets Claude tell the customer "Coles has chicken cheaper this week." No retailer will build the comparison layer that works in the customer's interest. They'll build endpoints that showcase their own products, their own promotions, their own upsells.
+    </p>
+
+    <p>
+      Anthropic won't build it either. They build infrastructure. They don't build Australian grocery comparison tools.
+    </p>
+
+    <p>
+      Someone needs to build the independent layer that sits between customers and businesses: the comparison, the aggregation, the recommendation that serves the customer, not the retailer. That's what the <a href="https://agentsform.ai/registry.html">Australian MCP Registry</a> is becoming. Not a catalogue of our own servers, but a marketplace where Australian businesses either show up with their own endpoints or get represented by tools that compare them anyway.
+    </p>
+
+    <p>
+      Managed agents makes this more urgent, not less. As agents become the default interface for commerce, the businesses that have MCP endpoints will be discoverable. The ones that don't will be invisible to a generation of customers who never visit a website. The question is whether retailers build those endpoints themselves, or whether independent platforms build them first.
+    </p>
+
     <h2>The bigger picture</h2>
 
     <p>
-      Anthropic built something impressive this week. Managed agents, combined with their open-sourcing of MCP, creates a platform that will accelerate enterprise agent adoption significantly. For most teams building agent-powered products, it's the right choice. The engineering is deep, the security model is sound, and the time-to-production advantage is real.
+      Anthropic built something impressive this week. Managed agents, combined with their donation of MCP to the Linux Foundation, creates a platform that will accelerate enterprise agent adoption significantly. The engineering is deep, the security model is sound, and the time-to-production advantage is real. For most teams building agent-powered products, it is the right choice.
     </p>
 
     <p>
-      But there's a gap between enterprise agent infrastructure and the personal, local, cost-sensitive use cases that matter to individuals and families. That gap is where projects like Gombwe live. It's smaller than the enterprise market. It's harder to monetise. But it's real, and it matters, especially in parts of the world where a $20/month subscription or $0.08/hr sandbox isn't accessible.
+      But there are two gaps that managed agents doesn't address. The first is personal: the always-on household assistant, the local-first workflows, the zero-cost use cases that matter to individuals and families. The second is commercial: the independent comparison layer that works for customers, not retailers, and that no retailer or AI company has an incentive to build.
     </p>
 
     <p>
-      We're going to keep building. The tools, the channels, the personal experiences. Managed agents handles the enterprise. Someone should handle everyone else.
+      Those gaps are where we're building. The tools, the channels, the registry, the personal experiences. Managed agents handles the enterprise. Someone should handle everyone else. We think that someone should be close to the markets they serve, building tools that reflect local knowledge, accessible at local price points, over local channels.
     </p>
 
     <div class="blog-cta">
