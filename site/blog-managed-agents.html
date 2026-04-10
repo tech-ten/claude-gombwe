@@ -222,48 +222,119 @@
     <h2>Five layers of AI-commerce</h2>
 
     <p>
-      To understand what is at stake, it helps to see what AI-commerce actually requires. There are five distinct layers, and who owns each one determines who captures the value.
+      To understand what is at stake, it helps to see what AI-commerce actually requires. There are five distinct layers. Who owns each one determines who captures the value. But the answer is different depending on whether the product serves an enterprise or a consumer.
+    </p>
+
+    <h3>Enterprise products</h3>
+
+    <p>
+      Rakuten deployed agents across five departments in a week. Sentry shipped a bug-fix agent with a single engineer. These are enterprise products where the business already has its own infrastructure, its own customer base, and its own tools. Managed agents is the correct choice for the orchestrator layer here. The enterprise owns everything else.
     </p>
 
     <table class="arch-table">
       <thead>
         <tr>
           <th>Layer</th>
-          <th>What it does</th>
-          <th>Who should own it</th>
+          <th>Who owns it</th>
+          <th>Managed agents' role</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td>Channels</td>
-          <td>Where users interact: dashboard, Discord, WhatsApp, Telegram, SMS, voice</td>
-          <td>Local developers</td>
+          <td>The enterprise (their app, their portal, their API)</td>
+          <td>Not involved</td>
         </tr>
         <tr>
           <td>Orchestrator</td>
-          <td>Receives messages, manages sessions, routes to models, holds user data</td>
-          <td>Local developers</td>
+          <td>Anthropic (managed agents)</td>
+          <td>This is the product &mdash; hardened harness, crash recovery, context engineering</td>
         </tr>
         <tr>
           <td>Model</td>
-          <td>The AI that reasons, plans, and decides which tools to call</td>
-          <td>Interchangeable &mdash; Claude, GPT, Gemini, open-source</td>
+          <td>Anthropic (Claude)</td>
+          <td>Bundled with orchestrator. Model lock-in is an accepted trade-off for reliability</td>
         </tr>
         <tr>
           <td>Tools</td>
-          <td>Domain-specific functions: search products, compare prices, place orders</td>
-          <td>Local developers</td>
+          <td>The enterprise (their internal MCP servers)</td>
+          <td>Consumes tools via MCP. Enterprise retains ownership</td>
         </tr>
         <tr>
-          <td>Retailer integration</td>
-          <td>Connections to Woolworths, Coles, Chemist Warehouse, and others</td>
-          <td>Retailers (eventually) or independent developers (today)</td>
+          <td>Retailer / data integration</td>
+          <td>The enterprise (their own systems)</td>
+          <td>Not involved</td>
         </tr>
       </tbody>
     </table>
 
     <p>
-      Managed agents gives Anthropic ownership of the orchestrator and model layers. The tools layer stays with developers. But if the orchestrator is theirs, the model is theirs, and user session data is in their store, then the developer owns one layer out of five, and it is the one Anthropic does not pay for.
+      This works. The enterprise hands the orchestrator to Anthropic and keeps everything else. The lock-in risk is real but manageable: enterprises have contracts, negotiating power, and the resources to migrate if needed. Managed agents earns its place here.
+    </p>
+
+    <h3>Consumer products</h3>
+
+    <p>
+      Now consider a different product: an AI grocery assistant for Australian families. The user says "buy me Colgate toothpaste, cheapest option." The agent searches Woolworths, Coles, and Chemist Warehouse, compares prices, and adds the cheapest to the user's cart. The user manages everything from a dashboard: order history, spending, family preferences. They interact through WhatsApp or Discord, not a $20/month chat application. This is AI-commerce at the consumer level.
+    </p>
+
+    <table class="arch-table">
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Who should own it</th>
+          <th>What managed agents offers</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Channels</td>
+          <td>Local developers (WhatsApp, Discord, Telegram, dashboard)</td>
+          <td>Not included &mdash; build your own</td>
+        </tr>
+        <tr>
+          <td>Orchestrator</td>
+          <td>Local developers (user auth, sessions, persistent data)</td>
+          <td>Ephemeral sandbox &mdash; no persistent database, no user accounts, no uptime between sessions</td>
+        </tr>
+        <tr>
+          <td>Model</td>
+          <td>Interchangeable (Claude, GPT, Gemini, open-source)</td>
+          <td>Claude only. Model lock-in is a liability at consumer margins</td>
+        </tr>
+        <tr>
+          <td>Tools</td>
+          <td>Independent developers (cross-retailer comparison, price search)</td>
+          <td>Consumes tools via MCP. Developer retains ownership</td>
+        </tr>
+        <tr>
+          <td>Retailer integration</td>
+          <td>Independent developers today, retailers eventually</td>
+          <td>Not involved</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Here, managed agents provides one layer out of five: model inference. The orchestrator is ephemeral, so the developer needs their own infrastructure for user data, authentication, and persistent sessions anyway. The channels are not included. The tools are the developer's. The model should be interchangeable because consumer margins cannot absorb lock-in risk. For consumer AI-commerce, managed agents is a component, not a foundation.
+    </p>
+
+    <h3>Where Gombwe fits</h3>
+
+    <p>
+      <a href="https://gombwe.com">Gombwe</a> is a personal agent: it orders groceries, compares prices, manages family schedules, and runs on a home machine in Melbourne. It is not an enterprise product. It operates in the consumer space, but at an even smaller scale: one household.
+    </p>
+
+    <p>
+      For personal use, Gombwe's value is in the layers managed agents does not cover: the channels (Discord, Telegram), the scheduling (cron-based, no manual triggers), the deterministic efficiency (scripts handle HTTP requests and sorting for free, the model is called only for reasoning), and the zero cost (runs on an existing subscription). These are real advantages for a household. They are not advantages that matter at enterprise scale.
+    </p>
+
+    <p>
+      For a consumer product that serves thousands of families, Gombwe's architecture would need to evolve. The tools layer (the Australian MCP Registry, the cross-retailer comparison) is model-agnostic and scales independently. The channel layer (Discord, Telegram, WhatsApp adapters) scales independently. The orchestrator would need its own server infrastructure, potentially using managed agents as one option for the model inference layer, but owning the user data, authentication, and session persistence itself.
+    </p>
+
+    <p>
+      The honest assessment: managed agents is the right choice for enterprise orchestration. It is not designed for consumer products, which need persistent infrastructure the sandbox does not provide. The tools layer has value in both contexts. Gombwe has value as a personal agent and as a reference implementation, but the consumer product it points toward requires independent infrastructure that neither managed agents nor a single laptop can provide.
     </p>
 
     <h2>The model is a utility</h2>
