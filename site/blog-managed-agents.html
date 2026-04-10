@@ -210,11 +210,19 @@
     </p>
 
     <p>
-      We believe the primary interface between businesses and customers is shifting from websites and apps to AI agents that act on behalf of users. Websites become endpoints. Apps become skills. The customer never visits a storefront; they tell an agent what they need, and the agent handles the rest. This is AI-commerce: the next generation of commercial interaction, mediated entirely by agents. Managed agents accelerates this shift. The question is who owns the commercial benefits that accrue from it, and I'll come back to that further down.
+      We believe the primary interface between businesses and customers is shifting from websites and apps to AI agents that act on behalf of users. Websites become endpoints. Apps become skills. The customer never visits a storefront; they tell an agent what they need, and the agent handles the rest. This is <strong>AI-commerce</strong>: the next generation of commercial interaction, mediated entirely by agents. Managed agents accelerates this shift. The question is who owns the commercial benefits that accrue from it, and I'll come back to that further down.
     </p>
 
     <p>
-      This post is not a critique of managed agents. It's an argument for why that layer should not be owned by a single company, and what role independent developers and platforms play in keeping it open, local, and accessible.
+      Building good models is not the same as earning the right to own the commercial layer that sits on top of them. Models are already commoditising: Claude leads today, but OpenAI, Google, and open-source alternatives are months behind at most. Any business that builds its entire agent infrastructure inside one model vendor's managed environment inherits a dependency that has nothing to do with the quality of the tools they've built. If a better model arrives tomorrow, the tools, the channels, the domain logic, and the customer relationships should be portable. They should belong to the people who built them, not to whichever company happens to run the best model this quarter.
+    </p>
+
+    <p>
+      This post is not a critique of managed agents. It's an argument for why the tools layer, the channels layer, and the commercial layer of AI-commerce should not be surrendered to a single company, and what role independent developers and platforms play in keeping it open, local, and portable.
+    </p>
+
+    <p style="font-family: var(--mono); font-size: 13px; color: var(--ink-3); border-left: 3px solid var(--border); padding-left: 16px; font-style: normal;">
+      Note: this was written two days after launch. Some of it will turn out to be wrong. I'll follow up with corrections as the picture becomes clearer.
     </p>
 
     <h2>The week in context</h2>
@@ -261,6 +269,16 @@
       <li><strong>Background execution.</strong> Agents that run for hours on tasks that would outlast a laptop battery or survive a lid close.</li>
     </ul>
 
+    <h3>What managed agents is not</h3>
+
+    <p>
+      It's worth being precise about the sandbox. It is an ephemeral Linux container: it spins up for an agent session, executes code, and is torn down when the session ends. It is not a deployment platform. You cannot build a web application inside it, give it a URL, set up user authentication, and serve customers. There is no persistent database, no uptime guarantee between sessions, no multi-tenant isolation for end users. If you want to build a product that customers use directly, you still need your own infrastructure: your own servers, your own auth, your own database, your own domain. Managed agents is a component inside a product, not a product platform.
+    </p>
+
+    <p>
+      This matters because it means managed agents does not replace what independent developers build. It replaces the orchestration layer. The tools, the domain logic, the customer-facing product, and the infrastructure that persists between sessions all remain the developer's responsibility. Managed agents is powerful middleware, but the product is still yours to build, host, and own.
+    </p>
+
     <h3>Where local/personal agents win</h3>
 
     <ul>
@@ -271,6 +289,7 @@
       <li><strong>Channel integration.</strong> Lives in Discord, Telegram, WhatsApp, where users already are. End users never need to know about AI subscriptions or Claude.</li>
       <li><strong>Data sovereignty.</strong> Personal data stays on the user's machine or in their chosen jurisdiction. No dependency on US-hosted infrastructure.</li>
       <li><strong>Accessibility.</strong> Available to users who cannot afford $0.08/hr sandbox fees or $20/month subscriptions, including emerging markets.</li>
+      <li><strong>Model portability.</strong> Gombwe can switch from Claude to GPT to Gemini to an open-source model without rebuilding. The tools, channels, and domain logic are model-agnostic. A business built entirely on managed agents is coupled to Claude. If OpenAI ships a better model next quarter, that business faces a migration, not a config change.</li>
     </ul>
 
     <h2>Where personal agents lead</h2>
@@ -337,7 +356,7 @@
     </p>
 
     <p>
-      <strong>Country-specific digital sovereignty.</strong> Managed agents runs on Anthropic's US infrastructure. For Australian customers, that means personal data, purchase history, and financial details processed offshore. For African markets, it's the same pattern that has played out with every previous platform: data extracted, value captured elsewhere. As AI-commerce grows, ownership of the commercial benefits should accrue to the markets where the transactions happen, not to the platform provider. We host on AWS Sydney. Australian data stays in Australia. When we expand to African markets, the same principle applies: the tools, the data, and the commercial value stay in the countries they serve.
+      <strong>Country-specific digital sovereignty.</strong> Managed agents runs on Anthropic's US infrastructure. For Australian customers, that means personal data, purchase history, and financial details processed offshore. For African markets, it's the same pattern that has played out with every previous platform: data extracted, value captured elsewhere. Building good models does not entitle a company to own the commerce layer of every country those models reach. The tools, the channels, and the domain logic that connect AI to local businesses should be built by local developers, hosted in local jurisdictions, and governed by local rules. AI-commerce is too important to be surrendered to a single country just because that country happens to build good models. Models will commoditise. The commercial layer that sits on top of them is where the lasting value lives, and that layer should belong to the markets it serves. We host on AWS Sydney. Australian data stays in Australia. When we expand to African markets, the same principle applies.
     </p>
 
     <p>
