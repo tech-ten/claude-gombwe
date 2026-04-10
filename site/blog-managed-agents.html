@@ -202,7 +202,19 @@
   <article class="blog-content">
 
     <p>
-      Two days ago, Anthropic launched managed agents. It's a significant moment for anyone building in the agent space, and I've been thinking about what it means for projects like <a href="https://gombwe.com">Gombwe</a>, our open-source personal agent that orders groceries, manages family schedules, and runs on a home machine in Melbourne. Managed agents raises the bar for enterprise agent infrastructure. It also clarifies where independent projects like ours fit in.
+      We've watched this pattern before. A US technology company builds a platform so good that it becomes the default intermediary between businesses and customers. Amazon did it with retail. Google did it with search. Facebook did it with social. In each case, the platform started as infrastructure, became a marketplace, and ended up owning the customer relationship, the data, and the economics. Local businesses became tenants. Local markets became afterthoughts. By the time anyone noticed, the value chain had been captured.
+    </p>
+
+    <p>
+      Two days ago, Anthropic launched <a href="https://www.anthropic.com/engineering/managed-agents">managed agents</a>. It is impressive engineering, and I mean that sincerely. But if you're a developer in Melbourne or Harare building tools that connect AI to local businesses, the pattern is worth recognising early. Managed agents offers the model, the harness, the sandbox, the session store, the credential vault, the MCP integration, and the customer relationship, all in one bundle. The tools that make it useful for specific markets? Those are expected from the community, for free.
+    </p>
+
+    <p>
+      We believe the primary interface between businesses and customers is shifting from websites and apps to AI agents that act on behalf of users. Websites become endpoints. Apps become skills. The customer never visits a storefront; they tell an agent what they need, and the agent handles the rest. Managed agents accelerates this shift. The question is who controls the layer in between, and I'll come back to that further down.
+    </p>
+
+    <p>
+      This post is not a critique of managed agents. It's an argument for why that layer should not be owned by a single company, and what role independent developers and platforms play in keeping it open, local, and accessible.
     </p>
 
     <h2>The week in context</h2>
@@ -212,11 +224,11 @@
     </p>
 
     <p>
-      I published Gombwe to npm on April 7, the day before the announcement. Coincidence, not strategy. But the timing made the impact personal. I had spent months building an autonomous agent runtime: a completion loop with retries and verification, multi-channel support via Discord and Telegram, session management, 15 declarative skills, cron scheduling, and a live grocery ordering flow. Then Anthropic published their <a href="https://www.anthropic.com/engineering/managed-agents">engineering blog post</a> describing a three-way decoupled architecture with crash-resilient sessions, stateless harnesses, context engineering that reduced P95 latency by over 90%, and model-harness co-optimisation that improves structured task performance by 10 points.
+      I published <a href="https://gombwe.com">Gombwe</a> to npm on April 7, the day before the announcement. Gombwe is an open-source personal agent built on Claude: it orders groceries, manages family schedules, compares prices across Woolworths and Coles, and runs on a home machine in Melbourne. The timing was coincidence, not strategy. But it means I've been building in the exact space that managed agents now addresses.
     </p>
 
     <p>
-      It is excellent engineering. For enterprise deployments, it sets a new standard. For personal agent projects like Gombwe, it sharpens the question of where we add unique value.
+      Then Anthropic published their <a href="https://www.anthropic.com/engineering/managed-agents">engineering blog post</a> describing a three-way decoupled architecture with crash-resilient sessions, stateless harnesses, context engineering that reduced P95 latency by over 90%, and model-harness co-optimisation that improves structured task performance by 10 points. It is excellent engineering. For enterprise deployments, it sets a new standard.
     </p>
 
     <h2>What Anthropic got right</h2>
@@ -306,62 +318,40 @@
       This is a small market compared to enterprise. But it's a real one. Not everyone needs Anthropic's infrastructure. Some people need an agent that knows their family, runs on their laptop, and texts them on Discord when the chicken is on sale.
     </p>
 
-    <h2>What this means for Agents Formation</h2>
+    <h2>Our role</h2>
 
     <p>
-      We're a small outfit in Melbourne building <a href="https://gombwe.com">Gombwe</a> and a set of <a href="https://agentsform.ai/registry.html">MCP servers for Australian services</a>. Our focus is clear: a personal agent platform and an independent comparison layer for Australian commerce.
+      At <a href="https://agentsform.ai">Agents Formation</a> in Melbourne, we see three things that need to exist and that neither Anthropic nor the retailers will build:
     </p>
 
     <p>
-      That includes:
-    </p>
-
-    <ul>
-      <li><strong>Household automation.</strong> Grocery ordering, meal planning, family scheduling through messaging channels.</li>
-      <li><strong>Local-first workflows.</strong> Agents that need access to logged-in browser sessions, local files, or hardware that a remote sandbox can't reach.</li>
-      <li><strong>Cost-sensitive deployments.</strong> Use cases where $0.08/hr per session is a real barrier, including emerging markets where a subscription costs more than a month's mobile data.</li>
-      <li><strong>Private data workloads.</strong> MCP servers that expose personal information the user doesn't want leaving their machine.</li>
-      <li><strong>Australian data sovereignty.</strong> Customer data that needs to stay in Australia, hosted on AWS Sydney rather than US infrastructure.</li>
-    </ul>
-
-    <p>
-      We're also rethinking what Gombwe is architecturally. Today it wraps Claude Code as a harness. In the future, it could be a channel and orchestration layer that works with managed agents for complex reasoning and local scripts for deterministic work. The best architecture might not be "local vs cloud" but "local and cloud, each doing what it does best."
-    </p>
-
-    <h2>The layer nobody is building</h2>
-
-    <p>
-      There's a bigger argument here that goes beyond personal agents versus managed agents. Our thesis at <a href="https://agentsform.ai">Agents Formation</a> has always been that the primary interface between businesses and customers is shifting from websites and apps to callable skills that AI agents execute on behalf of users. Managed agents accelerates that shift. But it also reveals a gap that neither Anthropic nor the retailers will fill.
+      <strong>The independent comparison layer.</strong> Could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that tells the customer "Coles has chicken cheaper this week." No retailer will build the comparison layer that works in the customer's interest. They'll build endpoints that showcase their own products, their own promotions, their own upsells. Anthropic won't build it either. They build infrastructure, not Australian grocery comparison tools. Someone independent needs to build this, and it can run anywhere: as a managed agent, as a local tool, or as an MCP server inside Claude's ecosystem. We're building it as all three, starting with the <a href="https://agentsform.ai/registry.html">Australian MCP Registry</a>.
     </p>
 
     <p>
-      Consider: could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that lets Claude tell the customer "Coles has chicken cheaper this week." No retailer will build the comparison layer that works in the customer's interest. They'll build endpoints that showcase their own products, their own promotions, their own upsells.
+      <strong>The channel layer.</strong> Managed agents lives inside Claude's interface or behind an API. Most people in Australia, let alone Zimbabwe or Nigeria, are not going to interact with AI through a $20/month chat application. They'll interact through WhatsApp, Telegram, Discord, SMS. The channel layer that connects agents to the channels people actually use doesn't exist inside managed agents. <a href="https://gombwe.com">Gombwe</a> already runs on Discord and Telegram. Building it for WhatsApp is next.
     </p>
 
     <p>
-      Anthropic won't build it either. They build infrastructure. They don't build Australian grocery comparison tools.
+      <strong>The zero-cost path.</strong> Not every use case justifies $0.08/hr sandbox compute and per-token API billing. A family comparing grocery prices, a student checking textbook costs, a household managing meal plans. These are real use cases that work best when the deterministic parts (search, compare, sort) are handled by scripts on local hardware, and the model is called only when reasoning is actually needed. Managed agents is the right choice for enterprise. For personal agents running on a home machine, the economics point to local execution.
     </p>
 
     <p>
-      Someone needs to build the independent layer that sits between customers and businesses: the comparison, the aggregation, the recommendation that serves the customer, not the retailer. That's what the <a href="https://agentsform.ai/registry.html">Australian MCP Registry</a> is becoming. Not a catalogue of our own servers, but a marketplace where Australian businesses either show up with their own endpoints or get represented by tools that compare them anyway.
-    </p>
-
-    <p>
-      Managed agents makes this more urgent, not less. As agents become the default interface for commerce, the businesses that have MCP endpoints will be discoverable. The ones that don't will be invisible to a generation of customers who never visit a website. The question is whether retailers build those endpoints themselves, or whether independent platforms build them first.
+      As agents become the default interface for commerce, the businesses that have MCP endpoints will be discoverable. The ones that don't will be invisible to a generation of customers who never visit a website. The question is whether retailers build those endpoints themselves, or whether independent platforms build them first. We're not waiting.
     </p>
 
     <h2>The bigger picture</h2>
 
     <p>
-      Anthropic built something impressive this week. Managed agents, combined with their donation of MCP to the Linux Foundation, creates a platform that will accelerate enterprise agent adoption significantly. The engineering is deep, the security model is sound, and the time-to-production advantage is real. For most teams building agent-powered products, it is the right choice.
+      Anthropic built something impressive this week. Managed agents, combined with their donation of MCP to the Linux Foundation, is a genuine contribution to the ecosystem. The engineering is deep. The security model is sound. For enterprise teams, it is the right choice.
     </p>
 
     <p>
-      Personal agents occupy a different space: the always-on household assistant, the local-first workflows, the zero-cost use cases that matter to individuals and families. Beyond that, there's an opportunity that applies regardless of infrastructure: the independent comparison layer that works for customers, not retailers. This can be built as a managed agent, as a local tool, or as an MCP server inside Claude's ecosystem. No retailer has an incentive to build it, and it hasn't been built yet.
+      But the history of platform economics tells us that the agent layer between businesses and customers is too important to be owned by a single company. MCP being open is a good start. The next step is ensuring that the tools, the channels, and the comparison layers that make agents useful in specific markets are built by people who understand those markets, priced for those markets, and accessible through channels those markets actually use.
     </p>
 
     <p>
-      That's where we're focused. The tools, the channels, the registry, the personal experiences, and the comparison layer. We think the people building these should be close to the markets they serve, with local knowledge, accessible pricing, and channels that reach everyone.
+      That's what we're building. From Melbourne, for Australia, and eventually for markets that the next wave of technology platforms will be tempted to treat as an afterthought, the same way the last wave did.
     </p>
 
     <div class="blog-cta">
