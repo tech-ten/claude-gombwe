@@ -345,30 +345,14 @@
       The honest assessment: managed agents is the right choice for enterprise orchestration. It is not designed for consumer products, which need persistent infrastructure the sandbox does not provide. The tools layer has value in both contexts. Gombwe has value as a personal agent and as a reference implementation, but the consumer product it points toward requires independent infrastructure that neither managed agents nor a single laptop can provide.
     </p>
 
-    <h2>The model is a utility</h2>
-
-    <p>
-      Models are commoditising. Claude leads today. OpenAI, Google, and open-source alternatives are months behind at most. Any business that builds its agent infrastructure inside one model vendor's managed environment inherits a dependency that has nothing to do with the quality of the tools it has built. If a better model arrives next quarter, the tools, the channels, the domain logic, and the customer relationships should be portable. They should belong to the people who built them, not to whichever company runs the best model this quarter.
-    </p>
-
-    <p>
-      A model-agnostic architecture treats the model as a utility: call Claude for complex reasoning, GPT for simple confirmations, an open-source model for zero-cost deterministic work. Swap providers without rebuilding. The tools, the channels, the user data, and the dashboard remain yours regardless of which model you call.
-    </p>
-
-    <h2>The sandbox is not a product platform</h2>
-
-    <p>
-      It is worth being precise about what managed agents' sandbox is. It is an ephemeral Linux container that spins up for an agent session, executes code, and is torn down when the session ends. It is not a deployment platform. You cannot build a web application inside it, give it a URL, set up user authentication, and serve customers. There is no persistent database, no uptime between sessions, no multi-tenant isolation.
-    </p>
-
-    <p>
-      If you want to build a grocery ordering product that customers use directly, you still need your own servers, your own authentication, your own database, your own domain. Managed agents is a component inside a product, not a product itself. The product is still yours to build, host, and own. This is important because it means managed agents does not replace what local developers build. It replaces one layer: the orchestrator. Everything else remains the developer's responsibility and opportunity.
-    </p>
-
     <h2>What local developers must own</h2>
 
     <p>
-      <strong>The proprietary functions layer.</strong> No retailer will build a tool that tells the customer a competitor has a better price. No AI company will build Australian grocery comparison tools. The independent, cross-retailer search, price comparison, and recommendation layer must be built by independent developers. It can run anywhere: as a managed agent tool, as a local MCP server, or as a hosted service. What matters is that it is built independently of both the model provider and the retailers.
+      The tables above show the gap. For consumer AI-commerce, four out of five layers belong to local developers. These are not optional extras. They are the layers that determine whether AI-commerce serves consumers or extracts from them.
+    </p>
+
+    <p>
+      <strong>The proprietary functions layer.</strong> No retailer will build a tool that tells the customer a competitor has a better price. No AI company will build Australian grocery comparison tools. The cross-retailer search, price comparison, and independent recommendation layer must be built by independent developers. It can run anywhere: inside managed agents, as a local MCP server, or as a hosted service. What matters is that it is built independently of both the model provider and the retailers.
     </p>
 
     <p>
@@ -376,11 +360,15 @@
     </p>
 
     <p>
-      <strong>The user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. This data must live in the developer's infrastructure, not the model provider's session store. When the user switches from Claude to GPT, their history and preferences should come with them. The user relationship belongs to the product, not the model.
+      <strong>The user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. This data must live in the developer's infrastructure, not the model provider's ephemeral session store. Managed agents' sandbox is torn down after each session: there is no persistent database, no user accounts, no uptime between sessions. Building a consumer product on it still requires your own servers, your own authentication, your own database. The model provider replaces one layer. The product is still yours to build, host, and own.
     </p>
 
     <p>
-      <strong>The zero-cost path.</strong> Searching a retailer's website is an HTTP request. Comparing prices is a sort. Adding to cart is a form submission. These are deterministic operations that cost nothing to execute. Only reasoning, planning, and ambiguous requests need a model. An architecture that routes every action through paid model inference burns money on work that does not require intelligence. Local developers can build systems where the model is called only when it is needed, and scripts handle the rest for free.
+      <strong>The zero-cost path.</strong> Searching a retailer's website is an HTTP request. Comparing prices is a sort. Adding to cart is a form submission. These are deterministic operations that cost nothing to execute. An architecture that routes every action through paid model inference burns money on work that does not require intelligence. Local developers can build systems where the model is called only when reasoning is needed, and scripts handle the rest for free.
+    </p>
+
+    <p>
+      <strong>Model portability.</strong> Claude leads today. OpenAI, Google, and open-source alternatives are months behind at most. If a better model arrives next quarter, the tools, the channels, and the customer relationships should be portable. A model-agnostic architecture treats the model as a utility: call Claude for complex reasoning, a cheaper model for simple confirmations, an open-source model for zero-cost work. The tools, the channels, the user data, and the dashboard remain yours regardless of which model you call. Any business built entirely on one vendor's managed environment faces a migration, not a config change, when the market shifts.
     </p>
 
     <h2>Digital sovereignty</h2>
