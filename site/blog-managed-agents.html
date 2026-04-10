@@ -327,22 +327,14 @@
       Here, managed agents provides one layer out of five: model inference. The orchestrator is ephemeral, so the developer needs their own infrastructure for user data, authentication, and persistent sessions anyway. The channels are not included. The tools are the developer's. The model should be interchangeable because consumer margins cannot absorb lock-in risk. For consumer AI-commerce, managed agents is a component, not a foundation.
     </p>
 
-    <h3>Where Gombwe fits</h3>
+    <h3>The takeaway</h3>
 
     <p>
-      <a href="https://gombwe.com">Gombwe</a> is a personal agent: it orders groceries, compares prices, manages family schedules, and runs on a home machine in Melbourne. It is not an enterprise product. It operates in the consumer space, but at an even smaller scale: one household.
+      For enterprise, managed agents earns its place as the orchestrator. For consumer products, it provides model inference but not the persistent infrastructure that consumer products require: user accounts, data storage, channels, dashboards. A consumer AI-commerce product needs independent infrastructure that the developer owns, with the model as one interchangeable component inside it.
     </p>
 
     <p>
-      For personal use, Gombwe's value is in the layers managed agents does not cover: the channels (Discord, Telegram), the scheduling (cron-based, no manual triggers), the deterministic efficiency (scripts handle HTTP requests and sorting for free, the model is called only for reasoning), and the zero cost (runs on an existing subscription). These are real advantages for a household. They are not advantages that matter at enterprise scale.
-    </p>
-
-    <p>
-      For a consumer product that serves thousands of families, Gombwe's architecture would need to evolve. The tools layer (the Australian MCP Registry, the cross-retailer comparison) is model-agnostic and scales independently. The channel layer (Discord, Telegram, WhatsApp adapters) scales independently. The orchestrator would need its own server infrastructure, potentially using managed agents as one option for the model inference layer, but owning the user data, authentication, and session persistence itself.
-    </p>
-
-    <p>
-      The honest assessment: managed agents is the right choice for enterprise orchestration. It is not designed for consumer products, which need persistent infrastructure the sandbox does not provide. The tools layer has value in both contexts. Gombwe has value as a personal agent and as a reference implementation, but the consumer product it points toward requires independent infrastructure that neither managed agents nor a single laptop can provide.
+      I built <a href="https://gombwe.com">Gombwe</a> as a proof of concept: a personal agent that orders groceries, compares prices across Woolworths and Coles, and manages family schedules from a home machine in Melbourne. It runs on Discord and Telegram, uses scripts for deterministic work, and calls the model only when reasoning is needed. It is small, but it demonstrates what the consumer architecture looks like when the developer owns every layer.
     </p>
 
     <h2>What local developers must own</h2>
@@ -417,7 +409,7 @@
     </p>
 
     <p>
-      Anthropic built something genuinely impressive this week. Managed agents is excellent engineering. But the history of platform economics tells us that the layers between businesses and customers are too important to be owned by one company in one country. The model is a utility. The value is in the layers around it. Those layers should belong to the developers, the businesses, and the countries they serve.
+      Managed agents is excellent engineering. Anthropic, OpenAI, Google, and others will continue to build better models and better infrastructure. That is welcome. But the history of platform economics tells us that the layers between businesses and customers are too important to be owned by one company in one country. The model providers are not oblivious to this — they are simply building for a different problem. It falls to local developers, local businesses, and local policymakers to ensure that AI-commerce infrastructure is built locally, owned locally, and governed locally. The model is a utility. The value is in the layers around it. Those layers should belong to the developers, the businesses, and the countries they serve.
     </p>
 
     <p>
