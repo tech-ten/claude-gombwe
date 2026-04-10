@@ -206,7 +206,7 @@
     </p>
 
     <p>
-      Two days ago, Anthropic launched <a href="https://www.anthropic.com/engineering/managed-agents">managed agents</a>. It is impressive engineering, and I mean that sincerely. But if you're a developer in Melbourne or Harare building tools that connect AI to local businesses, the pattern is worth recognising early. Managed agents offers the model, the harness, the sandbox, the session store, the credential vault, the MCP integration, and the customer relationship, all in one bundle. The tools that make it useful for specific markets? Those are expected from the community, for free.
+      Two days ago, Anthropic launched <a href="https://www.anthropic.com/engineering/managed-agents">managed agents</a>. It is impressive engineering. But if you're a developer in Melbourne or Harare building tools that connect AI to local businesses, the pattern is worth recognising early. Managed agents offers the model, the harness, the sandbox, the session store, the credential vault, the MCP integration, and the customer relationship, all in one bundle. The tools that make it useful for specific markets? Those are expected from the community, for free.
     </p>
 
     <p>
@@ -247,7 +247,7 @@
     <h2>An honest comparison</h2>
 
     <p>
-      After researching extensively, here is where I landed on the strengths and limitations of each approach:
+      Here are the strengths and limitations of each approach:
     </p>
 
     <h3>Where managed agents wins</h3>
@@ -333,7 +333,11 @@
     </p>
 
     <p>
-      <strong>The zero-cost path.</strong> Not every use case justifies $0.08/hr sandbox compute and per-token API billing. A family comparing grocery prices, a student checking textbook costs, a household managing meal plans. These are real use cases that work best when the deterministic parts (search, compare, sort) are handled by scripts on local hardware, and the model is called only when reasoning is actually needed. Managed agents is the right choice for enterprise. For personal agents running on a home machine, the economics point to local execution.
+      <strong>The zero-cost path.</strong> Not every use case justifies $0.08/hr sandbox compute and per-token API billing. A family comparing grocery prices, a student checking textbook costs, a household managing meal plans. These work best when deterministic parts are handled by scripts on local hardware, and the model is called only when reasoning is needed. Managed agents is the right choice for enterprise. For personal agents, the economics point to local execution.
+    </p>
+
+    <p>
+      <strong>Country-specific digital sovereignty.</strong> Managed agents runs on Anthropic's US infrastructure. For Australian customers, that means personal data, purchase history, and financial details processed offshore. For African markets, it's the same pattern that has played out with every previous platform: data extracted, value captured elsewhere. We host on AWS Sydney. Australian data stays in Australia. When we expand to African markets, the same principle applies. The tools, the data, and the value should stay in the countries they serve.
     </p>
 
     <p>
