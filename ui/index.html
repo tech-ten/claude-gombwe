@@ -42,6 +42,9 @@
           <button class="nav-item" data-tab="family">
             <span class="nav-dot"></span> Family
           </button>
+          <button class="nav-item" data-tab="eero">
+            <span class="nav-dot"></span> Network
+          </button>
         </div>
         <div class="nav-section">
           <span class="nav-label">Automation</span>
@@ -205,6 +208,250 @@
             </div>
           </div>
           <div class="card" id="serviceList"></div>
+        </div>
+      </section>
+
+      <!-- Eero (Network) -->
+      <section id="tab-eero" class="tab-content">
+        <div class="page-view eero-page">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Network</h1>
+              <p class="page-desc">Live device control, usage analytics, and full eero API access.</p>
+            </div>
+            <div class="eero-toolbar">
+              <span class="eero-sync-state" id="eeroSyncState"></span>
+              <button class="btn-ghost btn-sm" id="eeroRefreshBtn">Refresh</button>
+              <button class="btn-primary btn-sm" id="eeroSyncBtn">Sync now</button>
+            </div>
+          </div>
+
+          <!-- Auth gate (shown only when no session) -->
+          <div class="card eero-auth hidden" id="eeroAuth">
+            <div class="eero-auth-step" id="eeroLoginStep">
+              <h3>Sign in to your eero</h3>
+              <p class="muted">Enter your email or phone — eero will text you a 6-digit code.</p>
+              <form id="eeroLoginForm" class="form-row">
+                <input type="text" id="eeroLoginInput" placeholder="email@example.com or +1…" required>
+                <button class="btn-primary" type="submit">Send code</button>
+              </form>
+            </div>
+            <div class="eero-auth-step hidden" id="eeroVerifyStep">
+              <h3>Enter the 6-digit code</h3>
+              <form id="eeroVerifyForm" class="form-row">
+                <input type="text" id="eeroVerifyInput" placeholder="123456" inputmode="numeric" maxlength="8" required>
+                <button class="btn-primary" type="submit">Verify</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Sub-tab nav -->
+          <div class="eero-subnav" id="eeroSubnav">
+            <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
+            <button class="eero-subtab" data-eero-tab="devices">Devices</button>
+            <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
+            <button class="eero-subtab" data-eero-tab="usage">Usage</button>
+            <button class="eero-subtab" data-eero-tab="speed">Speed</button>
+            <button class="eero-subtab" data-eero-tab="advanced">Advanced</button>
+            <button class="eero-subtab" data-eero-tab="raw">Raw API</button>
+            <button class="eero-subtab" data-eero-tab="audit">Audit</button>
+          </div>
+
+          <!-- Overview -->
+          <div class="eero-pane active" data-eero-pane="overview">
+            <div class="eero-stat-grid" id="eeroStatGrid"></div>
+            <div class="card eero-card">
+              <div class="eero-card-header"><span>Devices online over time</span></div>
+              <div class="eero-chart" id="eeroOnlineChart"></div>
+            </div>
+            <div class="eero-two-col">
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>Top consumers (last 7d)</span></div>
+                <div id="eeroTopConsumers"></div>
+              </div>
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>eero hardware</span></div>
+                <div id="eeroNodes"></div>
+              </div>
+            </div>
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Recent events</span>
+                <span class="muted" id="eeroEventCount"></span>
+              </div>
+              <div id="eeroEvents"></div>
+            </div>
+          </div>
+
+          <!-- Devices -->
+          <div class="eero-pane" data-eero-pane="devices">
+            <div class="eero-device-toolbar">
+              <input type="text" class="eero-search" id="eeroDeviceSearch" placeholder="Search devices by name, MAC, or IP">
+              <select id="eeroDeviceSort">
+                <option value="recent">Sort: most recent</option>
+                <option value="name">Sort: name</option>
+                <option value="profile">Sort: profile</option>
+                <option value="status">Sort: status</option>
+              </select>
+              <select id="eeroDeviceFilter">
+                <option value="all">Show: all</option>
+                <option value="online">Online only</option>
+                <option value="offline">Offline only</option>
+                <option value="paused">Paused</option>
+                <option value="blocked">Blocked</option>
+                <option value="unknown">Unknown / new</option>
+              </select>
+            </div>
+            <div class="eero-bulk-bar hidden" id="eeroBulkBar">
+              <span id="eeroBulkCount"></span>
+              <button class="btn-sm" data-bulk="pause">Pause selected</button>
+              <button class="btn-sm" data-bulk="unpause">Unpause selected</button>
+              <button class="btn-sm" data-bulk="block">Block selected</button>
+              <button class="btn-sm" data-bulk="unblock">Unblock selected</button>
+              <button class="btn-ghost btn-sm" data-bulk="clear">Clear</button>
+            </div>
+            <div class="card eero-card eero-device-list" id="eeroDeviceList"></div>
+          </div>
+
+          <!-- Profiles -->
+          <div class="eero-pane" data-eero-pane="profiles">
+            <div class="eero-section-bar">
+              <form id="eeroNewProfileForm" class="form-row">
+                <input type="text" id="eeroNewProfileName" placeholder="New profile name (e.g. Kids)">
+                <button class="btn-primary btn-sm" type="submit">Create</button>
+              </form>
+            </div>
+            <div class="card eero-card" id="eeroProfileList"></div>
+          </div>
+
+          <!-- Usage -->
+          <div class="eero-pane" data-eero-pane="usage">
+            <div class="eero-section-bar">
+              <select id="eeroUsageRange">
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+              <select id="eeroUsageCadence">
+                <option value="daily">Daily</option>
+                <option value="hourly">Hourly</option>
+              </select>
+            </div>
+            <div class="card eero-card">
+              <div class="eero-card-header"><span>Download / Upload</span><span id="eeroUsageTotals" class="muted"></span></div>
+              <div class="eero-chart" id="eeroUsageChart"></div>
+            </div>
+            <div class="card eero-card">
+              <div class="eero-card-header"><span>Hourly heatmap (online devices)</span></div>
+              <div class="eero-chart" id="eeroHeatmap"></div>
+            </div>
+          </div>
+
+          <!-- Speed -->
+          <div class="eero-pane" data-eero-pane="speed">
+            <div class="eero-section-bar">
+              <button class="btn-primary btn-sm" id="eeroRunSpeedBtn">Run speedtest now</button>
+              <span class="muted" id="eeroSpeedStatus"></span>
+            </div>
+            <div class="card eero-card">
+              <div class="eero-card-header"><span>Speedtest history</span></div>
+              <div class="eero-chart" id="eeroSpeedChart"></div>
+            </div>
+            <div class="card eero-card eero-speed-table" id="eeroSpeedTable"></div>
+          </div>
+
+          <!-- Advanced (network controls) -->
+          <div class="eero-pane" data-eero-pane="advanced">
+            <div class="eero-two-col">
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>Sampler</span></div>
+                <div class="eero-form-block">
+                  <label><input type="checkbox" id="eeroSamplerEnabled"> Auto-sample in background</label>
+                  <label>Interval
+                    <select id="eeroSamplerInterval">
+                      <option value="60000">1 min</option>
+                      <option value="300000" selected>5 min</option>
+                      <option value="900000">15 min</option>
+                      <option value="3600000">1 hour</option>
+                    </select>
+                  </label>
+                  <label><input type="checkbox" id="eeroAlertNewDevice"> Alert on new device</label>
+                  <button class="btn-primary btn-sm" id="eeroSaveSamplerBtn">Save</button>
+                </div>
+              </div>
+
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>Network</span></div>
+                <div class="eero-form-block">
+                  <button class="btn-sm" id="eeroRebootNetworkBtn">Reboot network</button>
+                  <button class="btn-sm" id="eeroLogoutBtn">Sign out</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Guest network</span>
+                <label class="eero-toggle"><input type="checkbox" id="eeroGuestEnabled"><span></span></label>
+              </div>
+              <div class="eero-form-block">
+                <input type="text" id="eeroGuestName" placeholder="Guest SSID">
+                <input type="text" id="eeroGuestPass" placeholder="Guest password">
+                <button class="btn-primary btn-sm" id="eeroSaveGuestBtn">Save guest network</button>
+              </div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Port forwards</span>
+                <button class="btn-ghost btn-sm" id="eeroAddForwardBtn">Add</button>
+              </div>
+              <div id="eeroForwardList"></div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>DHCP reservations</span>
+                <button class="btn-ghost btn-sm" id="eeroAddReservationBtn">Add</button>
+              </div>
+              <div id="eeroReservationList"></div>
+            </div>
+          </div>
+
+          <!-- Raw API -->
+          <div class="eero-pane" data-eero-pane="raw">
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Raw eero API</span>
+                <span class="muted">Hit any endpoint the eero app uses. Total power, no limits.</span>
+              </div>
+              <div class="eero-form-block">
+                <div class="form-row">
+                  <select id="eeroRawMethod">
+                    <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+                  </select>
+                  <input type="text" id="eeroRawPath" placeholder="/2.2/networks/123/devices" style="flex:1">
+                </div>
+                <textarea id="eeroRawBody" rows="4" placeholder='Body (JSON, optional)'></textarea>
+                <div class="form-row">
+                  <button class="btn-primary btn-sm" id="eeroRawSendBtn">Send</button>
+                  <span class="eero-quick-list">
+                    <button class="btn-ghost btn-sm" data-quick="/2.2/account">/account</button>
+                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/devices">$NETWORK/devices</button>
+                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/profiles">$NETWORK/profiles</button>
+                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/insights?period=week">$NETWORK/insights</button>
+                  </span>
+                </div>
+                <pre class="eero-raw-output" id="eeroRawOutput">// response shows here</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- Audit -->
+          <div class="eero-pane" data-eero-pane="audit">
+            <div class="card eero-card" id="eeroAuditList"></div>
+          </div>
         </div>
       </section>
 

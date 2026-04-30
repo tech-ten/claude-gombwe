@@ -15,6 +15,8 @@ import { WorkflowEngine } from './workflows.js';
 import { WebChannel } from './channels/web.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
+import { EeroClient } from './eero.js';
+import { EeroStore } from './eero-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +33,8 @@ export class Gateway {
   private wsClients: Set<WebSocket> = new Set();
   private triggers: TriggerEngine;
   private workflows: WorkflowEngine;
+  private eero: EeroClient;
+  private eeroStore: EeroStore;
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -92,6 +96,11 @@ export class Gateway {
 
     this.triggers = new TriggerEngine(config, this.agent, notifyFn);
     this.workflows = new WorkflowEngine(config, this.agent, notifyFn);
+
+    this.eero = new EeroClient(config.dataDir);
+    this.eeroStore = new EeroStore(config.dataDir, this.eero, (event) => {
+      this.broadcast({ type: `eero:${event.type}` as any, data: event.data, timestamp: event.time });
+    });
 
     this.setupAgentEvents();
     this.setupWebSocket();
@@ -1212,6 +1221,285 @@ The ingredients should be grocery item names with quantities scaled for ${family
         res.status(500).json({ error: err.message, ingredients: [], source: 'error' });
       }
     });
+
+    // ── eero: home network full control ─────────────────────────────────
+    const eeroError = (res: Response, err: any) => {
+      const status = err?.status === 401 ? 401 : (err?.status || 500);
+      res.status(status).json({ error: err?.message || 'eero error', body: err?.body });
+    };
+    const audit = (action: string, detail: any) => this.eeroStore.logAction(action, detail);
+
+    // Status — what the dashboard reads on load. Returns the cached snapshot
+    // (so the UI is instant) plus the current sampler config.
+    this.app.get('/api/eero', (_req: Request, res: Response) => {
+      res.json({
+        authenticated: this.eero.isAuthenticated(),
+        snapshot: this.eeroStore.loadSnapshot(),
+        config: this.eeroStore.loadConfig(),
+        actions: this.eeroStore.readActions(50),
+      });
+    });
+
+    this.app.post('/api/eero/sync', async (req: Request, res: Response) => {
+      try {
+        const snap = await this.eeroStore.sync(req.body?.networkUrl);
+        audit('sync', { networkUrl: snap.networkUrl, errors: snap.errors });
+        res.json(snap);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Auth
+    this.app.post('/api/eero/login', async (req: Request, res: Response) => {
+      try {
+        const out = await this.eero.login(req.body?.login);
+        audit('login', { login: req.body?.login });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+    this.app.post('/api/eero/verify', async (req: Request, res: Response) => {
+      try {
+        const out = await this.eero.verify(req.body?.code);
+        audit('verify', {});
+        // Sync immediately on successful verify so the UI has data.
+        this.eeroStore.sync().catch(() => {});
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+    this.app.post('/api/eero/logout', async (_req: Request, res: Response) => {
+      await this.eero.logout();
+      audit('logout', {});
+      res.json({ ok: true });
+    });
+
+    // Sampler control
+    this.app.put('/api/eero/config', (req: Request, res: Response) => {
+      const cfg = this.eeroStore.saveConfig(req.body || {});
+      audit('config', cfg);
+      this.eeroStore.stopSampler();
+      if (cfg.samplerEnabled) this.eeroStore.startSampler();
+      res.json(cfg);
+    });
+
+    this.app.post('/api/eero/sampler', (req: Request, res: Response) => {
+      const { enabled, intervalMs } = req.body || {};
+      const cfg = this.eeroStore.setSampler(!!enabled, intervalMs);
+      audit('sampler', cfg);
+      res.json(cfg);
+    });
+
+    // Network
+    this.app.post('/api/eero/network/reboot', async (req: Request, res: Response) => {
+      try {
+        const url = req.body?.networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.rebootNetwork(url);
+        audit('network.reboot', { networkUrl: url });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.put('/api/eero/network/guest', async (req: Request, res: Response) => {
+      try {
+        const { networkUrl, enabled, name, password } = req.body || {};
+        const url = networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.setGuestNetwork(url, !!enabled, { name, password });
+        audit('network.guest', { networkUrl: url, enabled, name });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Speed test
+    this.app.post('/api/eero/speedtest', async (req: Request, res: Response) => {
+      try {
+        const url = req.body?.networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.runSpeedtest(url);
+        audit('speedtest.run', { networkUrl: url });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Eero hardware nodes
+    this.app.post('/api/eero/eeros/reboot', async (req: Request, res: Response) => {
+      try {
+        const { eeroUrl } = req.body || {};
+        if (!eeroUrl) { res.status(400).json({ error: 'eeroUrl required' }); return; }
+        const out = await this.eero.rebootEero(eeroUrl);
+        audit('eero.reboot', { eeroUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Devices — rename, pause, block, reassign profile
+    this.app.put('/api/eero/devices/rename', async (req: Request, res: Response) => {
+      try {
+        const { deviceUrl, nickname } = req.body || {};
+        const out = await this.eero.renameDevice(deviceUrl, nickname);
+        audit('device.rename', { deviceUrl, nickname });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.put('/api/eero/devices/profile', async (req: Request, res: Response) => {
+      try {
+        const { deviceUrl, profileUrl } = req.body || {};
+        const out = await this.eero.setDeviceProfile(deviceUrl, profileUrl ?? null);
+        audit('device.profile', { deviceUrl, profileUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.put('/api/eero/devices/pause', async (req: Request, res: Response) => {
+      try {
+        const { deviceUrl, paused } = req.body || {};
+        const out = await this.eero.setDevicePaused(deviceUrl, !!paused);
+        audit('device.pause', { deviceUrl, paused });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.put('/api/eero/devices/block', async (req: Request, res: Response) => {
+      try {
+        const { deviceUrl, blocked } = req.body || {};
+        const out = await this.eero.setDeviceBlocked(deviceUrl, !!blocked);
+        audit('device.block', { deviceUrl, blocked });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Bulk pause/unpause: a power feature consumer routers don't offer.
+    this.app.post('/api/eero/devices/bulk-pause', async (req: Request, res: Response) => {
+      try {
+        const { deviceUrls = [], paused } = req.body || {};
+        const results = await Promise.allSettled(
+          deviceUrls.map((u: string) => this.eero.setDevicePaused(u, !!paused)),
+        );
+        audit('device.bulk-pause', { count: deviceUrls.length, paused });
+        res.json({
+          ok: results.filter(r => r.status === 'fulfilled').length,
+          failed: results.filter(r => r.status === 'rejected').length,
+        });
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Profiles — pause/unpause, create, delete, rename, schedules
+    this.app.put('/api/eero/profiles/pause', async (req: Request, res: Response) => {
+      try {
+        const { profileUrl, paused } = req.body || {};
+        const out = await this.eero.setProfilePaused(profileUrl, !!paused);
+        audit('profile.pause', { profileUrl, paused });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.post('/api/eero/profiles', async (req: Request, res: Response) => {
+      try {
+        const { networkUrl, name } = req.body || {};
+        const url = networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.createProfile(url, name);
+        audit('profile.create', { name });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.put('/api/eero/profiles/update', async (req: Request, res: Response) => {
+      try {
+        const { profileUrl, body } = req.body || {};
+        const out = await this.eero.updateProfile(profileUrl, body);
+        audit('profile.update', { profileUrl, body });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.delete('/api/eero/profiles', async (req: Request, res: Response) => {
+      try {
+        const profileUrl = (req.query.profileUrl as string) || req.body?.profileUrl;
+        const out = await this.eero.deleteProfile(profileUrl);
+        audit('profile.delete', { profileUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.get('/api/eero/profiles/schedules', async (req: Request, res: Response) => {
+      try {
+        const out = await this.eero.profileSchedules(req.query.profileUrl as string);
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.post('/api/eero/profiles/schedules', async (req: Request, res: Response) => {
+      try {
+        const { profileUrl, schedule } = req.body || {};
+        const out = await this.eero.createProfileSchedule(profileUrl, schedule);
+        audit('profile.schedule.create', { profileUrl, schedule });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.delete('/api/eero/profiles/schedules', async (req: Request, res: Response) => {
+      try {
+        const scheduleUrl = (req.query.scheduleUrl as string) || req.body?.scheduleUrl;
+        const out = await this.eero.deleteProfileSchedule(scheduleUrl);
+        audit('profile.schedule.delete', { scheduleUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Port forwards
+    this.app.post('/api/eero/forwards', async (req: Request, res: Response) => {
+      try {
+        const { networkUrl, body } = req.body || {};
+        const url = networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.createForward(url, body);
+        audit('forward.create', body);
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+    this.app.delete('/api/eero/forwards', async (req: Request, res: Response) => {
+      try {
+        const forwardUrl = (req.query.forwardUrl as string) || req.body?.forwardUrl;
+        const out = await this.eero.deleteForward(forwardUrl);
+        audit('forward.delete', { forwardUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // DHCP reservations
+    this.app.post('/api/eero/reservations', async (req: Request, res: Response) => {
+      try {
+        const { networkUrl, body } = req.body || {};
+        const url = networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.createReservation(url, body);
+        audit('reservation.create', body);
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+    this.app.delete('/api/eero/reservations', async (req: Request, res: Response) => {
+      try {
+        const reservationUrl = (req.query.reservationUrl as string) || req.body?.reservationUrl;
+        const out = await this.eero.deleteReservation(reservationUrl);
+        audit('reservation.delete', { reservationUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // History — for charts (devices online over time, usage, speedtests).
+    this.app.get('/api/eero/history', (req: Request, res: Response) => {
+      const limit = Number(req.query.limit || 1000);
+      const type = (req.query.type as string) || undefined;
+      res.json(this.eeroStore.readHistory(limit, type));
+    });
+
+    // Raw passthrough: full power. The dashboard "Raw API" panel hits this so
+    // anything we didn't wrap explicitly (insights, advanced settings, etc.)
+    // is still reachable.
+    this.app.post('/api/eero/raw', async (req: Request, res: Response) => {
+      try {
+        const { method = 'GET', path, body } = req.body || {};
+        if (!path) { res.status(400).json({ error: 'path is required' }); return; }
+        const out = await this.eero.request(method, path, body);
+        audit('raw', { method, path });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
   }
 
   async start(): Promise<void> {
@@ -1243,6 +1531,13 @@ The ingredients should be grocery item names with quantities scaled for ${family
     this.triggers.startAll();
     console.log(`[gombwe] Active triggers: ${this.triggers.listTriggers().filter(t => t.enabled).length}`);
 
+    // Start eero sampler if enabled
+    this.eeroStore.startSampler();
+    const eeroCfg = this.eeroStore.loadConfig();
+    if (eeroCfg.samplerEnabled) {
+      console.log(`[gombwe] eero sampler running every ${Math.round(eeroCfg.samplerIntervalMs / 1000)}s`);
+    }
+
     // Start server
     return new Promise((resolve) => {
       this.server.listen(this.config.port, this.config.host, () => {
@@ -1254,6 +1549,7 @@ The ingredients should be grocery item names with quantities scaled for ${family
   }
 
   async stop(): Promise<void> {
+    this.eeroStore.stopSampler();
     this.triggers.stopAll();
     this.scheduler.stopAll();
     for (const channel of this.channels.values()) {
