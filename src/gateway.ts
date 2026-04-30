@@ -12,11 +12,22 @@ import { SkillLoader, executeSkillTool } from './skills.js';
 import { Scheduler } from './scheduler.js';
 import { TriggerEngine } from './triggers.js';
 import { WorkflowEngine } from './workflows.js';
+import { networkInterfaces } from 'node:os';
 import { WebChannel } from './channels/web.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
 import { EeroClient } from './eero.js';
 import { EeroStore } from './eero-store.js';
+
+function localMacAddresses(): string[] {
+  const macs = new Set<string>();
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.mac && i.mac !== '00:00:00:00:00:00') macs.add(i.mac.toLowerCase());
+    }
+  }
+  return Array.from(macs);
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1238,6 +1249,9 @@ The ingredients should be grocery item names with quantities scaled for ${family
         config: this.eeroStore.loadConfig(),
         actions: this.eeroStore.readActions(50),
         alerts: this.eeroStore.loadAlerts(),
+        // MACs of the host running gombwe — the UI badges any matching
+        // device as "this device" so it's instantly identifiable.
+        hostMacs: localMacAddresses(),
       });
     });
 

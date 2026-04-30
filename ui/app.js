@@ -1613,7 +1613,13 @@ function renderEeroOverview() {
   const account = snap.account || {};
   const network = snap.network || {};
 
+  const hostMacs = (eeroState.hostMacs || []).map(m => m.toLowerCase());
+  const me = devices.find(d => hostMacs.includes((d.mac || '').toLowerCase()));
+  const meLabel = me ? (me.display_name || me.hostname || me.mac) : '—';
+  const meSub = me ? `${me.ip || ''} · ${me.connection_type || ''}` : 'host MAC not seen on the network';
+
   grid.innerHTML = `
+    ${eeroStat('This device', meLabel, meSub)}
     ${eeroStat('Account', account.name || account.email?.value || '—', account.premium_status || '')}
     ${eeroStat('Network', network.name || '—', network.isp ? `via ${network.isp}` : '')}
     ${eeroStat('Devices', `${online.length}/${devices.length}`, 'online / total')}
@@ -1745,14 +1751,16 @@ function renderEeroDevices() {
   list.innerHTML = devices.map(d => {
     const checked = eeroSelectedDevices.has(d.url) ? 'checked' : '';
     const dot = d.connected ? 'online' : 'offline';
+    const isThisDevice = (eeroState.hostMacs || []).includes((d.mac || '').toLowerCase());
     const flags = [
+      isThisDevice ? '<span class="eero-tag this-device" title="The host running gombwe">this device</span>' : '',
       d.paused ? '<span class="eero-tag paused">paused</span>' : '',
       d.blacklisted ? '<span class="eero-tag blocked">blocked</span>' : '',
       d.profile?.name ? `<span class="eero-tag profile">${esc(d.profile.name)}</span>` : '',
       d.is_guest ? '<span class="eero-tag guest">guest</span>' : '',
     ].filter(Boolean).join(' ');
     return `
-      <div class="eero-device ${dot}">
+      <div class="eero-device ${dot}${isThisDevice ? ' this-device' : ''}">
         <input type="checkbox" class="eero-device-check" data-url="${esc(d.url)}" ${checked}>
         <div class="eero-device-status ${dot}" title="${dot}"></div>
         <div class="eero-device-main">
