@@ -1822,6 +1822,56 @@ body {
 .nav-badge.warning { background: #d49b3b; }
 .nav-badge.error { background: #c45a5a; }
 
+/* Schedule pane */
+.eero-sched-target {
+  margin-bottom: 18px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+.eero-sched-target:last-child { border-bottom: none; }
+.eero-sched-target-name { font-size: 13.5px; margin-bottom: 6px; }
+.eero-sched-svg { width: 100%; height: 200px; display: block; }
+
+.eero-sched-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+}
+.eero-sched-row:last-child { border-bottom: none; }
+.eero-sched-name { font-size: 14px; }
+.eero-sched-actions { display: flex; gap: 8px; align-items: center; }
+.eero-toggle.small { width: 32px; height: 18px; }
+.eero-toggle.small span:before { height: 12px; width: 12px; left: 3px; bottom: 3px; }
+.eero-toggle.small input:checked + span:before { transform: translateX(14px); }
+
+.eero-modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9998;
+}
+.eero-modal-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  min-width: 420px; max-width: 520px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+}
+.eero-modal-card h3 { margin: 0 0 14px; font-family: var(--serif); font-weight: 500; }
+.eero-modal-card label { font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.eero-modal-card input, .eero-modal-card select {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--sans); font-size: 13px;
+}
+.eero-day-toggles {
+  display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0;
+}
+.eero-day-toggles label {
+  flex-direction: row; align-items: center; gap: 4px;
+  padding: 4px 10px; background: var(--bg-deep);
+  border-radius: 14px; cursor: pointer; font-size: 12px;
+  margin: 0;
+}
+.eero-day-toggles input { width: auto; padding: 0; }
+
 .eero-toast {
   position: fixed; bottom: 24px; right: 24px;
   background: var(--text); color: var(--surface);

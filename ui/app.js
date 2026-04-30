@@ -1539,7 +1539,8 @@ function addGroceryFromRecipe(mealName, ingredient) {
 }
 
 // ========== EERO (NETWORK) ==========
-let eeroState = { authenticated: false, snapshot: null, config: null, actions: [] };
+let eeroState = { authenticated: false, snapshot: null, config: null, actions: [], alerts: [], schedules: [] };
+let eeroSchedEditingId = null;
 let eeroSelectedDevices = new Set();
 let eeroActiveSubtab = 'overview';
 let eeroDeviceQuery = '';
@@ -1560,8 +1561,13 @@ async function loadEero() {
       const h = await fetch(`${API}/api/eero/history?limit=500`);
       eeroHistory = await h.json();
     } catch { eeroHistory = []; }
+    try {
+      const s = await fetch(`${API}/api/eero/schedules`);
+      eeroState.schedules = await s.json();
+    } catch { eeroState.schedules = []; }
     renderEeroOverview();
     renderEeroUsageChart();
+    renderEeroSchedule();
   }
   renderEeroAlerts();
   updateEeroNavBadge();
@@ -1803,6 +1809,13 @@ function renderEeroDevices() {
             ${profOpts.replace(`value="${d.profile?.url || ''}"`, `value="${d.profile?.url || ''}" selected`)}
           </select>
           <button class="btn-sm" data-act="pause" data-url="${esc(d.url)}" data-on="${d.paused ? '1' : '0'}">${d.paused ? 'Unpause' : 'Pause'}</button>
+          <select data-act="pause-for" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}" title="Pause for…">
+            <option value="">Pause for…</option>
+            <option value="15">15 min</option>
+            <option value="60">1 hour</option>
+            <option value="240">4 hours</option>
+            <option value="bedtime">Until 7am</option>
+          </select>
           <button class="btn-sm" data-act="block" data-url="${esc(d.url)}" data-on="${d.blacklisted ? '1' : '0'}">${d.blacklisted ? 'Unblock' : 'Block'}</button>
         </div>
       </div>
@@ -1844,6 +1857,25 @@ function renderEeroDevices() {
     b.onclick = async () => {
       await fetch(`${API}/api/eero/devices/block`, eeroPut({ deviceUrl: b.dataset.url, blocked: b.dataset.on !== '1' }));
       eeroSync();
+    };
+  });
+
+  list.querySelectorAll('[data-act="pause-for"]').forEach(sel => {
+    sel.onchange = async () => {
+      if (!sel.value) return;
+      const target = { type: 'device', url: sel.dataset.url, displayName: sel.dataset.name };
+      let minutes;
+      if (sel.value === 'bedtime') {
+        const now = new Date();
+        const seven = new Date(now);
+        seven.setHours(7, 0, 0, 0);
+        if (seven <= now) seven.setDate(seven.getDate() + 1);
+        minutes = Math.round((seven - now) / 60000);
+      } else {
+        minutes = Number(sel.value);
+      }
+      await pauseTargetFor(target, minutes);
+      sel.value = '';
     };
   });
 
@@ -2005,6 +2037,289 @@ function renderEeroAudit() {
           <td><code>${esc(JSON.stringify(a.detail || {}))}</code></td>
         </tr>
       `).join('') + '</tbody></table>';
+}
+
+// ── schedule (block / unblock) ─────────────────────────────────────────
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+async function refreshEeroSchedules() {
+  try {
+    const r = await fetch(`${API}/api/eero/schedules`);
+    eeroState.schedules = await r.json();
+  } catch { eeroState.schedules = []; }
+  renderEeroSchedule();
+}
+
+function renderEeroSchedule() {
+  const grid = document.getElementById('eeroScheduleGrid');
+  const list = document.getElementById('eeroScheduleList');
+  const summary = document.getElementById('eeroSchedSummary');
+  if (!grid || !list) return;
+  const schedules = eeroState.schedules || [];
+  const active = schedules.filter(s => s.enabled);
+  if (summary) summary.textContent = `${schedules.length} schedule${schedules.length !== 1 ? 's' : ''} (${active.length} active)`;
+
+  // Build a per-target map of schedules
+  const byTarget = new Map();
+  for (const s of schedules) {
+    const key = `${s.target.type}:${s.target.url}`;
+    if (!byTarget.has(key)) byTarget.set(key, { target: s.target, schedules: [] });
+    byTarget.get(key).schedules.push(s);
+  }
+
+  if (byTarget.size === 0) {
+    grid.innerHTML = '<div class="muted small" style="padding:16px">No schedules yet. Click <strong>+ New schedule</strong> above.</div>';
+  } else {
+    grid.innerHTML = Array.from(byTarget.values()).map(g => renderTargetCalendar(g)).join('');
+  }
+
+  // Schedule list with edit/delete
+  if (schedules.length === 0) {
+    list.innerHTML = '<div class="muted small" style="padding:16px">No schedules.</div>';
+  } else {
+    list.innerHTML = schedules.map(s => `
+      <div class="eero-sched-row">
+        <div>
+          <div class="eero-sched-name">${esc(s.name)} ${s.enabled ? '' : '<span class="eero-tag paused">disabled</span>'}</div>
+          <div class="muted small">${esc(s.target.displayName || s.target.url)} · ${describeSchedule(s)}</div>
+        </div>
+        <div class="eero-sched-actions">
+          <label class="eero-toggle small"><input type="checkbox" data-act="sched-toggle" data-id="${esc(s.id)}" ${s.enabled ? 'checked' : ''}><span></span></label>
+          <button class="btn-sm" data-act="sched-edit" data-id="${esc(s.id)}">Edit</button>
+          <button class="btn-sm btn-danger" data-act="sched-delete" data-id="${esc(s.id)}">Delete</button>
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('[data-act="sched-toggle"]').forEach(el => {
+      el.onchange = async () => {
+        await fetch(`${API}/api/eero/schedules/${encodeURIComponent(el.dataset.id)}`, eeroPut({ enabled: el.checked }));
+        refreshEeroSchedules();
+      };
+    });
+    list.querySelectorAll('[data-act="sched-edit"]').forEach(el => {
+      el.onclick = () => openSchedModal(el.dataset.id);
+    });
+    list.querySelectorAll('[data-act="sched-delete"]').forEach(el => {
+      el.onclick = async () => {
+        if (!confirm('Delete this schedule?')) return;
+        await fetch(`${API}/api/eero/schedules/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
+        refreshEeroSchedules();
+      };
+    });
+  }
+}
+
+function describeSchedule(s) {
+  if (s.pauseUntil) {
+    const until = new Date(s.pauseUntil);
+    const mins = Math.max(0, Math.round((until - new Date()) / 60000));
+    return `paused until ${until.toLocaleString()} (${mins} min remaining)`;
+  }
+  if (!s.rules || s.rules.length === 0) return 'no rules';
+  return s.rules.map(r => {
+    const days = r.days.map(d => DOW[d]).join(', ');
+    return `${days} ${minutesToTime(r.startMinutes)}–${minutesToTime(r.endMinutes)}`;
+  }).join(' · ');
+}
+
+function minutesToTime(m) {
+  const h = Math.floor(m / 60), mm = m % 60;
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function timeToMinutes(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// Per-target weekly calendar — 7 days × 24 hours, blocks shaded.
+function renderTargetCalendar({ target, schedules }) {
+  const w = 700, dayW = (w - 60) / 7, h = 200, hourH = (h - 24) / 24;
+  let blocks = '';
+  let labels = '';
+
+  // Hour labels (left)
+  for (let hr = 0; hr <= 24; hr += 6) {
+    labels += `<text x="0" y="${24 + hr * hourH + 3}" class="eero-axis-label">${String(hr).padStart(2, '0')}:00</text>`;
+  }
+  // Day labels (top)
+  for (let d = 0; d < 7; d++) {
+    labels += `<text x="${56 + d * dayW + dayW / 2}" y="14" text-anchor="middle" class="eero-axis-label">${DOW[d]}</text>`;
+  }
+  // Vertical day separators
+  for (let d = 0; d <= 7; d++) {
+    blocks += `<line x1="${56 + d * dayW}" y1="20" x2="${56 + d * dayW}" y2="${h - 4}" class="eero-axis"/>`;
+  }
+  // Horizontal hour gridlines (every 6h)
+  for (let hr = 0; hr <= 24; hr += 6) {
+    blocks += `<line x1="56" y1="${24 + hr * hourH}" x2="${w - 4}" y2="${24 + hr * hourH}" class="eero-axis"/>`;
+  }
+
+  // Render each rule from each enabled schedule as a colored block on each applicable day.
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    if (s.pauseUntil) {
+      // Render the one-off pause as a block from now → pauseUntil, capped to the visible week.
+      const start = new Date();
+      const end = new Date(s.pauseUntil);
+      // Only draw if within the current week (Sun..Sat).
+      const startDow = start.getDay();
+      const startMin = start.getHours() * 60 + start.getMinutes();
+      const durationMin = Math.min(7 * 24 * 60, Math.round((end - start) / 60000));
+      blocks += renderBlockBars(startDow, startMin, durationMin, dayW, hourH, '#c45a5a', s.name);
+      continue;
+    }
+    if (!s.rules) continue;
+    for (const r of s.rules) {
+      for (const d of r.days) {
+        const start = r.startMinutes;
+        let end = r.endMinutes;
+        // Same-day or crosses midnight
+        if (end > start) {
+          blocks += renderBlock(d, start, end, dayW, hourH, '#5e9bdc', s.name);
+        } else {
+          blocks += renderBlock(d, start, 1440, dayW, hourH, '#5e9bdc', s.name);
+          blocks += renderBlock((d + 1) % 7, 0, end, dayW, hourH, '#5e9bdc', s.name);
+        }
+      }
+    }
+  }
+
+  return `
+    <div class="eero-sched-target">
+      <div class="eero-sched-target-name">${esc(target.displayName || target.url)} <span class="muted small">(${esc(target.type)})</span></div>
+      <svg viewBox="0 0 ${w} ${h}" class="eero-sched-svg">
+        ${labels}
+        ${blocks}
+      </svg>
+    </div>
+  `;
+}
+
+function renderBlock(dow, startMin, endMin, dayW, hourH, color, label) {
+  const x = 56 + dow * dayW + 1;
+  const y = 24 + (startMin / 60) * hourH;
+  const height = ((endMin - startMin) / 60) * hourH;
+  return `<rect x="${x}" y="${y}" width="${dayW - 2}" height="${height}" fill="${color}" fill-opacity="0.55" stroke="${color}" stroke-opacity="0.9"><title>${esc(label)} — ${minutesToTime(startMin)} to ${minutesToTime(endMin)}</title></rect>`;
+}
+
+function renderBlockBars(startDow, startMin, durationMin, dayW, hourH, color, label) {
+  // Walks day-by-day from startDow until durationMin runs out.
+  let out = '';
+  let dow = startDow;
+  let cursor = startMin;
+  let remaining = durationMin;
+  while (remaining > 0 && dow < 7 + startDow) {
+    const dayEnd = 1440;
+    const inThisDay = Math.min(remaining, dayEnd - cursor);
+    out += renderBlock(dow % 7, cursor, cursor + inThisDay, dayW, hourH, color, label);
+    remaining -= inThisDay;
+    cursor = 0;
+    dow++;
+  }
+  return out;
+}
+
+function openSchedModal(id) {
+  eeroSchedEditingId = id;
+  const modal = document.getElementById('eeroSchedModal');
+  const title = document.getElementById('eeroSchedModalTitle');
+  const nameInput = document.getElementById('eeroSchedName');
+  const targetSelect = document.getElementById('eeroSchedTarget');
+  const typeSelect = document.getElementById('eeroSchedType');
+  const recurring = document.getElementById('eeroSchedRecurringFields');
+  const oneOff = document.getElementById('eeroSchedOneOffFields');
+  const startInput = document.getElementById('eeroSchedStart');
+  const endInput = document.getElementById('eeroSchedEnd');
+  const untilInput = document.getElementById('eeroSchedUntil');
+  const deleteBtn = document.getElementById('eeroSchedDeleteBtn');
+
+  // Build target list
+  const devices = eeroState.snapshot?.devices || [];
+  const profiles = eeroState.snapshot?.profiles || [];
+  targetSelect.innerHTML = '<optgroup label="Profiles">' +
+    profiles.map(p => `<option value="profile|${esc(p.url)}|${esc(p.name)}">${esc(p.name)}</option>`).join('') +
+    '</optgroup><optgroup label="Devices">' +
+    devices.map(d => `<option value="device|${esc(d.url)}|${esc(d.display_name || d.hostname || d.mac)}">${esc(d.display_name || d.hostname || d.mac)}</option>`).join('') +
+    '</optgroup>';
+
+  // Reset to defaults
+  document.querySelectorAll('#eeroSchedDays input').forEach(c => { c.checked = ['1','2','3','4','5'].includes(c.value); });
+  startInput.value = '21:00';
+  endInput.value = '07:00';
+  typeSelect.value = 'recurring';
+  recurring.classList.remove('hidden');
+  oneOff.classList.add('hidden');
+  deleteBtn.classList.add('hidden');
+
+  if (id) {
+    const s = (eeroState.schedules || []).find(x => x.id === id);
+    if (s) {
+      title.textContent = 'Edit schedule';
+      nameInput.value = s.name;
+      targetSelect.value = `${s.target.type}|${s.target.url}|${s.target.displayName || ''}`;
+      if (s.pauseUntil) {
+        typeSelect.value = 'one-off';
+        recurring.classList.add('hidden');
+        oneOff.classList.remove('hidden');
+        const d = new Date(s.pauseUntil);
+        const pad = n => String(n).padStart(2, '0');
+        untilInput.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      } else if (s.rules?.[0]) {
+        const r = s.rules[0];
+        document.querySelectorAll('#eeroSchedDays input').forEach(c => { c.checked = r.days.includes(Number(c.value)); });
+        startInput.value = minutesToTime(r.startMinutes);
+        endInput.value = minutesToTime(r.endMinutes);
+      }
+      deleteBtn.classList.remove('hidden');
+    }
+  } else {
+    title.textContent = 'New schedule';
+    nameInput.value = '';
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeSchedModal() {
+  document.getElementById('eeroSchedModal').classList.add('hidden');
+  eeroSchedEditingId = null;
+}
+
+async function saveSchedFromModal() {
+  const name = document.getElementById('eeroSchedName').value.trim();
+  const targetVal = document.getElementById('eeroSchedTarget').value;
+  if (!name || !targetVal) { alert('Name and target are required'); return; }
+  const [type, url, displayName] = targetVal.split('|');
+  const target = { type, url, displayName };
+
+  const schedType = document.getElementById('eeroSchedType').value;
+  let body;
+  if (schedType === 'one-off') {
+    const until = document.getElementById('eeroSchedUntil').value;
+    if (!until) { alert('Pause-until time is required'); return; }
+    body = { name, target, pauseUntil: new Date(until).toISOString(), enabled: true };
+  } else {
+    const days = Array.from(document.querySelectorAll('#eeroSchedDays input:checked')).map(c => Number(c.value));
+    if (days.length === 0) { alert('Pick at least one day'); return; }
+    const startMinutes = timeToMinutes(document.getElementById('eeroSchedStart').value);
+    const endMinutes = timeToMinutes(document.getElementById('eeroSchedEnd').value);
+    body = { name, target, rules: [{ days, startMinutes, endMinutes }], enabled: true };
+  }
+
+  if (eeroSchedEditingId) {
+    await fetch(`${API}/api/eero/schedules/${encodeURIComponent(eeroSchedEditingId)}`, eeroPut(body));
+  } else {
+    await fetch(`${API}/api/eero/schedules`, eeroPost(body));
+  }
+  closeSchedModal();
+  refreshEeroSchedules();
+}
+
+async function pauseTargetFor(target, minutes) {
+  await fetch(`${API}/api/eero/schedules/pause-for`, eeroPost({ target, minutes }));
+  refreshEeroSchedules();
+  showEeroToast(`Paused ${target.displayName} for ${minutes} min`);
 }
 
 // ── helpers ────────────────────────────────────────────────────────────
@@ -2379,6 +2694,49 @@ document.querySelectorAll('[data-quick]').forEach(b => {
   b.addEventListener('click', () => {
     document.getElementById('eeroRawPath').value = b.dataset.quick;
   });
+});
+
+// Schedule modal wiring
+document.getElementById('eeroNewScheduleBtn')?.addEventListener('click', () => openSchedModal(null));
+document.getElementById('eeroSchedSaveBtn')?.addEventListener('click', saveSchedFromModal);
+document.getElementById('eeroSchedCancelBtn')?.addEventListener('click', closeSchedModal);
+document.getElementById('eeroSchedDeleteBtn')?.addEventListener('click', async () => {
+  if (!eeroSchedEditingId || !confirm('Delete this schedule?')) return;
+  await fetch(`${API}/api/eero/schedules/${encodeURIComponent(eeroSchedEditingId)}`, { method: 'DELETE' });
+  closeSchedModal();
+  refreshEeroSchedules();
+});
+document.getElementById('eeroSchedType')?.addEventListener('change', (e) => {
+  const isOneOff = e.target.value === 'one-off';
+  document.getElementById('eeroSchedRecurringFields').classList.toggle('hidden', isOneOff);
+  document.getElementById('eeroSchedOneOffFields').classList.toggle('hidden', !isOneOff);
+});
+
+// Bedtime preset: applies 21:00–07:00 weekdays to the first profile, or asks
+// which profile if there are several.
+document.getElementById('eeroBedtimePresetBtn')?.addEventListener('click', async () => {
+  const profiles = eeroState.snapshot?.profiles || [];
+  if (profiles.length === 0) {
+    alert('No profiles yet. Create one in the Profiles tab first (e.g. "Kids"), then assign devices to it.');
+    return;
+  }
+  let target;
+  if (profiles.length === 1) {
+    target = { type: 'profile', url: profiles[0].url, displayName: profiles[0].name };
+  } else {
+    const choice = prompt(`Which profile?\n${profiles.map((p, i) => `${i + 1}) ${p.name}`).join('\n')}`);
+    const idx = Number(choice) - 1;
+    if (isNaN(idx) || !profiles[idx]) return;
+    target = { type: 'profile', url: profiles[idx].url, displayName: profiles[idx].name };
+  }
+  await fetch(`${API}/api/eero/schedules`, eeroPost({
+    name: `${target.displayName} bedtime`,
+    target,
+    rules: [{ days: [0, 1, 2, 3, 4, 5, 6], startMinutes: 21 * 60, endMinutes: 7 * 60 }],
+    enabled: true,
+  }));
+  refreshEeroSchedules();
+  showEeroToast(`Bedtime schedule created for ${target.displayName}`);
 });
 
 // ========== INIT ==========
