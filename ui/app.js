@@ -2483,6 +2483,67 @@ function renderEeroKids() {
     `).join('');
 }
 
+// Does a recurring rule cover (dow, minutesOfDay)? Mirrors the server-side
+// EeroScheduler.isInRule logic so the UI doesn't need to round-trip.
+function ruleCoversMinute(rule, dow, minutesNow) {
+  const s = rule.startMinutes, e = rule.endMinutes;
+  if (s === e) return false;
+  if (s < e) return rule.days.includes(dow) && minutesNow >= s && minutesNow < e;
+  // Crosses midnight
+  if (rule.days.includes(dow) && minutesNow >= s) return true;
+  const yesterday = (dow + 6) % 7;
+  if (rule.days.includes(yesterday) && minutesNow < e) return true;
+  return false;
+}
+
+function deviceBlockedRanges(device, profile, schedules, todayStart) {
+  // Returns an array of { startMs, endMs } in [0, dayMs] where this device
+  // was scheduled-blocked today.
+  const dayMs = 24 * 3600 * 1000;
+  const stepMin = 5;
+  const cells = new Array(Math.ceil(24 * 60 / stepMin)).fill(false);
+  const targetsThis = (s) => {
+    if (!s.enabled) return false;
+    if (s.target.type === 'device' && s.target.url === device.url) return true;
+    if (s.target.type === 'profile' && profile && s.target.url === profile.url) return true;
+    return false;
+  };
+  // Recurring rules
+  for (const s of schedules) {
+    if (!targetsThis(s) || !s.rules) continue;
+    const dow = todayStart.getDay();
+    for (let i = 0; i < cells.length; i++) {
+      const minutesNow = i * stepMin;
+      for (const r of s.rules) {
+        if (ruleCoversMinute(r, dow, minutesNow)) { cells[i] = true; break; }
+      }
+    }
+  }
+  // One-off pauseUntil
+  for (const s of schedules) {
+    if (!targetsThis(s) || !s.pauseUntil) continue;
+    const until = new Date(s.pauseUntil).getTime();
+    const created = new Date(s.createdAt).getTime();
+    const startMs = Math.max(0, created - todayStart.getTime());
+    const endMs = Math.min(dayMs, until - todayStart.getTime());
+    if (endMs <= 0 || startMs >= dayMs) continue;
+    const i0 = Math.floor(startMs / (stepMin * 60000));
+    const i1 = Math.ceil(endMs / (stepMin * 60000));
+    for (let i = i0; i < i1 && i < cells.length; i++) cells[i] = true;
+  }
+  // Coalesce contiguous true runs
+  const ranges = [];
+  let runStart = -1;
+  for (let i = 0; i <= cells.length; i++) {
+    if (cells[i] && runStart < 0) runStart = i;
+    if ((!cells[i] || i === cells.length) && runStart >= 0) {
+      ranges.push({ startMs: runStart * stepMin * 60000, endMs: i * stepMin * 60000 });
+      runStart = -1;
+    }
+  }
+  return ranges;
+}
+
 function renderKidsTimeline(devices, samples, intervalMs) {
   const w = 720, rowH = 26, labelW = 130, h = devices.length * rowH + 30;
   const trackW = w - labelW - 10;
@@ -2491,7 +2552,6 @@ function renderKidsTimeline(devices, samples, intervalMs) {
   const ms2x = ms => labelW + (Math.max(0, Math.min(dayMs, ms)) / dayMs) * trackW;
 
   // Per-device, per-bucket presence
-  // Build a presence array keyed by mac → minute-of-day → bool
   const presence = new Map();
   for (const d of devices) presence.set(d.mac, new Array(Math.ceil(dayMs / intervalMs)).fill(false));
   for (const s of samples) {
@@ -2503,6 +2563,9 @@ function renderKidsTimeline(devices, samples, intervalMs) {
       if (arr && idx < arr.length) arr[idx] = true;
     }
   }
+
+  const allProfiles = eeroState.snapshot?.profiles || [];
+  const allSchedules = eeroState.schedules || [];
 
   // Hour ticks
   let ticks = '';
@@ -2522,22 +2585,52 @@ function renderKidsTimeline(devices, samples, intervalMs) {
   let rows = '';
   devices.forEach((d, i) => {
     const y = 24 + i * rowH;
+    const profile = allProfiles.find(p => p.url === d.profile?.url);
+    const blocks = deviceBlockedRanges(d, profile, allSchedules, todayStart);
+    const blockedSet = new Set();
+    for (const b of blocks) {
+      const i0 = Math.floor(b.startMs / intervalMs);
+      const i1 = Math.ceil(b.endMs / intervalMs);
+      for (let k = i0; k < i1; k++) blockedSet.add(k);
+    }
+
     rows += `<text x="6" y="${y + rowH / 2 + 4}" class="kids-timeline-name">${esc(d.display_name || d.hostname || d.mac)}</text>`;
     rows += `<rect x="${labelW}" y="${y + 4}" width="${trackW}" height="${rowH - 8}" fill="var(--bg-deep, #f1efe9)" stroke="var(--border, #ddd)" stroke-width="0.5"/>`;
+
+    // Layer 1: green bars where the device was online AND not blocked
     const arr = presence.get(d.mac) || [];
-    let blockStart = -1;
+    let runStart = -1;
     for (let j = 0; j <= arr.length; j++) {
-      if (arr[j] && blockStart < 0) blockStart = j;
-      if ((!arr[j] || j === arr.length) && blockStart >= 0) {
-        const x1 = ms2x(blockStart * intervalMs);
+      const onlineNotBlocked = arr[j] && !blockedSet.has(j);
+      if (onlineNotBlocked && runStart < 0) runStart = j;
+      if ((!onlineNotBlocked || j === arr.length) && runStart >= 0) {
+        const x1 = ms2x(runStart * intervalMs);
         const x2 = ms2x(j * intervalMs);
-        rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#59a263" fill-opacity="0.7"/>`;
-        blockStart = -1;
+        rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#59a263" fill-opacity="0.7"><title>online</title></rect>`;
+        runStart = -1;
       }
+    }
+
+    // Layer 2: red bars over blocked windows (drawn on top, win visually)
+    for (const b of blocks) {
+      const x1 = ms2x(b.startMs);
+      const x2 = ms2x(b.endMs);
+      rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#c45a5a" fill-opacity="0.75"><title>blocked by schedule</title></rect>`;
     }
   });
 
-  return `<svg viewBox="0 0 ${w} ${h}" class="kids-timeline">${ticks}${rows}</svg>`;
+  // Legend
+  const legendY = h - 4;
+  const legend = `
+    <g class="kids-timeline-legend">
+      <rect x="${labelW}" y="${legendY - 10}" width="10" height="8" fill="#59a263" fill-opacity="0.7"/>
+      <text x="${labelW + 14}" y="${legendY - 3}" class="eero-axis-label">online</text>
+      <rect x="${labelW + 70}" y="${legendY - 10}" width="10" height="8" fill="#c45a5a" fill-opacity="0.75"/>
+      <text x="${labelW + 84}" y="${legendY - 3}" class="eero-axis-label">blocked</text>
+    </g>
+  `;
+
+  return `<svg viewBox="0 0 ${w} ${h + 12}" class="kids-timeline">${ticks}${rows}${legend}</svg>`;
 }
 
 function minutesUntilNext(hour, minute) {
