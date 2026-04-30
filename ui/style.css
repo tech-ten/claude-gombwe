@@ -1654,6 +1654,10 @@ body {
   display: flex; justify-content: space-between; align-items: center;
   padding: 8px 0; border-bottom: 1px solid var(--border-light); font-size: 13px;
 }
+.eero-consumer { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; }
+.eero-consumer-bar { background: var(--bg-deep); border-radius: 3px; height: 8px; overflow: hidden; }
+.eero-consumer-fill { height: 100%; background: linear-gradient(90deg, #59a263, #7dc88a); }
+.eero-consumer-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eero-consumer:last-child, .eero-node:last-child, .eero-row:last-child { border-bottom: none; }
 
 .eero-event {
