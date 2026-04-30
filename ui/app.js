@@ -502,15 +502,13 @@ document.getElementById('dnsPointBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('dnsPointBtn');
   btn.disabled = true; btn.textContent = 'Pointing…';
   try {
-    const r = await fetch(`${API}/api/eero/dns/point-at-nextdns`, eeroPost({}));
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      alert(d.error || 'Failed to set eero DNS');
-    } else {
-      showEeroToast('eero now resolving via NextDNS');
-      await eeroSync();
-      await loadNextDNS();
-    }
+    await fetch(`${API}/api/eero/dns/point-at-nextdns`, eeroPost({}));
+    // The PUT always returns 200; eero may silently ignore it on free tier.
+    // Re-sync and re-test so the indicator shows the truth either way.
+    await eeroSync();
+    await loadNextDNS();
+    setTimeout(refreshDnsTestResult, 2000);
+    setTimeout(refreshDnsTestResult, 8000);
   } finally {
     btn.disabled = false; btn.textContent = 'Point eero at NextDNS';
   }
@@ -2239,15 +2237,68 @@ function renderNextDNS() {
   }
   statusEl.innerHTML = `config <code>${esc(cfg.configId)}</code> · ${esc(cfg.profileName || '')}`;
 
-  // Whether the eero is currently using NextDNS resolvers
+  // Three layers of truth — eero setting, gombwe-host DNS, and live test
   const eeroDns = eeroState.snapshot?.network?.dns || {};
   const customIps = eeroDns.custom?.ips || [];
   const ndIps = cfg.resolverIPs || [];
-  const isPointed = ndIps.every(ip => customIps.includes(ip));
-  pointStatusEl.innerHTML = isPointed
-    ? `<span style="color:#2e6b3a">✓ eero is pointed at NextDNS (every device on the network filters through it)</span>`
-    : `<span style="color:#8a2e2e">eero is using ${eeroDns.mode || 'automatic'} DNS — click below to switch.</span>`;
+  const isPointed = ndIps.length > 0 && ndIps.every(ip => customIps.includes(ip));
+  const eeroMode = eeroDns.mode || 'automatic';
+  const eeroResolvers = eeroMode === 'custom'
+    ? customIps.join(', ')
+    : (eeroDns.parent?.ips || []).join(', ');
 
+  pointStatusEl.innerHTML = `
+    <div class="dns-truth">
+      <div class="dns-row">
+        <span class="dns-row-label">eero network DNS</span>
+        <span class="${isPointed ? 'dns-ok' : 'dns-warn'}">
+          ${isPointed ? '✓ NextDNS' : `${esc(eeroMode)} (${esc(eeroResolvers || '—')})`}
+        </span>
+      </div>
+      <div class="dns-row">
+        <span class="dns-row-label">test.nextdns.io says</span>
+        <span class="dns-test" id="dnsTestResult">checking…</span>
+      </div>
+    </div>
+    ${isPointed ? '' : '<div class="muted small" style="margin-top:6px">eero firmware silently rejects custom DNS PUTs without eero Plus. The button below tries anyway — if it doesn\'t take, set DNS per-device manually or upgrade Plus.</div>'}
+  `;
+  refreshDnsTestResult();
+  renderNextDnsRules();
+}
+
+let dnsTestRefreshTimer = null;
+async function refreshDnsTestResult() {
+  const el = document.getElementById('dnsTestResult');
+  if (!el) return;
+  el.textContent = 'checking…';
+  try {
+    const r = await fetch(`${API}/api/nextdns/test`);
+    const d = await r.json();
+    const status = d.status || 'unknown';
+    const cfgId = (eeroState && nextdnsState.config?.configId) || '';
+    if (status === 'ok' && (d.profile === cfgId || d.config === cfgId)) {
+      el.innerHTML = `<span class="dns-ok">✓ using NextDNS · profile ${esc(d.profile || d.config || '?')}</span>`;
+    } else if (status === 'unconfigured') {
+      el.innerHTML = `<span class="dns-warn">✗ unconfigured — resolver: ${esc(d.resolver || '?')}</span>`;
+    } else if (status === 'unreachable') {
+      el.innerHTML = `<span class="dns-warn">⚠ test.nextdns.io unreachable: ${esc(d.error || '')}</span>`;
+    } else {
+      el.innerHTML = `<span class="dns-warn">${esc(status)} — resolver ${esc(d.resolver || '?')}</span>`;
+    }
+  } catch (err) {
+    el.innerHTML = `<span class="dns-warn">test failed: ${esc(err.message)}</span>`;
+  }
+}
+
+function startDnsTestPolling() {
+  stopDnsTestPolling();
+  dnsTestRefreshTimer = setInterval(refreshDnsTestResult, 30000);
+}
+function stopDnsTestPolling() {
+  if (dnsTestRefreshTimer) { clearInterval(dnsTestRefreshTimer); dnsTestRefreshTimer = null; }
+}
+
+function renderNextDnsRules() {
   // Quick services as toggle pills
   const activeServices = new Set(nextdnsState.services.map(s => s.id));
   const servicesEl = document.getElementById('kidsFilterServices');
@@ -2545,7 +2596,13 @@ function deviceBlockedRanges(device, profile, schedules, todayStart) {
 }
 
 function renderKidsTimeline(devices, samples, intervalMs) {
-  const w = 720, rowH = 26, labelW = 130, h = devices.length * rowH + 30;
+  const w = 720, rowH = 26, labelW = 130;
+  const headerH = 24;                       // hour labels area
+  const rowsTop = headerH;
+  const rowsH = devices.length * rowH;
+  const legendGap = 8;
+  const legendH = 18;
+  const h = headerH + rowsH + legendGap + legendH;
   const trackW = w - labelW - 10;
   const dayMs = 24 * 3600 * 1000;
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
@@ -2567,24 +2624,26 @@ function renderKidsTimeline(devices, samples, intervalMs) {
   const allProfiles = eeroState.snapshot?.profiles || [];
   const allSchedules = eeroState.schedules || [];
 
-  // Hour ticks
+  const rowsBottom = rowsTop + rowsH;
+
+  // Hour ticks — vertical lines stop at the rows area, don't bleed into legend
   let ticks = '';
   for (let hr = 0; hr <= 24; hr += 3) {
     const x = ms2x(hr * 3600 * 1000);
-    ticks += `<line x1="${x}" y1="${20}" x2="${x}" y2="${h}" class="eero-axis"/>`;
-    ticks += `<text x="${x}" y="14" text-anchor="middle" class="eero-axis-label">${String(hr).padStart(2, '0')}:00</text>`;
+    ticks += `<line x1="${x}" y1="${headerH - 4}" x2="${x}" y2="${rowsBottom}" class="eero-axis"/>`;
+    ticks += `<text x="${x}" y="${headerH - 10}" text-anchor="middle" class="eero-axis-label">${String(hr).padStart(2, '0')}:00</text>`;
   }
 
-  // Now line
+  // Now line — only spans the rows area
   const nowMs = Date.now() - todayStart.getTime();
   const nowX = ms2x(nowMs);
-  ticks += `<line x1="${nowX}" y1="20" x2="${nowX}" y2="${h}" stroke="#c45a5a" stroke-width="1" stroke-dasharray="3 3"/>`;
-  ticks += `<text x="${nowX + 4}" y="${h - 4}" class="eero-axis-label" fill="#c45a5a">now</text>`;
+  ticks += `<line x1="${nowX}" y1="${headerH - 4}" x2="${nowX}" y2="${rowsBottom}" stroke="#c45a5a" stroke-width="1" stroke-dasharray="3 3"/>`;
+  ticks += `<text x="${nowX + 4}" y="${headerH - 10}" class="eero-axis-label" fill="#c45a5a">now</text>`;
 
   // Per-device rows
   let rows = '';
   devices.forEach((d, i) => {
-    const y = 24 + i * rowH;
+    const y = rowsTop + i * rowH;
     const profile = allProfiles.find(p => p.url === d.profile?.url);
     const blocks = deviceBlockedRanges(d, profile, allSchedules, todayStart);
     const blockedSet = new Set();
@@ -2619,8 +2678,8 @@ function renderKidsTimeline(devices, samples, intervalMs) {
     }
   });
 
-  // Legend
-  const legendY = h - 4;
+  // Legend — rendered below the rows in its own dedicated band
+  const legendY = rowsBottom + legendGap + 12;
   const legend = `
     <g class="kids-timeline-legend">
       <rect x="${labelW}" y="${legendY - 10}" width="10" height="8" fill="#59a263" fill-opacity="0.7"/>
@@ -2630,7 +2689,7 @@ function renderKidsTimeline(devices, samples, intervalMs) {
     </g>
   `;
 
-  return `<svg viewBox="0 0 ${w} ${h + 12}" class="kids-timeline">${ticks}${rows}${legend}</svg>`;
+  return `<svg viewBox="0 0 ${w} ${h}" class="kids-timeline">${ticks}${rows}${legend}</svg>`;
 }
 
 function minutesUntilNext(hour, minute) {
@@ -3261,7 +3320,8 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
-    if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); }
+    if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); startDnsTestPolling(); }
+    else stopDnsTestPolling();
   });
 });
 

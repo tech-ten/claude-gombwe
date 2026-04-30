@@ -1869,6 +1869,18 @@ body {
 }
 .kids-sched:last-child { border-bottom: none; }
 
+.dns-truth {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-deep); border-radius: var(--radius);
+  padding: 10px 12px; margin: 6px 0;
+  font-size: 13px;
+}
+.dns-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.dns-row-label { color: var(--text-3); font-size: 12px; }
+.dns-ok { color: #2e6b3a; font-weight: 500; }
+.dns-warn { color: #8a2e2e; font-weight: 500; }
+.dns-test { font-size: 12.5px; }
+
 .kids-filter-section { margin: 12px 0; }
 .kids-filter-section:first-child { margin-top: 4px; }
 .kids-filter-label { font-size: 12.5px; font-weight: 500; margin-bottom: 8px; color: var(--text-2); }
