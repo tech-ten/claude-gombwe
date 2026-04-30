@@ -31,6 +31,28 @@ function localMacAddresses(): string[] {
   return Array.from(macs);
 }
 
+// Why is this device paused? Returns null if it isn't.
+function computePausedReason(device: any, profile: any, schedules: any[], now: Date) {
+  const devPaused = !!device?.paused;
+  const profPaused = !!profile?.paused;
+  if (!devPaused && !profPaused) return null;
+
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    const blocked = EeroScheduler.isCurrentlyBlocked(s, now);
+    if (!blocked) continue;
+    if (s.target?.type === 'device' && s.target.url === device.url) {
+      return { source: 'schedule', name: s.name, scope: 'device' };
+    }
+    if (s.target?.type === 'profile' && profile && s.target.url === profile.url) {
+      return { source: 'schedule', name: s.name, scope: 'profile', profile: profile.name };
+    }
+  }
+  if (devPaused) return { source: 'manual', scope: 'device' };
+  if (profPaused) return { source: 'manual', scope: 'profile', profile: profile.name };
+  return null;
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export class Gateway {
@@ -1249,9 +1271,21 @@ The ingredients should be grocery item names with quantities scaled for ${family
     // Status — what the dashboard reads on load. Returns the cached snapshot
     // (so the UI is instant) plus the current sampler config.
     this.app.get('/api/eero', (_req: Request, res: Response) => {
+      const snapshot = this.eeroStore.loadSnapshot();
+      const schedules = this.eeroScheduler.list();
+      const now = new Date();
+      // Annotate each device with a pausedReason explaining *why* it's
+      // paused — manual, profile-paused manual, or a specific schedule.
+      // The UI uses this so users can tell "the bedtime schedule paused this"
+      // apart from "I clicked pause".
+      if (snapshot?.devices) {
+        for (const d of snapshot.devices as any[]) {
+          d.pausedReason = computePausedReason(d, d.profile, schedules, now);
+        }
+      }
       res.json({
         authenticated: this.eero.isAuthenticated(),
-        snapshot: this.eeroStore.loadSnapshot(),
+        snapshot,
         config: this.eeroStore.loadConfig(),
         actions: this.eeroStore.readActions(50),
         alerts: this.eeroStore.loadAlerts(),
