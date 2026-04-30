@@ -58,22 +58,26 @@ function handleWSEvent(event) {
 // ========== CHAT TAB ==========
 function getOrCreateChat(key, firstMsg) {
   if (!chatConversations.has(key)) {
+    const now = new Date().toISOString();
     chatConversations.set(key, {
       key,
       title: firstMsg ? firstMsg.slice(0, 50) : key,
       channel: key.split(':')[0] || 'web',
       messages: [],
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      lastActiveAt: now,
     });
   }
-  return chatConversations.get(key);
+  const conv = chatConversations.get(key);
+  conv.lastActiveAt = new Date().toISOString();
+  return conv;
 }
 
 function renderChatSidebar() {
   const list = document.getElementById('sidebarList');
   list.innerHTML = '';
   const sorted = Array.from(chatConversations.values())
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .sort((a, b) => new Date(b.lastActiveAt || b.createdAt).getTime() - new Date(a.lastActiveAt || a.createdAt).getTime());
 
   for (const conv of sorted) {
     if (chatFilter !== 'all' && conv.channel !== chatFilter) continue;
@@ -83,7 +87,7 @@ function renderChatSidebar() {
     div.innerHTML = `
       <div class="si-title">${esc(conv.title)}</div>
       <div class="si-meta">
-        <span>${timeAgo(conv.createdAt)}</span>
+        <span>${timeAgo(conv.lastActiveAt || conv.createdAt)}</span>
         <span class="si-badge chat">${conv.channel}</span>
       </div>
     `;
@@ -651,9 +655,11 @@ async function loadAllSessions() {
           channel,
           messages: [],
           createdAt: s.createdAt || new Date().toISOString(),
+          lastActiveAt: s.lastActiveAt || s.createdAt || new Date().toISOString(),
         });
       }
       const conv = chatConversations.get(s.key);
+      if (conv) conv.lastActiveAt = s.lastActiveAt || conv.lastActiveAt;
       if (conv && conv.title === conv.key) {
         // Try to load the session to get a better title
         try {
