@@ -1419,8 +1419,41 @@ The ingredients should be grocery item names with quantities scaled for ${family
     this.app.put('/api/eero/devices/profile', async (req: Request, res: Response) => {
       try {
         const { deviceUrl, profileUrl } = req.body || {};
-        const out = await this.eero.setDeviceProfile(deviceUrl, profileUrl ?? null);
-        audit('device.profile', { deviceUrl, profileUrl });
+        if (!deviceUrl) { res.status(400).json({ error: 'deviceUrl required' }); return; }
+        if (profileUrl) {
+          const out = await this.eero.setDeviceProfile(deviceUrl, profileUrl);
+          audit('device.profile', { deviceUrl, profileUrl });
+          res.json(out);
+          return;
+        }
+        // Removing a profile assignment requires editing the source profile —
+        // the device-side null PUT is a no-op on eero's end. Find the source
+        // profile from the snapshot and rewrite its device list without this one.
+        const snap = this.eeroStore.loadSnapshot();
+        const dev = (snap?.devices || []).find((d: any) => d.url === deviceUrl);
+        const sourceProfileUrl = dev?.profile?.url;
+        if (!sourceProfileUrl) { res.json({ ok: true, note: 'device had no profile' }); return; }
+        const sourceProfile = (snap?.profiles || []).find((p: any) => p.url === sourceProfileUrl);
+        const remaining = ((sourceProfile?.devices || []) as any[])
+          .map(d => d.url || d)
+          .filter(u => u !== deviceUrl);
+        const out = await this.eero.setProfileDevices(sourceProfileUrl, remaining);
+        audit('device.profile.clear', { deviceUrl, sourceProfileUrl });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    // Replace a profile's entire device list (the canonical way to add/remove
+    // devices in bulk).
+    this.app.put('/api/eero/profiles/devices', async (req: Request, res: Response) => {
+      try {
+        const { profileUrl, deviceUrls } = req.body || {};
+        if (!profileUrl || !Array.isArray(deviceUrls)) {
+          res.status(400).json({ error: 'profileUrl and deviceUrls[] required' });
+          return;
+        }
+        const out = await this.eero.setProfileDevices(profileUrl, deviceUrls);
+        audit('profile.devices', { profileUrl, count: deviceUrls.length });
         res.json(out);
       } catch (err: any) { eeroError(res, err); }
     });

@@ -1882,13 +1882,28 @@ body {
 }
 .eero-toast.show { opacity: 1; transform: translateY(0); }
 
-.eero-profile {
+.eero-profile-card { border-bottom: 1px solid var(--border-light); }
+.eero-profile-card:last-child { border-bottom: none; }
+.eero-profile-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+  padding: 10px 14px;
 }
-.eero-profile:last-child { border-bottom: none; }
 .eero-profile-name { font-size: 14px; }
 .eero-profile-actions { display: flex; gap: 6px; }
+
+.eero-profile-devices {
+  padding: 8px 14px 14px 14px;
+  background: var(--bg-deep);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.eero-profile-device {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 4px;
+  cursor: pointer; font-size: 13px;
+}
+.eero-profile-device:hover { background: var(--surface); }
+.eero-profile-device input { margin: 0; }
+.eero-profile-device-name { font-weight: 500; }
 
 .muted { color: var(--text-3); }
 .small { font-size: 12px; }
