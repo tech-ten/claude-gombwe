@@ -190,7 +190,8 @@ export type WSEventType =
   | 'eero:device-offline'
   | 'eero:profile-paused'
   | 'eero:profile-unpaused'
-  | 'eero:speedtest';
+  | 'eero:speedtest'
+  | 'eero:alert';
 
 export interface WSEvent {
   type: WSEventType;

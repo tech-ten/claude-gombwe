@@ -7,11 +7,13 @@
 import { readFileSync, writeFileSync, existsSync, appendFileSync, statSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { EeroClient } from './eero.js';
+import { detectAlerts, type EeroAlert } from './eero-alerts.js';
 
 const SNAPSHOT_FILE = 'eero-snapshot.json';
 const HISTORY_FILE = 'eero-history.jsonl';
 const ACTIONS_FILE = 'eero-actions.jsonl';
 const CONFIG_FILE = 'eero-config.json';
+const ALERTS_FILE = 'eero-alerts.json';
 
 const HISTORY_MAX_BYTES = 5 * 1024 * 1024; // rotate at 5MB
 
@@ -44,6 +46,8 @@ export interface SampleEvent {
   data: any;
 }
 
+export type StoreEvent = SampleEvent | { type: 'alert'; time: string; data: EeroAlert };
+
 const DEFAULT_CONFIG: EeroConfig = {
   samplerEnabled: false,
   samplerIntervalMs: 5 * 60 * 1000,
@@ -55,12 +59,61 @@ export class EeroStore {
   private dataDir: string;
   private client: EeroClient;
   private timer: NodeJS.Timeout | null = null;
-  private onEvent: (e: SampleEvent) => void;
+  private onEvent: (e: StoreEvent) => void;
 
-  constructor(dataDir: string, client: EeroClient, onEvent: (e: SampleEvent) => void = () => {}) {
+  constructor(dataDir: string, client: EeroClient, onEvent: (e: StoreEvent) => void = () => {}) {
     this.dataDir = dataDir;
     this.client = client;
     this.onEvent = onEvent;
+  }
+
+  // ── alerts ────────────────────────────────────────────────────────────
+  loadAlerts(): EeroAlert[] {
+    const f = join(this.dataDir, ALERTS_FILE);
+    if (!existsSync(f)) return [];
+    try { return JSON.parse(readFileSync(f, 'utf-8')); } catch { return []; }
+  }
+
+  saveAlerts(alerts: EeroAlert[]): void {
+    writeFileSync(join(this.dataDir, ALERTS_FILE), JSON.stringify(alerts, null, 2));
+  }
+
+  // Run detectors, merge with existing dismissals, persist. Return final set.
+  computeAlerts(): EeroAlert[] {
+    const snapshot = this.loadSnapshot();
+    const config = this.loadConfig();
+    const history = this.readHistory(2000);
+    const detected = detectAlerts({ snapshot, config, history, now: Date.now() });
+
+    const existing = this.loadAlerts();
+    const byId = new Map(existing.map(a => [a.id, a]));
+    const merged: EeroAlert[] = [];
+    const newAlerts: EeroAlert[] = [];
+    for (const a of detected) {
+      const prev = byId.get(a.id);
+      if (prev) {
+        // Preserve dismissed state and the original firstSeen timestamp.
+        merged.push({ ...a, firstSeen: prev.firstSeen, dismissed: prev.dismissed });
+      } else {
+        merged.push(a);
+        newAlerts.push(a);
+      }
+    }
+    this.saveAlerts(merged);
+    for (const a of newAlerts) {
+      if (!a.dismissed) this.onEvent({ type: 'alert', time: a.firstSeen, data: a });
+    }
+    return merged;
+  }
+
+  dismissAlert(id: string, dismissed = true): EeroAlert[] {
+    const alerts = this.loadAlerts();
+    const idx = alerts.findIndex(a => a.id === id);
+    if (idx >= 0) {
+      alerts[idx] = { ...alerts[idx], dismissed };
+      this.saveAlerts(alerts);
+    }
+    return alerts;
   }
 
   // ── snapshot ──────────────────────────────────────────────────────────
@@ -193,6 +246,8 @@ export class EeroStore {
         latestSpeedtest: snap.speedtests?.[0],
       },
     });
+    // Recompute alerts on every sync; dismissals persist.
+    this.computeAlerts();
     return snap;
   }
 

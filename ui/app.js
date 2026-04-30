@@ -52,6 +52,9 @@ function handleWSEvent(event) {
     case 'eero:speedtest':
       handleEeroEvent(event);
       break;
+    case 'eero:alert':
+      handleEeroAlertEvent(event);
+      break;
     case 'session:message': {
       // Create conversation if it doesn't exist (message from Discord/Telegram)
       const msgConv = getOrCreateChat(d.sessionKey, d.message);
@@ -1560,6 +1563,8 @@ async function loadEero() {
     renderEeroOverview();
     renderEeroUsageChart();
   }
+  renderEeroAlerts();
+  updateEeroNavBadge();
 }
 
 function renderEero() {
@@ -1997,7 +2002,72 @@ async function eeroSync() {
     renderEeroProfiles();
     renderEeroSpeed();
     renderEeroAdvanced();
+    // Alerts get recomputed server-side after sync; refresh them.
+    try {
+      const a = await fetch(`${API}/api/eero/alerts`);
+      eeroState.alerts = await a.json();
+      renderEeroAlerts();
+      updateEeroNavBadge();
+    } catch { /* ignore */ }
   } catch (err) { console.error('eero sync failed:', err); }
+}
+
+function renderEeroAlerts() {
+  const container = document.getElementById('eeroAlerts');
+  if (!container) return;
+  const all = eeroState.alerts || [];
+  const active = all.filter(a => !a.dismissed);
+  if (active.length === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.remove('hidden');
+  container.innerHTML = active.map(a => `
+    <div class="eero-alert ${esc(a.severity)}" data-id="${esc(a.id)}">
+      <div class="eero-alert-icon">${a.severity === 'error' ? '!' : a.severity === 'warning' ? '!' : 'i'}</div>
+      <div class="eero-alert-body">
+        <div class="eero-alert-title">${esc(a.title)}</div>
+        <div class="eero-alert-detail">${esc(a.detail)}</div>
+        ${a.suggestion ? `<div class="eero-alert-suggestion">${esc(a.suggestion)}</div>` : ''}
+        <div class="eero-alert-meta muted small">first seen ${timeAgo(a.firstSeen)} ago${a.lastSeen !== a.firstSeen ? ` · last seen ${timeAgo(a.lastSeen)} ago` : ''}</div>
+      </div>
+      <button class="eero-alert-dismiss" data-id="${esc(a.id)}" title="Dismiss">×</button>
+    </div>
+  `).join('');
+  container.querySelectorAll('.eero-alert-dismiss').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/eero/alerts/${encodeURIComponent(b.dataset.id)}/dismiss`, eeroPost({ dismissed: true }));
+      eeroState.alerts = (eeroState.alerts || []).map(a => a.id === b.dataset.id ? { ...a, dismissed: true } : a);
+      renderEeroAlerts();
+      updateEeroNavBadge();
+    };
+  });
+}
+
+function updateEeroNavBadge() {
+  const badge = document.getElementById('eeroNavBadge');
+  if (!badge) return;
+  const active = (eeroState.alerts || []).filter(a => !a.dismissed);
+  if (active.length === 0) {
+    badge.classList.add('hidden');
+    badge.textContent = '';
+    return;
+  }
+  badge.classList.remove('hidden');
+  badge.textContent = String(active.length);
+  const worst = active.reduce((acc, a) => a.severity === 'error' ? 'error' : (acc === 'error' ? 'error' : a.severity), 'info');
+  badge.className = `nav-badge ${worst}`;
+}
+
+function handleEeroAlertEvent(event) {
+  const a = event.data;
+  eeroState.alerts = eeroState.alerts || [];
+  const i = eeroState.alerts.findIndex(x => x.id === a.id);
+  if (i >= 0) eeroState.alerts[i] = a; else eeroState.alerts.push(a);
+  renderEeroAlerts();
+  updateEeroNavBadge();
+  if (!a.dismissed) showEeroToast(`${a.title} — ${a.detail.slice(0, 80)}`);
 }
 
 function formatBytes(b) {
