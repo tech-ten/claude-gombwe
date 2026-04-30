@@ -2607,11 +2607,26 @@ document.querySelectorAll('[data-bulk]').forEach(b => {
 
 document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = document.getElementById('eeroNewProfileName').value.trim();
-  if (!name) return;
-  await fetch(`${API}/api/eero/profiles`, eeroPost({ name }));
-  document.getElementById('eeroNewProfileName').value = '';
-  eeroSync();
+  const input = document.getElementById('eeroNewProfileName');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    const r = await fetch(`${API}/api/eero/profiles`, eeroPost({ name }));
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || `Failed: HTTP ${r.status}`);
+      return;
+    }
+    input.value = '';
+    showEeroToast(`Created profile: ${name}`);
+    await eeroSync();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create'; }
+  }
 });
 
 document.getElementById('eeroUsageRange')?.addEventListener('change', renderEeroUsageChart);
