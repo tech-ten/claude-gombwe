@@ -183,7 +183,14 @@ export type WSEventType =
   | 'task:output'
   | 'task:completed'
   | 'task:failed'
-  | 'session:message';
+  | 'session:message'
+  | 'eero:sample'
+  | 'eero:new-device'
+  | 'eero:device-online'
+  | 'eero:device-offline'
+  | 'eero:profile-paused'
+  | 'eero:profile-unpaused'
+  | 'eero:speedtest';
 
 export interface WSEvent {
   type: WSEventType;

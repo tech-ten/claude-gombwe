@@ -43,6 +43,15 @@ function handleWSEvent(event) {
       renderTaskSidebar();
       if (d.id === activeTaskId) renderTaskThread(d.id);
       break;
+    case 'eero:sample':
+    case 'eero:new-device':
+    case 'eero:device-online':
+    case 'eero:device-offline':
+    case 'eero:profile-paused':
+    case 'eero:profile-unpaused':
+    case 'eero:speedtest':
+      handleEeroEvent(event);
+      break;
     case 'session:message': {
       // Create conversation if it doesn't exist (message from Discord/Telegram)
       const msgConv = getOrCreateChat(d.sessionKey, d.message);
@@ -477,6 +486,7 @@ document.querySelectorAll('.nav-item').forEach(btn => {
       case 'jobs': refreshJobs(); break;
       case 'services': refreshServices(); break;
       case 'family': loadFamily(); break;
+      case 'eero': loadEero(); break;
     }
   });
 });
@@ -1524,6 +1534,740 @@ function addGroceryFromRecipe(mealName, ingredient) {
   saveFamily();
   renderGroceryList();
 }
+
+// ========== EERO (NETWORK) ==========
+let eeroState = { authenticated: false, snapshot: null, config: null, actions: [] };
+let eeroSelectedDevices = new Set();
+let eeroActiveSubtab = 'overview';
+let eeroDeviceQuery = '';
+let eeroDeviceSort = 'recent';
+let eeroDeviceFilter = 'all';
+let eeroHistory = [];
+let eeroLastLoginId = null;
+
+async function loadEero() {
+  try {
+    const res = await fetch(`${API}/api/eero`);
+    eeroState = await res.json();
+  } catch { return; }
+  renderEero();
+
+  if (eeroState.authenticated) {
+    try {
+      const h = await fetch(`${API}/api/eero/history?limit=500`);
+      eeroHistory = await h.json();
+    } catch { eeroHistory = []; }
+    renderEeroOverview();
+    renderEeroUsageChart();
+  }
+}
+
+function renderEero() {
+  const auth = document.getElementById('eeroAuth');
+  const subnav = document.getElementById('eeroSubnav');
+  const panes = document.querySelectorAll('.eero-pane');
+
+  if (!eeroState.authenticated) {
+    auth.classList.remove('hidden');
+    subnav.classList.add('hidden');
+    panes.forEach(p => p.classList.add('hidden'));
+    return;
+  }
+
+  auth.classList.add('hidden');
+  subnav.classList.remove('hidden');
+  panes.forEach(p => p.classList.remove('hidden'));
+
+  setEeroSyncState();
+  renderEeroOverview();
+  renderEeroDevices();
+  renderEeroProfiles();
+  renderEeroUsageChart();
+  renderEeroSpeed();
+  renderEeroAdvanced();
+  renderEeroAudit();
+}
+
+function setEeroSyncState() {
+  const el = document.getElementById('eeroSyncState');
+  if (!el) return;
+  const snap = eeroState.snapshot;
+  if (!snap) { el.textContent = 'Never synced'; return; }
+  const errs = snap.errors ? Object.keys(snap.errors).length : 0;
+  el.textContent = `Synced ${timeAgo(snap.syncedAt)} ago${errs ? ` · ${errs} errors` : ''}`;
+}
+
+function renderEeroOverview() {
+  const grid = document.getElementById('eeroStatGrid');
+  if (!grid) return;
+  const snap = eeroState.snapshot || {};
+  const devices = snap.devices || [];
+  const online = devices.filter(d => d.connected);
+  const speedtest = (snap.speedtests || [])[0];
+  const usage = summariseEeroUsage(snap.usage);
+  const account = snap.account || {};
+  const network = snap.network || {};
+
+  grid.innerHTML = `
+    ${eeroStat('Account', account.name || account.email?.value || '—', account.premium_status || '')}
+    ${eeroStat('Network', network.name || '—', network.isp ? `via ${network.isp}` : '')}
+    ${eeroStat('Devices', `${online.length}/${devices.length}`, 'online / total')}
+    ${eeroStat('Wi-Fi nodes', String((snap.eeros || []).length), `${(snap.eeros || []).filter(e => e.status === 'green').length} healthy`)}
+    ${eeroStat('Last 7d down', formatBytes(usage.dl), formatBytes(usage.ul) + ' up')}
+    ${eeroStat('Last speedtest', speedtest ? `${(speedtest.down_mbps || 0).toFixed(0)} Mbps` : '—', speedtest ? `up ${(speedtest.up_mbps || 0).toFixed(0)} Mbps` : '')}
+  `;
+
+  const onlineSeries = (eeroHistory || []).filter(e => e.type === 'sample').map(s => ({
+    t: new Date(s.time).getTime(),
+    v: s.data.onlineCount || 0,
+  }));
+  document.getElementById('eeroOnlineChart').innerHTML = onlineSeries.length
+    ? eeroLineChart(onlineSeries, { yLabel: 'devices' })
+    : '<div class="muted small">Run a sync — or enable the sampler under Advanced — to start collecting.</div>';
+
+  // Top consumers come from per-device usage if available; fall back to data totals.
+  const topEl = document.getElementById('eeroTopConsumers');
+  const topDevices = devices
+    .filter(d => typeof d.usage_down === 'number' || typeof d.usage_up === 'number')
+    .sort((a, b) => ((b.usage_down || 0) + (b.usage_up || 0)) - ((a.usage_down || 0) + (a.usage_up || 0)))
+    .slice(0, 8);
+  if (topDevices.length === 0) {
+    topEl.innerHTML = '<div class="muted small">Per-device usage isn\'t in this snapshot. Try the Raw API: <code>$NETWORK/insights?period=week</code></div>';
+  } else {
+    topEl.innerHTML = topDevices.map(d => `
+      <div class="eero-consumer">
+        <span>${esc(d.display_name || d.hostname || d.mac)}</span>
+        <span class="muted small">${formatBytes((d.usage_down || 0) + (d.usage_up || 0))}</span>
+      </div>
+    `).join('');
+  }
+
+  // Hardware nodes
+  const nodes = snap.eeros || [];
+  const nodesEl = document.getElementById('eeroNodes');
+  nodesEl.innerHTML = nodes.length === 0
+    ? '<div class="muted small">No node data.</div>'
+    : nodes.map(n => `
+      <div class="eero-node">
+        <div>
+          <div>${esc(n.location || n.serial || 'eero')}</div>
+          <div class="muted small">${esc(n.model || '')} · ${esc(n.status || '')}</div>
+        </div>
+        <button class="btn-sm" data-eero-url="${esc(n.url)}" data-act="reboot-eero">Reboot</button>
+      </div>
+    `).join('');
+  nodesEl.querySelectorAll('[data-act="reboot-eero"]').forEach(b => {
+    b.onclick = () => eeroAction('Reboot this eero?', () =>
+      fetch(`${API}/api/eero/eeros/reboot`, eeroPost({ eeroUrl: b.dataset.eeroUrl })));
+  });
+
+  // Recent events
+  const eventsEl = document.getElementById('eeroEvents');
+  const events = (eeroHistory || []).filter(e => e.type !== 'sample').slice(-30).reverse();
+  document.getElementById('eeroEventCount').textContent = `${events.length} events`;
+  eventsEl.innerHTML = events.length === 0
+    ? '<div class="muted small">No events yet.</div>'
+    : events.map(e => `
+      <div class="eero-event">
+        <span class="eero-event-type ${e.type}">${e.type.replace('eero-', '').replace(/-/g, ' ')}</span>
+        <span>${esc(e.data.display_name || e.data.name || e.data.mac || JSON.stringify(e.data).slice(0, 80))}</span>
+        <span class="muted small">${timeAgo(e.time)}</span>
+      </div>
+    `).join('');
+}
+
+function eeroStat(label, value, sub) {
+  return `
+    <div class="eero-stat">
+      <div class="eero-stat-label">${esc(label)}</div>
+      <div class="eero-stat-value">${esc(value)}</div>
+      <div class="eero-stat-sub">${esc(sub || '')}</div>
+    </div>
+  `;
+}
+
+function summariseEeroUsage(usage) {
+  let dl = 0, ul = 0;
+  for (const s of (usage?.series || [])) {
+    const total = (s.values || []).reduce((acc, v) => acc + (v.value || 0), 0);
+    if (String(s.type).toLowerCase().includes('down')) dl += total;
+    else if (String(s.type).toLowerCase().includes('up')) ul += total;
+  }
+  return { dl, ul };
+}
+
+function renderEeroDevices() {
+  const list = document.getElementById('eeroDeviceList');
+  if (!list) return;
+  let devices = (eeroState.snapshot?.devices || []).slice();
+
+  if (eeroDeviceQuery) {
+    const q = eeroDeviceQuery.toLowerCase();
+    devices = devices.filter(d =>
+      (d.display_name || '').toLowerCase().includes(q) ||
+      (d.hostname || '').toLowerCase().includes(q) ||
+      (d.mac || '').toLowerCase().includes(q) ||
+      (d.ip || '').toLowerCase().includes(q),
+    );
+  }
+
+  switch (eeroDeviceFilter) {
+    case 'online': devices = devices.filter(d => d.connected); break;
+    case 'offline': devices = devices.filter(d => !d.connected); break;
+    case 'paused': devices = devices.filter(d => d.paused); break;
+    case 'blocked': devices = devices.filter(d => d.blacklisted); break;
+    case 'unknown': devices = devices.filter(d => !d.display_name && !d.profile); break;
+  }
+
+  switch (eeroDeviceSort) {
+    case 'name': devices.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || '')); break;
+    case 'profile': devices.sort((a, b) => (a.profile?.name || '').localeCompare(b.profile?.name || '')); break;
+    case 'status': devices.sort((a, b) => Number(b.connected || 0) - Number(a.connected || 0)); break;
+    default: devices.sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''));
+  }
+
+  if (devices.length === 0) {
+    list.innerHTML = '<div class="muted small" style="padding:16px">No devices match.</div>';
+    document.getElementById('eeroBulkBar').classList.add('hidden');
+    return;
+  }
+
+  const profiles = eeroState.snapshot?.profiles || [];
+  const profOpts = ['<option value="">— no profile —</option>']
+    .concat(profiles.map(p => `<option value="${esc(p.url)}">${esc(p.name)}</option>`))
+    .join('');
+
+  list.innerHTML = devices.map(d => {
+    const checked = eeroSelectedDevices.has(d.url) ? 'checked' : '';
+    const dot = d.connected ? 'online' : 'offline';
+    const flags = [
+      d.paused ? '<span class="eero-tag paused">paused</span>' : '',
+      d.blacklisted ? '<span class="eero-tag blocked">blocked</span>' : '',
+      d.profile?.name ? `<span class="eero-tag profile">${esc(d.profile.name)}</span>` : '',
+      d.is_guest ? '<span class="eero-tag guest">guest</span>' : '',
+    ].filter(Boolean).join(' ');
+    return `
+      <div class="eero-device ${dot}">
+        <input type="checkbox" class="eero-device-check" data-url="${esc(d.url)}" ${checked}>
+        <div class="eero-device-status ${dot}" title="${dot}"></div>
+        <div class="eero-device-main">
+          <div class="eero-device-name">
+            <span contenteditable="true" data-act="rename" data-url="${esc(d.url)}">${esc(d.display_name || d.hostname || '(unknown)')}</span>
+            ${flags}
+          </div>
+          <div class="eero-device-meta muted small">
+            ${esc(d.mac || '')} · ${esc(d.ip || '')} · ${esc(d.connection_type || '')}
+            ${d.signal_strength ? ' · ' + esc(d.signal_strength) : ''}
+            ${d.last_active ? ' · last seen ' + timeAgo(d.last_active) : ''}
+          </div>
+        </div>
+        <div class="eero-device-actions">
+          <select data-act="profile" data-url="${esc(d.url)}">
+            ${profOpts.replace(`value="${d.profile?.url || ''}"`, `value="${d.profile?.url || ''}" selected`)}
+          </select>
+          <button class="btn-sm" data-act="pause" data-url="${esc(d.url)}" data-on="${d.paused ? '1' : '0'}">${d.paused ? 'Unpause' : 'Pause'}</button>
+          <button class="btn-sm" data-act="block" data-url="${esc(d.url)}" data-on="${d.blacklisted ? '1' : '0'}">${d.blacklisted ? 'Unblock' : 'Block'}</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.eero-device-check').forEach(c => {
+    c.onchange = () => {
+      if (c.checked) eeroSelectedDevices.add(c.dataset.url);
+      else eeroSelectedDevices.delete(c.dataset.url);
+      renderEeroBulkBar();
+    };
+  });
+
+  list.querySelectorAll('[data-act="rename"]').forEach(span => {
+    span.onblur = async () => {
+      const nickname = span.textContent.trim();
+      if (!nickname) return;
+      await fetch(`${API}/api/eero/devices/rename`, eeroPut({ deviceUrl: span.dataset.url, nickname }));
+    };
+    span.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); span.blur(); } };
+  });
+
+  list.querySelectorAll('[data-act="profile"]').forEach(sel => {
+    sel.onchange = async () => {
+      await fetch(`${API}/api/eero/devices/profile`, eeroPut({ deviceUrl: sel.dataset.url, profileUrl: sel.value || null }));
+      eeroSync();
+    };
+  });
+
+  list.querySelectorAll('[data-act="pause"]').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/eero/devices/pause`, eeroPut({ deviceUrl: b.dataset.url, paused: b.dataset.on !== '1' }));
+      eeroSync();
+    };
+  });
+
+  list.querySelectorAll('[data-act="block"]').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/eero/devices/block`, eeroPut({ deviceUrl: b.dataset.url, blocked: b.dataset.on !== '1' }));
+      eeroSync();
+    };
+  });
+
+  renderEeroBulkBar();
+}
+
+function renderEeroBulkBar() {
+  const bar = document.getElementById('eeroBulkBar');
+  document.getElementById('eeroBulkCount').textContent = `${eeroSelectedDevices.size} selected`;
+  bar.classList.toggle('hidden', eeroSelectedDevices.size === 0);
+}
+
+function renderEeroProfiles() {
+  const list = document.getElementById('eeroProfileList');
+  if (!list) return;
+  const profiles = eeroState.snapshot?.profiles || [];
+  if (profiles.length === 0) {
+    list.innerHTML = '<div class="muted small" style="padding:16px">No profiles. Create one above.</div>';
+    return;
+  }
+  list.innerHTML = profiles.map(p => `
+    <div class="eero-profile">
+      <div>
+        <div class="eero-profile-name">${esc(p.name)}</div>
+        <div class="muted small">${(p.devices || []).length} devices · ${p.paused ? 'paused' : 'active'}</div>
+      </div>
+      <div class="eero-profile-actions">
+        <button class="btn-sm" data-act="profile-pause" data-url="${esc(p.url)}" data-on="${p.paused ? '1' : '0'}">${p.paused ? 'Unpause' : 'Pause'}</button>
+        <button class="btn-sm btn-danger" data-act="profile-delete" data-url="${esc(p.url)}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('[data-act="profile-pause"]').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/eero/profiles/pause`, eeroPut({ profileUrl: b.dataset.url, paused: b.dataset.on !== '1' }));
+      eeroSync();
+    };
+  });
+  list.querySelectorAll('[data-act="profile-delete"]').forEach(b => {
+    b.onclick = () => eeroAction('Delete this profile?', () =>
+      fetch(`${API}/api/eero/profiles?profileUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
+  });
+}
+
+async function renderEeroUsageChart() {
+  const chartEl = document.getElementById('eeroUsageChart');
+  if (!chartEl) return;
+  const days = Number(document.getElementById('eeroUsageRange')?.value || 7);
+  const cadence = document.getElementById('eeroUsageCadence')?.value || 'daily';
+  const networkUrl = eeroState.snapshot?.networkUrl;
+  if (!networkUrl) { chartEl.innerHTML = '<div class="muted small">Sync first.</div>'; return; }
+  try {
+    const r = await fetch(`${API}/api/eero/raw`, eeroPost({
+      method: 'GET',
+      path: `${networkUrl}/data_usage?start=${new Date(Date.now() - days * 86400000).toISOString()}&end=${new Date().toISOString()}&cadence=${cadence}`,
+    }));
+    const out = await r.json();
+    const series = out?.data?.series || [];
+    chartEl.innerHTML = eeroDualSeriesChart(series);
+    const sum = summariseEeroUsage(out?.data);
+    document.getElementById('eeroUsageTotals').textContent = `${formatBytes(sum.dl)} down · ${formatBytes(sum.ul)} up`;
+  } catch (err) {
+    chartEl.innerHTML = `<div class="muted small">${esc(err.message)}</div>`;
+  }
+
+  // Heatmap from history
+  const heat = document.getElementById('eeroHeatmap');
+  const samples = (eeroHistory || []).filter(e => e.type === 'sample');
+  heat.innerHTML = samples.length === 0
+    ? '<div class="muted small">No sample history. Enable the sampler under Advanced.</div>'
+    : eeroHourlyHeatmap(samples);
+}
+
+function renderEeroSpeed() {
+  const chartEl = document.getElementById('eeroSpeedChart');
+  const tableEl = document.getElementById('eeroSpeedTable');
+  const tests = (eeroState.snapshot?.speedtests || []).slice(0, 60).reverse();
+  if (!chartEl || !tableEl) return;
+  if (tests.length === 0) {
+    chartEl.innerHTML = '<div class="muted small">No speedtests yet. Run one above.</div>';
+    tableEl.innerHTML = '';
+    return;
+  }
+  const dlSeries = tests.map(t => ({ t: new Date(t.date).getTime(), v: t.down_mbps || 0 }));
+  const ulSeries = tests.map(t => ({ t: new Date(t.date).getTime(), v: t.up_mbps || 0 }));
+  chartEl.innerHTML = eeroLineChart(dlSeries, { yLabel: 'Mbps', secondary: ulSeries });
+  tableEl.innerHTML = `
+    <table class="eero-table">
+      <thead><tr><th>When</th><th>Down</th><th>Up</th></tr></thead>
+      <tbody>${tests.slice().reverse().map(t => `
+        <tr><td>${esc(t.date)}</td><td>${(t.down_mbps || 0).toFixed(1)} Mbps</td><td>${(t.up_mbps || 0).toFixed(1)} Mbps</td></tr>
+      `).join('')}</tbody>
+    </table>
+  `;
+}
+
+function renderEeroAdvanced() {
+  const cfg = eeroState.config || {};
+  const samp = document.getElementById('eeroSamplerEnabled');
+  if (samp) samp.checked = !!cfg.samplerEnabled;
+  const interval = document.getElementById('eeroSamplerInterval');
+  if (interval) interval.value = String(cfg.samplerIntervalMs || 300000);
+  const alert = document.getElementById('eeroAlertNewDevice');
+  if (alert) alert.checked = cfg.alertOnNewDevice !== false;
+
+  const guest = eeroState.snapshot?.network?.guest_network || {};
+  const ge = document.getElementById('eeroGuestEnabled');
+  if (ge) ge.checked = !!guest.enabled;
+  const gn = document.getElementById('eeroGuestName');
+  if (gn) gn.value = guest.name || '';
+  const gp = document.getElementById('eeroGuestPass');
+  if (gp) gp.value = guest.password || '';
+
+  const fwd = document.getElementById('eeroForwardList');
+  const forwards = eeroState.snapshot?.forwards || [];
+  fwd.innerHTML = forwards.length === 0
+    ? '<div class="muted small">No port forwards.</div>'
+    : forwards.map(f => `
+      <div class="eero-row">
+        <span>${esc(f.description || f.protocol || 'forward')}</span>
+        <span class="muted small">${esc(f.protocol || '')} ${f.public_port || ''} → ${esc(f.ip || '')}:${f.private_port || ''}</span>
+        <button class="btn-sm btn-danger" data-act="del-forward" data-url="${esc(f.url)}">Delete</button>
+      </div>
+    `).join('');
+  fwd.querySelectorAll('[data-act="del-forward"]').forEach(b => {
+    b.onclick = () => eeroAction('Delete this port forward?', () =>
+      fetch(`${API}/api/eero/forwards?forwardUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
+  });
+
+  const resv = document.getElementById('eeroReservationList');
+  const reservations = eeroState.snapshot?.reservations || [];
+  resv.innerHTML = reservations.length === 0
+    ? '<div class="muted small">No DHCP reservations.</div>'
+    : reservations.map(r => `
+      <div class="eero-row">
+        <span>${esc(r.description || r.mac || 'reservation')}</span>
+        <span class="muted small">${esc(r.mac || '')} → ${esc(r.ip || '')}</span>
+        <button class="btn-sm btn-danger" data-act="del-resv" data-url="${esc(r.url)}">Delete</button>
+      </div>
+    `).join('');
+  resv.querySelectorAll('[data-act="del-resv"]').forEach(b => {
+    b.onclick = () => eeroAction('Delete this reservation?', () =>
+      fetch(`${API}/api/eero/reservations?reservationUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
+  });
+}
+
+function renderEeroAudit() {
+  const list = document.getElementById('eeroAuditList');
+  if (!list) return;
+  const actions = eeroState.actions || [];
+  list.innerHTML = actions.length === 0
+    ? '<div class="muted small" style="padding:16px">No actions yet.</div>'
+    : `<table class="eero-table"><thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead><tbody>` +
+      actions.map(a => `
+        <tr>
+          <td>${esc(new Date(a.time).toLocaleString())}</td>
+          <td>${esc(a.action)}</td>
+          <td><code>${esc(JSON.stringify(a.detail || {}))}</code></td>
+        </tr>
+      `).join('') + '</tbody></table>';
+}
+
+// ── helpers ────────────────────────────────────────────────────────────
+function eeroPost(body) { return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; }
+function eeroPut(body) { return { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; }
+
+async function eeroAction(confirmText, fn) {
+  if (confirmText && !confirm(confirmText)) return;
+  try {
+    const r = await fn();
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      alert(data.error || `HTTP ${r.status}`);
+      return;
+    }
+    eeroSync();
+  } catch (err) { alert(err.message); }
+}
+
+async function eeroSync() {
+  try {
+    const r = await fetch(`${API}/api/eero/sync`, eeroPost({}));
+    eeroState.snapshot = await r.json();
+    setEeroSyncState();
+    renderEeroOverview();
+    renderEeroDevices();
+    renderEeroProfiles();
+    renderEeroSpeed();
+    renderEeroAdvanced();
+  } catch (err) { console.error('eero sync failed:', err); }
+}
+
+function formatBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return `${b.toFixed(1)} ${u[i]}`;
+}
+
+function handleEeroEvent(event) {
+  if (event.type === 'eero:sample') {
+    eeroHistory.push({ type: 'sample', time: event.timestamp, data: event.data });
+    if (eeroHistory.length > 1000) eeroHistory.shift();
+  } else {
+    eeroHistory.push({ type: event.type.replace('eero:', ''), time: event.timestamp, data: event.data });
+  }
+  // If the eero tab is active, refresh.
+  if (document.getElementById('tab-eero')?.classList.contains('active')) {
+    renderEeroOverview();
+  }
+  if (event.type === 'eero:new-device') {
+    showEeroToast(`New device on the network: ${event.data.display_name || event.data.mac}`);
+  }
+}
+
+function showEeroToast(msg) {
+  let t = document.getElementById('eeroToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'eeroToast';
+    t.className = 'eero-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ── tiny SVG charts ────────────────────────────────────────────────────
+function eeroLineChart(series, opts = {}) {
+  if (!series.length) return '<div class="muted small">No data.</div>';
+  const w = 600, h = 140, pad = 24;
+  const xs = series.map(p => p.t);
+  const ys = series.map(p => p.v);
+  const sec = opts.secondary || [];
+  const allYs = ys.concat(sec.map(p => p.v));
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = 0, ymax = Math.max(1, ...allYs);
+  const xScale = t => pad + (xmax === xmin ? 0 : ((t - xmin) / (xmax - xmin)) * (w - pad * 2));
+  const yScale = v => h - pad - ((v - ymin) / (ymax - ymin)) * (h - pad * 2);
+  const line = (pts, cls) => `<polyline class="${cls}" fill="none" points="${pts.map(p => `${xScale(p.t)},${yScale(p.v)}`).join(' ')}"/>`;
+  return `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="eero-svg">
+      <line x1="${pad}" x2="${w - pad}" y1="${h - pad}" y2="${h - pad}" class="eero-axis"/>
+      <line x1="${pad}" x2="${pad}" y1="${pad}" y2="${h - pad}" class="eero-axis"/>
+      ${line(series, 'eero-line primary')}
+      ${sec.length ? line(sec, 'eero-line secondary') : ''}
+      <text x="${pad}" y="${pad - 6}" class="eero-axis-label">${esc(opts.yLabel || '')}</text>
+      <text x="${w - pad}" y="${h - 4}" text-anchor="end" class="eero-axis-label">max ${ymax.toFixed(0)}</text>
+    </svg>
+  `;
+}
+
+function eeroDualSeriesChart(series) {
+  // series[i] = { type: 'DOWNLOAD'|'UPLOAD', values: [{ time, value }] }
+  if (!series.length) return '<div class="muted small">No data.</div>';
+  const w = 720, h = 180, pad = 30;
+  const allValues = series.flatMap(s => s.values || []);
+  if (!allValues.length) return '<div class="muted small">No data.</div>';
+  const xs = allValues.map(v => new Date(v.time).getTime());
+  const ymax = Math.max(1, ...allValues.map(v => v.value));
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const xScale = t => pad + (xmax === xmin ? 0 : ((t - xmin) / (xmax - xmin)) * (w - pad * 2));
+  const yScale = v => h - pad - (v / ymax) * (h - pad * 2);
+  const seriesEls = series.map(s => {
+    const pts = (s.values || []).map(v => `${xScale(new Date(v.time).getTime())},${yScale(v.value)}`).join(' ');
+    const cls = String(s.type).toLowerCase().includes('down') ? 'primary' : 'secondary';
+    return `<polyline class="eero-line ${cls}" fill="none" points="${pts}"/>`;
+  }).join('');
+  return `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="eero-svg">
+      <line x1="${pad}" x2="${w - pad}" y1="${h - pad}" y2="${h - pad}" class="eero-axis"/>
+      ${seriesEls}
+      <text x="${pad}" y="${pad - 8}" class="eero-axis-label">peak ${formatBytes(ymax)}</text>
+      <g class="eero-legend">
+        <rect x="${w - 140}" y="6" width="10" height="10" class="eero-line primary swatch"/>
+        <text x="${w - 124}" y="15" class="eero-axis-label">download</text>
+        <rect x="${w - 70}" y="6" width="10" height="10" class="eero-line secondary swatch"/>
+        <text x="${w - 54}" y="15" class="eero-axis-label">upload</text>
+      </g>
+    </svg>
+  `;
+}
+
+function eeroHourlyHeatmap(samples) {
+  // Bucket by day-of-week × hour, average online count.
+  const buckets = Array.from({ length: 7 }, () => Array(24).fill({ sum: 0, n: 0 }));
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) buckets[d][h] = { sum: 0, n: 0 };
+  for (const s of samples) {
+    const t = new Date(s.time);
+    const d = (t.getDay() + 6) % 7; // Mon=0
+    buckets[d][t.getHours()].sum += s.data.onlineCount || 0;
+    buckets[d][t.getHours()].n += 1;
+  }
+  const cellW = 18, cellH = 16, pad = 30, w = pad + 24 * cellW + 10, h = pad + 7 * cellH + 10;
+  let max = 0;
+  for (let d = 0; d < 7; d++) for (let hr = 0; hr < 24; hr++) {
+    const b = buckets[d][hr];
+    if (b.n) max = Math.max(max, b.sum / b.n);
+  }
+  let cells = '';
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  for (let d = 0; d < 7; d++) {
+    cells += `<text x="4" y="${pad + d * cellH + cellH - 4}" class="eero-axis-label">${days[d]}</text>`;
+    for (let hr = 0; hr < 24; hr++) {
+      const b = buckets[d][hr];
+      const v = b.n ? b.sum / b.n : 0;
+      const op = max ? (v / max) : 0;
+      cells += `<rect x="${pad + hr * cellW}" y="${pad + d * cellH}" width="${cellW - 1}" height="${cellH - 1}" fill="rgba(89,162,99,${op})"><title>${days[d]} ${hr}:00 — avg ${v.toFixed(1)} online</title></rect>`;
+    }
+  }
+  for (let hr = 0; hr < 24; hr += 3) {
+    cells += `<text x="${pad + hr * cellW}" y="${pad - 8}" class="eero-axis-label">${hr}</text>`;
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" class="eero-svg">${cells}</svg>`;
+}
+
+// ── wiring ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.eero-subtab').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.eero-subtab').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    eeroActiveSubtab = b.dataset.eeroTab;
+    document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
+    if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
+  });
+});
+
+document.getElementById('eeroLoginForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  eeroLastLoginId = document.getElementById('eeroLoginInput').value.trim();
+  if (!eeroLastLoginId) return;
+  const r = await fetch(`${API}/api/eero/login`, eeroPost({ login: eeroLastLoginId }));
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'login failed'); return; }
+  document.getElementById('eeroLoginStep').classList.add('hidden');
+  document.getElementById('eeroVerifyStep').classList.remove('hidden');
+});
+
+document.getElementById('eeroVerifyForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const code = document.getElementById('eeroVerifyInput').value.trim();
+  const r = await fetch(`${API}/api/eero/verify`, eeroPost({ code }));
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'verify failed'); return; }
+  loadEero();
+});
+
+document.getElementById('eeroSyncBtn')?.addEventListener('click', () => eeroSync());
+document.getElementById('eeroRefreshBtn')?.addEventListener('click', () => loadEero());
+
+document.getElementById('eeroDeviceSearch')?.addEventListener('input', (e) => { eeroDeviceQuery = e.target.value; renderEeroDevices(); });
+document.getElementById('eeroDeviceSort')?.addEventListener('change', (e) => { eeroDeviceSort = e.target.value; renderEeroDevices(); });
+document.getElementById('eeroDeviceFilter')?.addEventListener('change', (e) => { eeroDeviceFilter = e.target.value; renderEeroDevices(); });
+
+document.querySelectorAll('[data-bulk]').forEach(b => {
+  b.addEventListener('click', async () => {
+    const op = b.dataset.bulk;
+    if (op === 'clear') { eeroSelectedDevices.clear(); renderEeroDevices(); return; }
+    const urls = Array.from(eeroSelectedDevices);
+    if (urls.length === 0) return;
+    if (op === 'pause' || op === 'unpause') {
+      await fetch(`${API}/api/eero/devices/bulk-pause`, eeroPost({ deviceUrls: urls, paused: op === 'pause' }));
+    } else if (op === 'block' || op === 'unblock') {
+      await Promise.all(urls.map(u => fetch(`${API}/api/eero/devices/block`, eeroPut({ deviceUrl: u, blocked: op === 'block' }))));
+    }
+    eeroSelectedDevices.clear();
+    eeroSync();
+  });
+});
+
+document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('eeroNewProfileName').value.trim();
+  if (!name) return;
+  await fetch(`${API}/api/eero/profiles`, eeroPost({ name }));
+  document.getElementById('eeroNewProfileName').value = '';
+  eeroSync();
+});
+
+document.getElementById('eeroUsageRange')?.addEventListener('change', renderEeroUsageChart);
+document.getElementById('eeroUsageCadence')?.addEventListener('change', renderEeroUsageChart);
+
+document.getElementById('eeroRunSpeedBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('eeroSpeedStatus');
+  status.textContent = 'Running…';
+  try {
+    await fetch(`${API}/api/eero/speedtest`, eeroPost({}));
+    status.textContent = 'Triggered. The eero will report results when the test finishes.';
+    setTimeout(() => eeroSync(), 30000);
+  } catch (err) { status.textContent = err.message; }
+});
+
+document.getElementById('eeroSaveSamplerBtn')?.addEventListener('click', async () => {
+  const enabled = document.getElementById('eeroSamplerEnabled').checked;
+  const intervalMs = Number(document.getElementById('eeroSamplerInterval').value);
+  const alertOnNewDevice = document.getElementById('eeroAlertNewDevice').checked;
+  await fetch(`${API}/api/eero/config`, eeroPut({ samplerEnabled: enabled, samplerIntervalMs: intervalMs, alertOnNewDevice }));
+  loadEero();
+});
+
+document.getElementById('eeroRebootNetworkBtn')?.addEventListener('click', () => eeroAction('Reboot the entire network?', () =>
+  fetch(`${API}/api/eero/network/reboot`, eeroPost({}))));
+
+document.getElementById('eeroLogoutBtn')?.addEventListener('click', () => eeroAction('Sign out of eero?', () =>
+  fetch(`${API}/api/eero/logout`, eeroPost({}))));
+
+document.getElementById('eeroSaveGuestBtn')?.addEventListener('click', async () => {
+  await fetch(`${API}/api/eero/network/guest`, eeroPut({
+    enabled: document.getElementById('eeroGuestEnabled').checked,
+    name: document.getElementById('eeroGuestName').value.trim() || undefined,
+    password: document.getElementById('eeroGuestPass').value.trim() || undefined,
+  }));
+  eeroSync();
+});
+
+document.getElementById('eeroAddForwardBtn')?.addEventListener('click', async () => {
+  const description = prompt('Description (e.g. "Home server SSH"):'); if (!description) return;
+  const protocol = prompt('Protocol (tcp/udp/both):', 'tcp'); if (!protocol) return;
+  const public_port = Number(prompt('Public port:', '22')); if (!public_port) return;
+  const ip = prompt('Internal IP (e.g. 192.168.4.42):'); if (!ip) return;
+  const private_port = Number(prompt('Internal port:', String(public_port))); if (!private_port) return;
+  await fetch(`${API}/api/eero/forwards`, eeroPost({ body: { description, protocol, public_port, ip, private_port, enabled: true } }));
+  eeroSync();
+});
+
+document.getElementById('eeroAddReservationBtn')?.addEventListener('click', async () => {
+  const mac = prompt('Device MAC address:'); if (!mac) return;
+  const ip = prompt('IP to reserve (e.g. 192.168.4.42):'); if (!ip) return;
+  const description = prompt('Description (optional):', '');
+  await fetch(`${API}/api/eero/reservations`, eeroPost({ body: { mac, ip, description } }));
+  eeroSync();
+});
+
+// Raw API console
+document.getElementById('eeroRawSendBtn')?.addEventListener('click', async () => {
+  const method = document.getElementById('eeroRawMethod').value;
+  let path = document.getElementById('eeroRawPath').value.trim();
+  const bodyText = document.getElementById('eeroRawBody').value.trim();
+  if (!path) return;
+  // $NETWORK is a convenience — substitute the active network URL.
+  const networkUrl = eeroState.snapshot?.networkUrl;
+  if (networkUrl) path = path.replace('$NETWORK', networkUrl);
+  let body;
+  if (bodyText) {
+    try { body = JSON.parse(bodyText); } catch { alert('Body is not valid JSON'); return; }
+  }
+  const out = document.getElementById('eeroRawOutput');
+  out.textContent = '...';
+  try {
+    const r = await fetch(`${API}/api/eero/raw`, eeroPost({ method, path, body }));
+    const data = await r.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (err) { out.textContent = String(err.message); }
+});
+
+document.querySelectorAll('[data-quick]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.getElementById('eeroRawPath').value = b.dataset.quick;
+  });
+});
 
 // ========== INIT ==========
 connectWS();

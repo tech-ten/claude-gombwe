@@ -1572,6 +1572,225 @@ body {
 
 .pantry-item:last-child { border-bottom: none; }
 
+/* ── Eero (Network) ───────────────────────────────────────── */
+
+.eero-page { padding: 24px 32px 80px; }
+.eero-toolbar { display: flex; gap: 8px; align-items: center; }
+.eero-sync-state { font-size: 12px; color: var(--text-3); margin-right: 6px; }
+
+.eero-auth { padding: 24px; max-width: 520px; }
+.eero-auth h3 { margin: 0 0 6px; font-family: var(--serif); font-weight: 500; }
+.eero-auth .muted { color: var(--text-3); font-size: 13px; margin: 0 0 14px; }
+.eero-auth .form-row { display: flex; gap: 8px; }
+.eero-auth input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+
+.eero-subnav {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 18px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.eero-subtab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text-3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.eero-subtab:hover { color: var(--text); }
+.eero-subtab.active { color: var(--text); border-bottom-color: #59a263; }
+
+.eero-pane { display: none; }
+.eero-pane.active { display: block; }
+
+.eero-card { padding: 16px 18px; margin-bottom: 14px; }
+.eero-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-family: var(--serif);
+  font-size: 15px;
+}
+.eero-card-header .muted { font-family: var(--sans); font-size: 12px; color: var(--text-3); font-weight: 400; }
+
+.eero-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.eero-stat {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.eero-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-3); }
+.eero-stat-value { font-family: var(--serif); font-size: 22px; margin: 4px 0 2px; }
+.eero-stat-sub { font-size: 11px; color: var(--text-3); }
+
+.eero-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .eero-two-col { grid-template-columns: 1fr; } }
+
+.eero-chart { width: 100%; min-height: 140px; }
+.eero-svg { width: 100%; height: 200px; }
+.eero-line { stroke-width: 1.6; }
+.eero-line.primary { stroke: #59a263; }
+.eero-line.secondary { stroke: #5e9bdc; stroke-dasharray: 4 3; }
+.eero-line.swatch { stroke: none; }
+.eero-line.swatch.primary { fill: #59a263; }
+.eero-line.swatch.secondary { fill: #5e9bdc; }
+.eero-axis { stroke: var(--border); stroke-width: 1; }
+.eero-axis-label { fill: var(--text-3); font-size: 10px; font-family: var(--sans); }
+
+.eero-consumer, .eero-node, .eero-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border-light); font-size: 13px;
+}
+.eero-consumer:last-child, .eero-node:last-child, .eero-row:last-child { border-bottom: none; }
+
+.eero-event {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12.5px;
+}
+.eero-event:last-child { border-bottom: none; }
+.eero-event-type {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-deep);
+  color: var(--text-2);
+}
+.eero-event-type.new-device { background: #fde7c2; color: #a06b00; }
+.eero-event-type.device-online { background: #d6eedb; color: #2e6b3a; }
+.eero-event-type.device-offline { background: #f1d6d6; color: #8a2e2e; }
+
+.eero-device-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.eero-search {
+  flex: 1; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--sans); font-size: 13px;
+}
+.eero-device-toolbar select {
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--sans); font-size: 13px;
+}
+.eero-bulk-bar {
+  display: flex; gap: 8px; align-items: center;
+  padding: 8px 12px; margin-bottom: 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.eero-device-list { padding: 0; }
+.eero-device {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+}
+.eero-device:last-child { border-bottom: none; }
+.eero-device.offline { opacity: 0.6; }
+.eero-device-status {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-4);
+}
+.eero-device-status.online { background: #59a263; }
+.eero-device-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.eero-device-name [contenteditable] { outline: none; padding: 1px 4px; border-radius: 3px; }
+.eero-device-name [contenteditable]:hover, .eero-device-name [contenteditable]:focus { background: var(--bg-deep); }
+.eero-device-meta { margin-top: 2px; word-break: break-all; }
+.eero-device-actions { display: flex; gap: 6px; align-items: center; }
+.eero-device-actions select, .eero-device-actions button {
+  padding: 4px 8px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 3px; background: var(--surface);
+  cursor: pointer; font-family: var(--sans);
+}
+.eero-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.eero-tag.paused { background: #fde7c2; color: #a06b00; }
+.eero-tag.blocked { background: #f1d6d6; color: #8a2e2e; }
+.eero-tag.profile { background: var(--bg-deep); color: var(--text-2); }
+.eero-tag.guest { background: #e9e3d5; color: #6b5a2e; }
+
+.eero-section-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.eero-form-block { display: flex; flex-direction: column; gap: 8px; }
+.eero-form-block label { font-size: 12.5px; display: flex; gap: 6px; align-items: center; }
+.eero-form-block input[type="text"], .eero-form-block textarea {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--sans); font-size: 13px; width: 100%;
+}
+.eero-form-block textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.eero-form-block .form-row { display: flex; gap: 8px; }
+
+.eero-toggle { position: relative; display: inline-block; width: 38px; height: 20px; }
+.eero-toggle input { opacity: 0; width: 0; height: 0; }
+.eero-toggle span {
+  position: absolute; cursor: pointer; inset: 0;
+  background: var(--text-4); border-radius: 20px; transition: 0.2s;
+}
+.eero-toggle span:before {
+  position: absolute; content: ""; height: 14px; width: 14px;
+  left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;
+}
+.eero-toggle input:checked + span { background: #59a263; }
+.eero-toggle input:checked + span:before { transform: translateX(18px); }
+
+.eero-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.eero-table th, .eero-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-light); text-align: left; }
+.eero-table th { font-weight: 500; color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.eero-speed-table { padding: 0; max-height: 360px; overflow-y: auto; }
+
+.eero-quick-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
+.eero-raw-output {
+  background: var(--bg-deep); border: 1px solid var(--border-light);
+  border-radius: var(--radius); padding: 12px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px; max-height: 360px; overflow: auto; white-space: pre-wrap;
+}
+
+.eero-toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--text); color: var(--surface);
+  padding: 10px 14px; border-radius: var(--radius);
+  font-size: 13px; max-width: 320px;
+  opacity: 0; transform: translateY(8px); transition: 0.2s;
+  z-index: 9999;
+}
+.eero-toast.show { opacity: 1; transform: translateY(0); }
+
+.eero-profile {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+}
+.eero-profile:last-child { border-bottom: none; }
+.eero-profile-name { font-size: 14px; }
+.eero-profile-actions { display: flex; gap: 6px; }
+
+.muted { color: var(--text-3); }
+.small { font-size: 12px; }
+.hidden { display: none !important; }
+
 /* ── Responsive ───────────────────────────────────────────── */
 
 @media (max-width: 900px) {
