@@ -1822,6 +1822,53 @@ body {
 .nav-badge.warning { background: #d49b3b; }
 .nav-badge.error { background: #c45a5a; }
 
+/* Kids pane */
+.kids-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.kids-title { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 22px; }
+.kids-status { margin-top: 4px; }
+.kids-presets { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.btn-success { background: #59a263; color: white; border: 1px solid #4a8a52; }
+.btn-success:hover { background: #6db378; }
+
+.kids-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.kids-device-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 14px;
+  transition: all var(--transition);
+}
+.kids-device-card.online { border-left: 3px solid #59a263; }
+.kids-device-card.offline { border-left: 3px solid var(--text-4); opacity: 0.7; }
+.kids-device-card.paused { background: #fdf6e8; }
+.kids-device-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.kids-device-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-4); }
+.kids-device-dot.online { background: #59a263; }
+.kids-device-name { font-weight: 500; font-size: 14px; flex: 1; }
+.kids-device-stat { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.kids-stat-num { font-family: var(--serif); font-size: 20px; font-weight: 500; }
+.kids-device-meta { margin: 6px 0 10px; }
+.kids-device-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.kids-device-actions .btn-sm { font-size: 11px; padding: 3px 8px; }
+
+.kids-timeline { width: 100%; height: auto; min-height: 120px; }
+.kids-timeline-name { font-size: 11px; fill: var(--text-2); font-family: var(--sans); font-weight: 500; }
+
+.kids-sched {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+}
+.kids-sched:last-child { border-bottom: none; }
+
 /* Schedule pane */
 .eero-sched-target {
   margin-bottom: 18px; padding-bottom: 14px;
