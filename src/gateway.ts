@@ -1237,7 +1237,24 @@ The ingredients should be grocery item names with quantities scaled for ${family
         snapshot: this.eeroStore.loadSnapshot(),
         config: this.eeroStore.loadConfig(),
         actions: this.eeroStore.readActions(50),
+        alerts: this.eeroStore.loadAlerts(),
       });
+    });
+
+    this.app.get('/api/eero/alerts', (_req: Request, res: Response) => {
+      res.json(this.eeroStore.loadAlerts());
+    });
+
+    this.app.post('/api/eero/alerts/:id/dismiss', (req: Request, res: Response) => {
+      const id = req.params.id as string;
+      const dismissed = req.body?.dismissed !== false;
+      const alerts = this.eeroStore.dismissAlert(id, dismissed);
+      audit('alert.dismiss', { id, dismissed });
+      res.json(alerts);
+    });
+
+    this.app.post('/api/eero/alerts/recompute', (_req: Request, res: Response) => {
+      res.json(this.eeroStore.computeAlerts());
     });
 
     this.app.post('/api/eero/sync', async (req: Request, res: Response) => {
