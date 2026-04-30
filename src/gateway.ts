@@ -1483,6 +1483,26 @@ The ingredients should be grocery item names with quantities scaled for ${family
       try { res.json(await this.nextdns.logs()); } catch (err: any) { nextdnsErr(res, err); }
     });
 
+    // Server-side proxy to test.nextdns.io. The plain test.nextdns.io is a
+    // JS-redirect page; the JSON endpoint lives at <random>.test.nextdns.io,
+    // resolved fresh each call so NextDNS can identify the source. This
+    // reports whether the gombwe HOST is using NextDNS, not the browser.
+    this.app.get('/api/nextdns/test', async (_req: Request, res: Response) => {
+      try {
+        const token = Array.from({ length: 20 }, () =>
+          'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
+        ).join('');
+        const r = await fetch(`https://${token}.test.nextdns.io/`, {
+          headers: { Accept: 'application/json' },
+        });
+        const text = await r.text();
+        try { res.json(JSON.parse(text)); }
+        catch { res.json({ status: 'parse-error', raw: text.slice(0, 500) }); }
+      } catch (err: any) {
+        res.status(502).json({ status: 'unreachable', error: err.message });
+      }
+    });
+
     this.app.get('/api/nextdns/analytics', async (_req: Request, res: Response) => {
       try {
         const [status, domains] = await Promise.all([
