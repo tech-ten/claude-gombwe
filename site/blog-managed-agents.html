@@ -3,14 +3,30 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Who Owns AI-Commerce? — Agents Formation</title>
-  <meta name="description" content="AI agents are becoming the primary interface between businesses and customers. Who builds the tools, the channels, and the commercial layer? An argument for local developers and digital sovereignty.">
-  <meta property="og:title" content="Who Owns AI-Commerce?">
-  <meta property="og:description" content="AI agents are becoming the primary interface between businesses and customers. An argument for local developers, model portability, and digital sovereignty.">
+  <title>Who Builds the Tools Between AI Agents and Businesses? — Agents Formation</title>
+  <meta name="description" content="AI agents are replacing websites as the way customers interact with businesses. Who builds the shopping tools, price comparison, and grocery ordering that agents need? An analysis of Anthropic managed agents, MCP servers, and the layers still missing.">
+  <link rel="canonical" href="https://agentsform.ai/blog-managed-agents.html">
+  <meta property="og:title" content="Who Builds the Tools Between AI Agents and Businesses?">
+  <meta property="og:description" content="AI agents are replacing websites as the way customers shop. Who builds the price comparison, grocery ordering, and cross-retailer tools that agents need?">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://agentsform.ai/blog-managed-agents">
+  <meta property="og:url" content="https://agentsform.ai/blog-managed-agents.html">
   <meta property="article:author" content="Tendai Mudavanhu">
   <meta property="article:published_time" content="2026-04-10">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Who Builds the Tools Between AI Agents and Businesses?">
+  <meta name="twitter:description" content="AI agents are replacing websites as the way customers shop. An analysis of managed agents, MCP servers, and the missing layers.">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "Who Builds the Tools Between AI Agents and Businesses?",
+    "author": {"@type": "Person", "name": "Tendai Mudavanhu"},
+    "datePublished": "2026-04-10",
+    "publisher": {"@type": "Organization", "name": "Agents Formation", "url": "https://agentsform.ai"},
+    "description": "AI agents are replacing websites as the way customers interact with businesses. An analysis of Anthropic managed agents, MCP servers, and the layers still missing.",
+    "mainEntityOfPage": "https://agentsform.ai/blog-managed-agents.html"
+  }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,300;1,14..32,400&display=swap" rel="stylesheet">
@@ -251,25 +267,25 @@
           <td>Channels</td>
           <td>Where users interact</td>
           <td>Enterprise owns (their app, portal, API)</td>
-          <td>Local developers (WhatsApp, Discord, dashboard)</td>
+          <td>The user chooses: Claude, ChatGPT, Copilot, company chatbots, WhatsApp, Discord</td>
         </tr>
         <tr>
           <td>Orchestrator</td>
-          <td>Session management, routing, user data</td>
-          <td>Managed agents &mdash; excellent fit</td>
-          <td>Local developers &mdash; needs persistent infra the sandbox doesn't provide</td>
+          <td>Session continuity across channels, routing, user data</td>
+          <td>Managed agents, excellent fit (single-channel)</td>
+          <td>Nobody yet. User switches between Claude, ChatGPT, Discord and loses context each time</td>
         </tr>
         <tr>
           <td>Model</td>
           <td>Reasoning, planning, tool selection</td>
           <td>Claude (lock-in acceptable at enterprise scale)</td>
-          <td>Interchangeable &mdash; lock-in is a liability at consumer margins</td>
+          <td>Interchangeable. Lock-in is a liability at consumer margins</td>
         </tr>
         <tr>
           <td>Tools</td>
           <td>Domain functions: search, compare, order</td>
           <td>Enterprise owns (internal MCP servers)</td>
-          <td>Independent developers &mdash; the unbuilt layer</td>
+          <td>Independent developers. The unbuilt layer</td>
         </tr>
         <tr>
           <td>Retailer integration</td>
@@ -285,7 +301,7 @@
     </p>
 
     <p>
-      For consumer products, the picture is different. The orchestrator needs persistent infrastructure: user accounts, order history, payment methods, family profiles. Managed agents' sandbox is ephemeral &mdash; it spins up for a session and is torn down after. A consumer product still needs its own servers, its own database, its own authentication. The model should be interchangeable because consumer margins cannot absorb vendor lock-in. And the tools layer &mdash; the cross-retailer comparison, the independent recommendations &mdash; does not exist yet. Nobody is building it.
+      For consumer products, the picture is different. The orchestrator needs persistent infrastructure: user accounts, order history, payment methods, family profiles. The managed agents sandbox is ephemeral, spins up for a session and is torn down after. A consumer product still needs its own servers, its own database, its own authentication. The model should be interchangeable because consumer margins cannot absorb vendor lock-in. And the tools layer, the cross-retailer comparison, the independent recommendations, does not exist yet. Nobody is building it. Retailers will not build it either. An open marketplace where an agent finds the cheapest provider for every item is a race to the bottom that no retailer would voluntarily enable.
     </p>
 
     <h2>What I built</h2>
@@ -295,11 +311,11 @@
     </p>
 
     <p>
-      Building Gombwe taught me what the layers actually are. The model is one component. The tools &mdash; grocery search, price comparison, cart management &mdash; are another. The channels (Discord, Telegram) are another. The user data (meal plans, dietary preferences, purchase history) is another. And the deterministic work &mdash; searching a website, comparing prices, adding to cart &mdash; does not need a model at all. Scripts handle it in milliseconds for free. The model is called only when reasoning is needed.
+      Gombwe makes the layers visible. The model is one component. The tools (grocery search, price comparison, cart management) are another. The channels (Discord, Telegram) are another. The user data (meal plans, dietary preferences, purchase history) is another. And the deterministic work, searching a website, comparing prices, adding to cart, does not need a model at all. Scripts handle it in milliseconds for free. The model is called only when reasoning is needed.
     </p>
 
     <p>
-      Gombwe is small. One household. But it demonstrated something important to me: the value is not in the model or the orchestrator. The value is in the layers around them. The tools that know Australian grocery. The channels that reach people where they are. The data that belongs to the user. Those are the layers that make AI-commerce useful, and they are the layers that do not exist yet for most markets and most domains.
+      Even at one-household scale, the architecture reveals where the value sits. Not in the model or the orchestrator, but in the layers around them. The tools that know Australian grocery. The channels that reach people where they are. The data that belongs to the user. Those are the layers that make AI-commerce useful, and they are the layers that do not exist yet for most markets and most domains.
     </p>
 
     <h2>The layers nobody is building</h2>
@@ -309,7 +325,7 @@
     </p>
 
     <p>
-      <strong>The proprietary functions layer.</strong> Could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that tells the customer "Coles has chicken cheaper this week." No retailer will build the functions that work in the customer's interest: the cross-retailer search, the price comparison, the independent recommendations. No model provider will build it either &mdash; they build infrastructure, not Australian grocery tools. Independent developers must build this. It works inside managed agents, inside ChatGPT, inside any MCP-compatible client. The point is not where it runs. The point is that it must be independent of both the model provider and the retailers.
+      <strong>The proprietary functions layer.</strong> Could Woolworths build an MCP server and list it in Claude's directory? Yes. Would customers then be able to say "order my groceries" inside Claude? Yes. But Woolworths will never build a tool that tells the customer "Coles has chicken cheaper this week." No retailer will build the functions that work in the customer's interest: the cross-retailer search, the price comparison, the independent recommendations. No model provider will build it either. They build infrastructure, not Australian grocery tools. Independent developers must build this. It works inside managed agents, inside ChatGPT, inside any MCP-compatible client. The point is not where it runs. The point is that it must be independent of both the model provider and the retailers.
     </p>
 
     <p>
@@ -317,7 +333,7 @@
     </p>
 
     <p>
-      <strong>The persistent user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. For a consumer product, this data must live in infrastructure the developer owns, not in an ephemeral sandbox session. When the user switches models &mdash; from Claude to GPT, or to an open-source alternative &mdash; their history and preferences should come with them. The user relationship belongs to the product, not to the model.
+      <strong>The persistent user relationship.</strong> Order history, dietary preferences, budgets, family profiles, spending dashboards. For a consumer product, this data must live in infrastructure the developer owns, not in an ephemeral sandbox session. When the user switches models, from Claude to GPT or to an open-source alternative, their history and preferences should come with them. The user relationship belongs to the product, not to the model.
     </p>
 
     <p>
@@ -362,7 +378,7 @@
     <h2>A call to action</h2>
 
     <p>
-      <strong>To Australian developers:</strong> the tools layer for AI-commerce in this country is unbuilt. Every domain &mdash; grocery, energy, insurance, travel &mdash; needs independent, cross-provider comparison tools that work in the customer's interest. Build them as MCP servers. Make them model-agnostic. They work inside managed agents, inside ChatGPT, inside any MCP-compatible client. Own the layer that the model providers will never build and the incumbents have no incentive to build fairly.
+      <strong>To Australian developers:</strong> the tools layer for AI-commerce in this country is unbuilt. Every domain (grocery, energy, insurance, travel) needs independent, cross-provider comparison tools that work in the customer's interest. Build them as MCP servers. Make them model-agnostic. They work inside managed agents, inside ChatGPT, inside any MCP-compatible client. Own the layer that the model providers will never build and the incumbents have no incentive to build fairly.
     </p>
 
     <p>
@@ -370,7 +386,7 @@
     </p>
 
     <p>
-      <strong>To policymakers:</strong> AI-commerce will determine who captures the economic value of consumer transactions in the next decade. The model providers are building excellent infrastructure, but the layers around the model &mdash; the tools, the channels, the user data, the commercial logic &mdash; are the layers where value accrues. Policy should encourage local AI-commerce infrastructure: local tool development, local data governance, model portability, and competition in the orchestration layer so that no single foreign provider becomes a gatekeeper to Australian commerce.
+      <strong>To policymakers:</strong> AI-commerce will determine who captures the economic value of consumer transactions in the next decade. The model providers are building excellent infrastructure, but the layers around the model (tools, channels, user data, commercial logic) are the layers where value accrues. Policy should encourage local AI-commerce infrastructure: local tool development, local data governance, model portability, and competition in the orchestration layer so that no single foreign provider becomes a gatekeeper to Australian commerce.
     </p>
 
     <p>
