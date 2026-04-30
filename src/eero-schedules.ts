@@ -14,6 +14,7 @@ import type { EeroClient } from './eero.js';
 import type { EeroStore } from './eero-store.js';
 
 const SCHEDULES_FILE = 'eero-schedules.json';
+const STATE_FILE = 'eero-scheduler-state.json';
 
 export interface ScheduleRule {
   days: number[];          // 0 = Sun, 6 = Sat
@@ -47,6 +48,22 @@ export class EeroScheduler {
     this.dataDir = dataDir;
     this.client = client;
     this.store = store;
+    this.loadState();
+  }
+
+  private loadState(): void {
+    const f = join(this.dataDir, STATE_FILE);
+    if (!existsSync(f)) return;
+    try {
+      const obj = JSON.parse(readFileSync(f, 'utf-8'));
+      for (const [k, v] of Object.entries(obj)) this.lastApplied.set(k, !!v);
+    } catch { /* ignore */ }
+  }
+
+  private saveState(): void {
+    const obj: Record<string, boolean> = {};
+    for (const [k, v] of this.lastApplied) obj[k] = v;
+    writeFileSync(join(this.dataDir, STATE_FILE), JSON.stringify(obj, null, 2));
   }
 
   // ── persistence ─────────────────────────────────────────────────────
@@ -149,7 +166,16 @@ export class EeroScheduler {
     if (dirty) this.save(surviving);
 
     // Group by target — a target is blocked if ANY enabled schedule says so.
+    // We also include every target we've previously managed, defaulting to
+    // false, so deleting a schedule (or disabling it) unpauses the device on
+    // the next tick instead of leaving it stuck paused.
     const desired = new Map<string, { type: 'device' | 'profile'; url: string; blocked: boolean }>();
+    for (const url of this.lastApplied.keys()) {
+      // Type isn't stored in lastApplied; infer from URL convention. Eero
+      // device URLs contain "/devices/" and profile URLs contain "/profiles/".
+      const type: 'device' | 'profile' = url.includes('/profiles/') ? 'profile' : 'device';
+      desired.set(`${type}:${url}`, { type, url, blocked: false });
+    }
     for (const s of surviving) {
       const key = `${s.target.type}:${s.target.url}`;
       const cur = desired.get(key);
@@ -183,6 +209,7 @@ export class EeroScheduler {
           await this.client.setProfilePaused(url, blocked);
         }
         this.lastApplied.set(url, blocked);
+        this.saveState();
         this.store.logAction(`schedule.apply`, { type, url, paused: blocked });
       } catch (err: any) {
         this.store.logAction(`schedule.error`, { type, url, paused: blocked, error: err.message });
