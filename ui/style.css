@@ -1869,6 +1869,42 @@ body {
 }
 .kids-sched:last-child { border-bottom: none; }
 
+.kids-filter-section { margin: 12px 0; }
+.kids-filter-section:first-child { margin-top: 4px; }
+.kids-filter-label { font-size: 12.5px; font-weight: 500; margin-bottom: 8px; color: var(--text-2); }
+.kids-filter-services, .kids-filter-categories {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.kids-filter-pill {
+  padding: 5px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.kids-filter-pill:hover { border-color: var(--text-3); }
+.kids-filter-pill.on {
+  background: #c45a5a;
+  color: white;
+  border-color: #c45a5a;
+}
+.kids-filter-pill.on:hover { background: #b04848; }
+
+.kids-filter-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0;
+  font-size: 12.5px;
+}
+.kids-filter-row code {
+  background: var(--bg-deep);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
 /* Schedule pane */
 .eero-sched-target {
   margin-bottom: 18px; padding-bottom: 14px;

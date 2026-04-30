@@ -498,6 +498,57 @@ document.querySelectorAll('[data-kids-preset]').forEach(b => {
   b.addEventListener('click', () => applyKidsPreset(b.dataset.kidsPreset));
 });
 
+document.getElementById('dnsPointBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('dnsPointBtn');
+  btn.disabled = true; btn.textContent = 'Pointing…';
+  try {
+    const r = await fetch(`${API}/api/eero/dns/point-at-nextdns`, eeroPost({}));
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || 'Failed to set eero DNS');
+    } else {
+      showEeroToast('eero now resolving via NextDNS');
+      await eeroSync();
+      await loadNextDNS();
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Point eero at NextDNS';
+  }
+});
+
+document.getElementById('dnsResetBtn')?.addEventListener('click', async () => {
+  if (!confirm('Reset eero DNS to automatic (Cloudflare via your ISP)?')) return;
+  await fetch(`${API}/api/eero/dns/reset`, eeroPost({}));
+  await eeroSync();
+  await loadNextDNS();
+});
+
+document.getElementById('kidsDenylistForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('kidsDenylistInput');
+  const domain = input.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  if (!domain) return;
+  const r = await fetch(`${API}/api/nextdns/denylist`, eeroPost({ domain }));
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || 'Failed to block');
+    return;
+  }
+  input.value = '';
+  showEeroToast(`Blocked ${domain}`);
+  loadNextDNS();
+});
+
+document.getElementById('kidsAllowlistForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('kidsAllowlistInput');
+  const domain = input.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  if (!domain) return;
+  await fetch(`${API}/api/nextdns/allowlist`, eeroPost({ domain }));
+  input.value = '';
+  loadNextDNS();
+});
+
 // ========== HELPERS ==========
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 function timeAgo(iso) {
@@ -2102,6 +2153,155 @@ function renderEeroAudit() {
       `).join('') + '</tbody></table>';
 }
 
+// ── NextDNS (website filtering) ────────────────────────────────────────
+// Curated quick-toggle services that map directly to NextDNS service IDs.
+// The full NextDNS catalog is hundreds of items; these are the ones a
+// parent typically reaches for first.
+const NEXTDNS_QUICK_SERVICES = [
+  { id: 'tiktok', label: 'TikTok' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'snapchat', label: 'Snapchat' },
+  { id: 'youtube', label: 'YouTube' },
+  { id: 'discord', label: 'Discord' },
+  { id: 'roblox', label: 'Roblox' },
+  { id: 'fortnite', label: 'Fortnite' },
+  { id: 'twitch', label: 'Twitch' },
+  { id: 'reddit', label: 'Reddit' },
+  { id: 'twitter', label: 'X / Twitter' },
+  { id: 'facebook', label: 'Facebook' },
+  { id: 'whatsapp', label: 'WhatsApp' },
+  { id: 'minecraft', label: 'Minecraft' },
+  { id: 'steam', label: 'Steam' },
+  { id: 'omegle', label: 'Omegle' },
+  { id: '4chan', label: '4chan' },
+];
+
+const NEXTDNS_QUICK_CATEGORIES = [
+  { id: 'porn', label: 'Adult / Porn' },
+  { id: 'gambling', label: 'Gambling' },
+  { id: 'piracy', label: 'Piracy' },
+  { id: 'dating', label: 'Dating' },
+  { id: 'social-networks', label: 'All social networks' },
+  { id: 'video-streaming', label: 'Video streaming' },
+  { id: 'gaming', label: 'Gaming' },
+];
+
+let nextdnsState = { config: null, services: [], categories: [], denylist: [], allowlist: [] };
+
+async function loadNextDNS() {
+  try {
+    const cfg = await (await fetch(`${API}/api/nextdns/config`)).json();
+    nextdnsState.config = cfg;
+    if (!cfg.configured) { renderNextDNS(); return; }
+
+    const [services, categories, deny, allow] = await Promise.all([
+      fetch(`${API}/api/nextdns/services`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${API}/api/nextdns/categories`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${API}/api/nextdns/denylist`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${API}/api/nextdns/allowlist`).then(r => r.json()).catch(() => ({ data: [] })),
+    ]);
+    nextdnsState.services = services.data || [];
+    nextdnsState.categories = categories.data || [];
+    nextdnsState.denylist = deny.data || [];
+    nextdnsState.allowlist = allow.data || [];
+  } catch (err) { console.error('nextdns load failed:', err); }
+  renderNextDNS();
+}
+
+function renderNextDNS() {
+  const statusEl = document.getElementById('dnsStatus');
+  const pointStatusEl = document.getElementById('dnsPointStatus');
+  if (!statusEl) return;
+  const cfg = nextdnsState.config || {};
+  if (!cfg.configured) {
+    statusEl.textContent = 'not configured — paste your API key in Advanced';
+    pointStatusEl.textContent = '';
+    return;
+  }
+  statusEl.innerHTML = `config <code>${esc(cfg.configId)}</code> · ${esc(cfg.profileName || '')}`;
+
+  // Whether the eero is currently using NextDNS resolvers
+  const eeroDns = eeroState.snapshot?.network?.dns || {};
+  const customIps = eeroDns.custom?.ips || [];
+  const ndIps = cfg.resolverIPs || [];
+  const isPointed = ndIps.every(ip => customIps.includes(ip));
+  pointStatusEl.innerHTML = isPointed
+    ? `<span style="color:#2e6b3a">✓ eero is pointed at NextDNS (every device on the network filters through it)</span>`
+    : `<span style="color:#8a2e2e">eero is using ${eeroDns.mode || 'automatic'} DNS — click below to switch.</span>`;
+
+  // Quick services as toggle pills
+  const activeServices = new Set(nextdnsState.services.map(s => s.id));
+  const servicesEl = document.getElementById('kidsFilterServices');
+  servicesEl.innerHTML = NEXTDNS_QUICK_SERVICES.map(s => `
+    <button class="kids-filter-pill ${activeServices.has(s.id) ? 'on' : ''}" data-act="ndns-svc-toggle" data-id="${esc(s.id)}" data-on="${activeServices.has(s.id) ? '1' : '0'}">${esc(s.label)}</button>
+  `).join('');
+  servicesEl.querySelectorAll('[data-act="ndns-svc-toggle"]').forEach(b => {
+    b.onclick = async () => {
+      const id = b.dataset.id, on = b.dataset.on === '1';
+      b.disabled = true;
+      try {
+        if (on) await fetch(`${API}/api/nextdns/services?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        else await fetch(`${API}/api/nextdns/services`, eeroPost({ id }));
+        await loadNextDNS();
+        showEeroToast(`${on ? 'Unblocked' : 'Blocked'} ${id}`);
+      } catch (err) { alert(err.message); }
+      finally { b.disabled = false; }
+    };
+  });
+
+  const activeCats = new Set(nextdnsState.categories.map(c => c.id));
+  const catsEl = document.getElementById('kidsFilterCategories');
+  catsEl.innerHTML = NEXTDNS_QUICK_CATEGORIES.map(c => `
+    <button class="kids-filter-pill ${activeCats.has(c.id) ? 'on' : ''}" data-act="ndns-cat-toggle" data-id="${esc(c.id)}" data-on="${activeCats.has(c.id) ? '1' : '0'}">${esc(c.label)}</button>
+  `).join('');
+  catsEl.querySelectorAll('[data-act="ndns-cat-toggle"]').forEach(b => {
+    b.onclick = async () => {
+      const id = b.dataset.id, on = b.dataset.on === '1';
+      b.disabled = true;
+      try {
+        if (on) await fetch(`${API}/api/nextdns/categories?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        else await fetch(`${API}/api/nextdns/categories`, eeroPost({ id }));
+        await loadNextDNS();
+        showEeroToast(`${on ? 'Unblocked' : 'Blocked'} category: ${id}`);
+      } catch (err) { alert(err.message); }
+      finally { b.disabled = false; }
+    };
+  });
+
+  // Custom denylist
+  const denyEl = document.getElementById('kidsDenylist');
+  denyEl.innerHTML = nextdnsState.denylist.length === 0
+    ? '<div class="muted small">No custom domains blocked.</div>'
+    : nextdnsState.denylist.map(d => `
+      <div class="kids-filter-row">
+        <code>${esc(d.id)}</code>
+        <button class="btn-sm btn-danger" data-act="ndns-deny-del" data-id="${esc(d.id)}">Remove</button>
+      </div>
+    `).join('');
+  denyEl.querySelectorAll('[data-act="ndns-deny-del"]').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/nextdns/denylist?domain=${encodeURIComponent(b.dataset.id)}`, { method: 'DELETE' });
+      loadNextDNS();
+    };
+  });
+
+  const allowEl = document.getElementById('kidsAllowlist');
+  allowEl.innerHTML = nextdnsState.allowlist.length === 0
+    ? '<div class="muted small">No allow-list overrides.</div>'
+    : nextdnsState.allowlist.map(d => `
+      <div class="kids-filter-row">
+        <code>${esc(d.id)}</code>
+        <button class="btn-sm" data-act="ndns-allow-del" data-id="${esc(d.id)}">Remove</button>
+      </div>
+    `).join('');
+  allowEl.querySelectorAll('[data-act="ndns-allow-del"]').forEach(b => {
+    b.onclick = async () => {
+      await fetch(`${API}/api/nextdns/allowlist?domain=${encodeURIComponent(b.dataset.id)}`, { method: 'DELETE' });
+      loadNextDNS();
+    };
+  });
+}
+
 // ── kids control ───────────────────────────────────────────────────────
 function getKidsProfile() {
   const profiles = eeroState.snapshot?.profiles || [];
@@ -2906,7 +3106,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
-    if (eeroActiveSubtab === 'kids') renderEeroKids();
+    if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); }
   });
 });
 

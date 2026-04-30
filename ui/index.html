@@ -320,6 +320,51 @@
               <div id="kidsActivity"></div>
             </div>
 
+            <!-- DNS-based filtering (NextDNS) -->
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Website filtering (NextDNS)</span>
+                <span class="muted small" id="dnsStatus">…</span>
+              </div>
+
+              <div class="eero-form-block" id="dnsActivate">
+                <div id="dnsPointStatus" class="muted small"></div>
+                <div class="form-row">
+                  <button class="btn-primary btn-sm" id="dnsPointBtn">Point eero at NextDNS</button>
+                  <button class="btn-sm" id="dnsResetBtn">Reset to automatic</button>
+                  <a href="https://test.nextdns.io" target="_blank" rel="noopener" class="btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;padding:4px 8px">Verify (test.nextdns.io ↗)</a>
+                </div>
+              </div>
+
+              <div class="kids-filter-section">
+                <div class="kids-filter-label">Block these apps & sites <span class="muted small">(applies to whole network)</span></div>
+                <div class="kids-filter-services" id="kidsFilterServices"></div>
+              </div>
+
+              <div class="kids-filter-section">
+                <div class="kids-filter-label">Block by category</div>
+                <div class="kids-filter-categories" id="kidsFilterCategories"></div>
+              </div>
+
+              <div class="kids-filter-section">
+                <div class="kids-filter-label">Custom block list</div>
+                <form class="form-row" id="kidsDenylistForm">
+                  <input type="text" id="kidsDenylistInput" placeholder="e.g. example.com" style="flex:1">
+                  <button class="btn-primary btn-sm" type="submit">Block</button>
+                </form>
+                <div id="kidsDenylist"></div>
+              </div>
+
+              <div class="kids-filter-section">
+                <div class="kids-filter-label">Allow list (overrides blocks)</div>
+                <form class="form-row" id="kidsAllowlistForm">
+                  <input type="text" id="kidsAllowlistInput" placeholder="e.g. school-portal.edu.au" style="flex:1">
+                  <button class="btn-sm" type="submit">Allow</button>
+                </form>
+                <div id="kidsAllowlist"></div>
+              </div>
+            </div>
+
             <div class="eero-two-col">
               <div class="card eero-card">
                 <div class="eero-card-header"><span>Active schedules</span></div>
