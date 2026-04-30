@@ -251,6 +251,7 @@
             <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
+            <button class="eero-subtab" data-eero-tab="schedule">Schedule</button>
             <button class="eero-subtab" data-eero-tab="usage">Usage</button>
             <button class="eero-subtab" data-eero-tab="speed">Speed</button>
             <button class="eero-subtab" data-eero-tab="advanced">Advanced</button>
@@ -329,6 +330,73 @@
               </form>
             </div>
             <div class="card eero-card" id="eeroProfileList"></div>
+          </div>
+
+          <!-- Schedule -->
+          <div class="eero-pane" data-eero-pane="schedule">
+            <div class="eero-section-bar">
+              <button class="btn-primary btn-sm" id="eeroNewScheduleBtn">+ New schedule</button>
+              <button class="btn-sm" id="eeroBedtimePresetBtn">Bedtime preset (9pm – 7am)</button>
+              <span class="muted small" id="eeroSchedSummary"></span>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Weekly view</span>
+                <span class="muted small">Filled bars = paused. Hover for details.</span>
+              </div>
+              <div id="eeroScheduleGrid"></div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header"><span>Active schedules</span></div>
+              <div id="eeroScheduleList"></div>
+            </div>
+
+            <!-- Create / edit modal -->
+            <div class="eero-modal hidden" id="eeroSchedModal">
+              <div class="eero-modal-card">
+                <h3 id="eeroSchedModalTitle">New schedule</h3>
+                <div class="eero-form-block">
+                  <label>Name<input type="text" id="eeroSchedName" placeholder="Kids bedtime"></label>
+                  <label>Target
+                    <select id="eeroSchedTarget"></select>
+                  </label>
+                  <label>Type
+                    <select id="eeroSchedType">
+                      <option value="recurring">Recurring (weekly)</option>
+                      <option value="one-off">Pause until (one-off)</option>
+                    </select>
+                  </label>
+
+                  <div id="eeroSchedRecurringFields">
+                    <div class="eero-day-toggles" id="eeroSchedDays">
+                      <label><input type="checkbox" value="0"> Sun</label>
+                      <label><input type="checkbox" value="1" checked> Mon</label>
+                      <label><input type="checkbox" value="2" checked> Tue</label>
+                      <label><input type="checkbox" value="3" checked> Wed</label>
+                      <label><input type="checkbox" value="4" checked> Thu</label>
+                      <label><input type="checkbox" value="5" checked> Fri</label>
+                      <label><input type="checkbox" value="6"> Sat</label>
+                    </div>
+                    <div class="form-row">
+                      <label>From <input type="time" id="eeroSchedStart" value="21:00"></label>
+                      <label>To <input type="time" id="eeroSchedEnd" value="07:00"></label>
+                    </div>
+                  </div>
+
+                  <div id="eeroSchedOneOffFields" class="hidden">
+                    <label>Pause until <input type="datetime-local" id="eeroSchedUntil"></label>
+                  </div>
+
+                  <div class="form-row">
+                    <button class="btn-primary btn-sm" id="eeroSchedSaveBtn">Save</button>
+                    <button class="btn-ghost btn-sm" id="eeroSchedCancelBtn">Cancel</button>
+                    <button class="btn-sm btn-danger hidden" id="eeroSchedDeleteBtn">Delete</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Usage -->

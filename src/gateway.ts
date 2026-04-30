@@ -18,6 +18,7 @@ import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
 import { EeroClient } from './eero.js';
 import { EeroStore } from './eero-store.js';
+import { EeroScheduler } from './eero-schedules.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -46,6 +47,7 @@ export class Gateway {
   private workflows: WorkflowEngine;
   private eero: EeroClient;
   private eeroStore: EeroStore;
+  private eeroScheduler: EeroScheduler;
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -112,6 +114,7 @@ export class Gateway {
     this.eeroStore = new EeroStore(config.dataDir, this.eero, (event) => {
       this.broadcast({ type: `eero:${event.type}` as any, data: event.data, timestamp: event.time });
     });
+    this.eeroScheduler = new EeroScheduler(config.dataDir, this.eero, this.eeroStore);
 
     this.setupAgentEvents();
     this.setupWebSocket();
@@ -1271,6 +1274,50 @@ The ingredients should be grocery item names with quantities scaled for ${family
       res.json(this.eeroStore.computeAlerts());
     });
 
+    // ── Block schedules ────────────────────────────────────────────────
+    this.app.get('/api/eero/schedules', (_req: Request, res: Response) => {
+      res.json(this.eeroScheduler.list());
+    });
+
+    this.app.post('/api/eero/schedules', (req: Request, res: Response) => {
+      const { name, target, rules, pauseUntil, enabled = true } = req.body || {};
+      if (!name || !target || !target.type || !target.url) {
+        res.status(400).json({ error: 'name and target {type, url} are required' });
+        return;
+      }
+      const item = this.eeroScheduler.create({ name, target, rules, pauseUntil, enabled });
+      audit('schedule.create', item);
+      res.status(201).json(item);
+    });
+
+    this.app.put('/api/eero/schedules/:id', (req: Request, res: Response) => {
+      const id = req.params.id as string;
+      const item = this.eeroScheduler.update(id, req.body || {});
+      if (!item) { res.status(404).json({ error: 'Not found' }); return; }
+      audit('schedule.update', { id, patch: req.body });
+      res.json(item);
+    });
+
+    this.app.delete('/api/eero/schedules/:id', (req: Request, res: Response) => {
+      const id = req.params.id as string;
+      const ok = this.eeroScheduler.delete(id);
+      if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
+      audit('schedule.delete', { id });
+      res.json({ ok: true });
+    });
+
+    // Convenience: pause a device or profile for N minutes (auto-unpause).
+    this.app.post('/api/eero/schedules/pause-for', (req: Request, res: Response) => {
+      const { target, minutes, name } = req.body || {};
+      if (!target?.url || !target?.type || !minutes) {
+        res.status(400).json({ error: 'target {type, url} and minutes are required' });
+        return;
+      }
+      const item = this.eeroScheduler.pauseFor(target, Number(minutes), name);
+      audit('schedule.pause-for', { target, minutes });
+      res.status(201).json(item);
+    });
+
     this.app.post('/api/eero/sync', async (req: Request, res: Response) => {
       try {
         const snap = await this.eeroStore.sync(req.body?.networkUrl);
@@ -1562,6 +1609,10 @@ The ingredients should be grocery item names with quantities scaled for ${family
     this.triggers.startAll();
     console.log(`[gombwe] Active triggers: ${this.triggers.listTriggers().filter(t => t.enabled).length}`);
 
+    // Start eero schedule reconciler (runs every 60s)
+    this.eeroScheduler.start();
+    console.log(`[gombwe] eero scheduler watching ${this.eeroScheduler.list().length} schedules`);
+
     // Start eero sampler if enabled
     this.eeroStore.startSampler();
     const eeroCfg = this.eeroStore.loadConfig();
@@ -1580,6 +1631,7 @@ The ingredients should be grocery item names with quantities scaled for ${family
   }
 
   async stop(): Promise<void> {
+    this.eeroScheduler.stop();
     this.eeroStore.stopSampler();
     this.triggers.stopAll();
     this.scheduler.stopAll();
