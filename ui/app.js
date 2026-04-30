@@ -1636,21 +1636,45 @@ function renderEeroOverview() {
     ? eeroLineChart(onlineSeries, { yLabel: 'devices' })
     : '<div class="muted small">Run a sync — or enable the sampler under Advanced — to start collecting.</div>';
 
-  // Top consumers come from per-device usage if available; fall back to data totals.
+  // Most-active leaderboard, computed from sample history. eero gates
+  // per-device bytes behind Plus, so we use online-presence as the proxy.
   const topEl = document.getElementById('eeroTopConsumers');
-  const topDevices = devices
-    .filter(d => typeof d.usage_down === 'number' || typeof d.usage_up === 'number')
-    .sort((a, b) => ((b.usage_down || 0) + (b.usage_up || 0)) - ((a.usage_down || 0) + (a.usage_up || 0)))
-    .slice(0, 8);
-  if (topDevices.length === 0) {
-    topEl.innerHTML = '<div class="muted small">Per-device usage isn\'t in this snapshot. Try the Raw API: <code>$NETWORK/insights?period=week</code></div>';
+  const noteEl = document.getElementById('eeroActivityNote');
+  const samples = (eeroHistory || []).filter(e => e.type === 'sample' && Array.isArray(e.data?.onlineMacs));
+  if (samples.length === 0) {
+    topEl.innerHTML = '<div class="muted small">No sample history yet. Enable the sampler under <strong>Advanced</strong> to start tracking.</div>';
+    noteEl.textContent = '';
   } else {
-    topEl.innerHTML = topDevices.map(d => `
-      <div class="eero-consumer">
-        <span>${esc(d.display_name || d.hostname || d.mac)}</span>
-        <span class="muted small">${formatBytes((d.usage_down || 0) + (d.usage_up || 0))}</span>
-      </div>
-    `).join('');
+    const counts = new Map();
+    for (const s of samples) for (const mac of s.data.onlineMacs) counts.set(mac, (counts.get(mac) || 0) + 1);
+    const intervalMs = (eeroState.config?.samplerIntervalMs) || 300000;
+    const ranked = devices
+      .filter(d => d.mac)
+      .map(d => ({
+        device: d,
+        hits: counts.get(d.mac) || 0,
+      }))
+      .filter(r => r.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 10);
+    if (ranked.length === 0) {
+      topEl.innerHTML = '<div class="muted small">No device presence recorded yet. Trigger a few syncs.</div>';
+    } else {
+      const max = ranked[0].hits;
+      topEl.innerHTML = ranked.map(r => {
+        const minutes = Math.round((r.hits * intervalMs) / 60000);
+        const pct = Math.round((r.hits / max) * 100);
+        const label = r.device.display_name || r.device.hostname || r.device.mac;
+        return `
+          <div class="eero-consumer">
+            <div class="eero-consumer-bar"><div class="eero-consumer-fill" style="width:${pct}%"></div></div>
+            <div class="eero-consumer-label">${esc(label)}</div>
+            <span class="muted small">${formatHumanDuration(minutes)}</span>
+          </div>
+        `;
+      }).join('');
+    }
+    noteEl.innerHTML = `${samples.length} samples · <a href="https://eero.com/shop/eero-plus" target="_blank" rel="noopener">eero Plus</a> needed for byte-level usage`;
   }
 
   // Hardware nodes
@@ -2083,6 +2107,16 @@ function formatBytes(b) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${b.toFixed(1)} ${u[i]}`;
+}
+
+function formatHumanDuration(minutes) {
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  return hr ? `${d}d ${hr}h` : `${d}d`;
 }
 
 function handleEeroEvent(event) {

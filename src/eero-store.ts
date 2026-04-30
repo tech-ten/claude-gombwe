@@ -242,6 +242,11 @@ export class EeroStore {
         networkUrl: url,
         deviceCount: snap.devices?.length || 0,
         onlineCount: snap.devices?.filter((d: any) => d.connected).length || 0,
+        // MACs that were online at this sample — lets the UI compute a real
+        // "most active" leaderboard without the paywalled per-device bytes.
+        onlineMacs: (snap.devices || [])
+          .filter((d: any) => d.connected && d.mac)
+          .map((d: any) => d.mac),
         usage: this.summariseUsage(snap.usage),
         latestSpeedtest: snap.speedtests?.[0],
       },
