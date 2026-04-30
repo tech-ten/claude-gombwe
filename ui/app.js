@@ -494,6 +494,10 @@ document.querySelectorAll('.nav-item').forEach(btn => {
   });
 });
 
+document.querySelectorAll('[data-kids-preset]').forEach(b => {
+  b.addEventListener('click', () => applyKidsPreset(b.dataset.kidsPreset));
+});
+
 // ========== HELPERS ==========
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 function timeAgo(iso) {
@@ -2098,6 +2102,288 @@ function renderEeroAudit() {
       `).join('') + '</tbody></table>';
 }
 
+// ── kids control ───────────────────────────────────────────────────────
+function getKidsProfile() {
+  const profiles = eeroState.snapshot?.profiles || [];
+  return profiles.find(p => /kid/i.test(p.name)) || profiles.find(p => p.name !== 'Unassigned') || null;
+}
+
+function renderEeroKids() {
+  const profile = getKidsProfile();
+  const titleEl = document.getElementById('kidsTitle');
+  const statusEl = document.getElementById('kidsStatus');
+  const gridEl = document.getElementById('kidsGrid');
+  const activityEl = document.getElementById('kidsActivity');
+  const summaryEl = document.getElementById('kidsActivitySummary');
+  const schedListEl = document.getElementById('kidsSchedules');
+  const eventsEl = document.getElementById('kidsEvents');
+  if (!titleEl || !gridEl) return;
+
+  if (!profile) {
+    titleEl.textContent = 'No kids profile';
+    statusEl.innerHTML = 'Create a profile named <strong>Kids</strong> in the Profiles tab and add the children\'s devices to it.';
+    gridEl.innerHTML = '';
+    activityEl.innerHTML = '';
+    schedListEl.innerHTML = '';
+    eventsEl.innerHTML = '';
+    return;
+  }
+
+  const allDevices = eeroState.snapshot?.devices || [];
+  const profileDeviceUrls = new Set((profile.devices || []).map(d => d.url || d));
+  const devices = allDevices.filter(d => profileDeviceUrls.has(d.url));
+  const onlineNow = devices.filter(d => d.connected).length;
+  const pausedNow = devices.filter(d => d.paused).length;
+
+  // Today's activity from sample history (online presence per device).
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const samples = (eeroHistory || []).filter(e =>
+    e.type === 'sample' && Array.isArray(e.data?.onlineMacs) &&
+    new Date(e.time).getTime() >= todayStart.getTime()
+  );
+  const intervalMs = (eeroState.config?.samplerIntervalMs) || 300000;
+
+  // Per-device today's online ticks count
+  const devTicks = new Map();
+  for (const s of samples) {
+    for (const mac of s.data.onlineMacs) {
+      if (devices.some(d => d.mac === mac)) {
+        devTicks.set(mac, (devTicks.get(mac) || 0) + 1);
+      }
+    }
+  }
+
+  titleEl.textContent = profile.name;
+  const statusBits = [
+    `${devices.length} device${devices.length !== 1 ? 's' : ''}`,
+    `${onlineNow} online`,
+    profile.paused ? '<span class="eero-tag paused">profile paused</span>' : '',
+    pausedNow ? `${pausedNow} device-paused` : '',
+  ].filter(Boolean);
+  statusEl.innerHTML = statusBits.join(' · ');
+
+  // Per-device cards
+  if (devices.length === 0) {
+    gridEl.innerHTML = `<div class="muted small" style="padding:16px">No devices in <strong>${esc(profile.name)}</strong> profile yet. Add them in the Profiles tab.</div>`;
+  } else {
+    gridEl.innerHTML = devices.map(d => {
+      const online = !!d.connected;
+      const paused = !!d.paused || !!profile.paused;
+      const todayMin = Math.round((devTicks.get(d.mac) || 0) * intervalMs / 60000);
+      return `
+        <div class="kids-device-card ${online ? 'online' : 'offline'} ${paused ? 'paused' : ''}">
+          <div class="kids-device-head">
+            <span class="kids-device-dot ${online ? 'online' : 'offline'}"></span>
+            <span class="kids-device-name">${esc(d.display_name || d.hostname || d.mac)}</span>
+            ${paused ? '<span class="eero-tag paused">paused</span>' : ''}
+          </div>
+          <div class="kids-device-stat">
+            <span class="kids-stat-num">${formatHumanDuration(todayMin)}</span>
+            <span class="muted small">online today</span>
+          </div>
+          <div class="kids-device-meta muted small">${esc(d.ip || '')} · ${esc(d.connection_type || '')}</div>
+          <div class="kids-device-actions">
+            <button class="btn-sm" data-kids-act="pause-toggle" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}" data-on="${paused ? '1' : '0'}">${paused ? 'Resume' : 'Pause'}</button>
+            <button class="btn-sm" data-kids-act="pause-15" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}">+15m</button>
+            <button class="btn-sm" data-kids-act="pause-1h" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}">+1h</button>
+            <button class="btn-sm" data-kids-act="pause-bedtime" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}">Until 7am</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    gridEl.querySelectorAll('[data-kids-act]').forEach(b => {
+      b.onclick = async () => {
+        const url = b.dataset.url;
+        const name = b.dataset.name;
+        const target = { type: 'device', url, displayName: name };
+        switch (b.dataset.kidsAct) {
+          case 'pause-toggle':
+            await fetch(`${API}/api/eero/devices/pause`, eeroPut({ deviceUrl: url, paused: b.dataset.on !== '1' }));
+            await eeroSync();
+            renderEeroKids();
+            break;
+          case 'pause-15': await pauseTargetFor(target, 15); renderEeroKids(); break;
+          case 'pause-1h': await pauseTargetFor(target, 60); renderEeroKids(); break;
+          case 'pause-bedtime': {
+            const minutes = minutesUntilNext(7, 0);
+            await pauseTargetFor(target, minutes);
+            renderEeroKids();
+            break;
+          }
+        }
+      };
+    });
+  }
+
+  // Today's activity timeline — per device, 24h strip
+  const totalMin = Array.from(devTicks.values()).reduce((a, n) => a + n, 0) * intervalMs / 60000;
+  summaryEl.textContent = devices.length ? `${formatHumanDuration(Math.round(totalMin))} combined online time today` : '';
+  activityEl.innerHTML = devices.length === 0 ? '' : renderKidsTimeline(devices, samples, intervalMs);
+
+  // Schedules targeting any kids device or the kids profile
+  const kidsSchedules = (eeroState.schedules || []).filter(s => {
+    if (s.target.type === 'profile' && s.target.url === profile.url) return true;
+    if (s.target.type === 'device' && profileDeviceUrls.has(s.target.url)) return true;
+    return false;
+  });
+  schedListEl.innerHTML = kidsSchedules.length === 0
+    ? '<div class="muted small" style="padding:8px">No kids-specific schedules. Use the presets above to create one.</div>'
+    : kidsSchedules.map(s => `
+      <div class="kids-sched">
+        <div>
+          <div>${esc(s.name)} ${s.enabled ? '' : '<span class="eero-tag paused">disabled</span>'}</div>
+          <div class="muted small">${esc(s.target.displayName || '')} · ${esc(describeSchedule(s))}</div>
+        </div>
+        <button class="btn-sm btn-danger" data-act="kids-sched-del" data-id="${esc(s.id)}">Remove</button>
+      </div>
+    `).join('');
+  schedListEl.querySelectorAll('[data-act="kids-sched-del"]').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm('Remove this schedule?')) return;
+      await fetch(`${API}/api/eero/schedules/${encodeURIComponent(b.dataset.id)}`, { method: 'DELETE' });
+      await refreshEeroSchedules();
+      renderEeroKids();
+    };
+  });
+
+  // Recent events filtered to kids' MACs
+  const kidsMacs = new Set(devices.map(d => d.mac).filter(Boolean));
+  const events = (eeroHistory || [])
+    .filter(e => e.type !== 'sample' && (e.data?.mac && kidsMacs.has(e.data.mac)))
+    .slice(-30).reverse();
+  eventsEl.innerHTML = events.length === 0
+    ? '<div class="muted small" style="padding:8px">No recent events.</div>'
+    : events.map(e => `
+      <div class="eero-event">
+        <span class="eero-event-type ${e.type}">${e.type.replace(/-/g, ' ')}</span>
+        <span>${esc(e.data.name || e.data.display_name || e.data.mac)}</span>
+        <span class="muted small">${timeAgo(e.time)}</span>
+      </div>
+    `).join('');
+}
+
+function renderKidsTimeline(devices, samples, intervalMs) {
+  const w = 720, rowH = 26, labelW = 130, h = devices.length * rowH + 30;
+  const trackW = w - labelW - 10;
+  const dayMs = 24 * 3600 * 1000;
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const ms2x = ms => labelW + (Math.max(0, Math.min(dayMs, ms)) / dayMs) * trackW;
+
+  // Per-device, per-bucket presence
+  // Build a presence array keyed by mac → minute-of-day → bool
+  const presence = new Map();
+  for (const d of devices) presence.set(d.mac, new Array(Math.ceil(dayMs / intervalMs)).fill(false));
+  for (const s of samples) {
+    const t = new Date(s.time).getTime() - todayStart.getTime();
+    if (t < 0 || t >= dayMs) continue;
+    const idx = Math.floor(t / intervalMs);
+    for (const mac of s.data.onlineMacs) {
+      const arr = presence.get(mac);
+      if (arr && idx < arr.length) arr[idx] = true;
+    }
+  }
+
+  // Hour ticks
+  let ticks = '';
+  for (let hr = 0; hr <= 24; hr += 3) {
+    const x = ms2x(hr * 3600 * 1000);
+    ticks += `<line x1="${x}" y1="${20}" x2="${x}" y2="${h}" class="eero-axis"/>`;
+    ticks += `<text x="${x}" y="14" text-anchor="middle" class="eero-axis-label">${String(hr).padStart(2, '0')}:00</text>`;
+  }
+
+  // Now line
+  const nowMs = Date.now() - todayStart.getTime();
+  const nowX = ms2x(nowMs);
+  ticks += `<line x1="${nowX}" y1="20" x2="${nowX}" y2="${h}" stroke="#c45a5a" stroke-width="1" stroke-dasharray="3 3"/>`;
+  ticks += `<text x="${nowX + 4}" y="${h - 4}" class="eero-axis-label" fill="#c45a5a">now</text>`;
+
+  // Per-device rows
+  let rows = '';
+  devices.forEach((d, i) => {
+    const y = 24 + i * rowH;
+    rows += `<text x="6" y="${y + rowH / 2 + 4}" class="kids-timeline-name">${esc(d.display_name || d.hostname || d.mac)}</text>`;
+    rows += `<rect x="${labelW}" y="${y + 4}" width="${trackW}" height="${rowH - 8}" fill="var(--bg-deep, #f1efe9)" stroke="var(--border, #ddd)" stroke-width="0.5"/>`;
+    const arr = presence.get(d.mac) || [];
+    let blockStart = -1;
+    for (let j = 0; j <= arr.length; j++) {
+      if (arr[j] && blockStart < 0) blockStart = j;
+      if ((!arr[j] || j === arr.length) && blockStart >= 0) {
+        const x1 = ms2x(blockStart * intervalMs);
+        const x2 = ms2x(j * intervalMs);
+        rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#59a263" fill-opacity="0.7"/>`;
+        blockStart = -1;
+      }
+    }
+  });
+
+  return `<svg viewBox="0 0 ${w} ${h}" class="kids-timeline">${ticks}${rows}</svg>`;
+}
+
+function minutesUntilNext(hour, minute) {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hour, minute, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return Math.round((target - now) / 60000);
+}
+
+async function applyKidsPreset(preset) {
+  const profile = getKidsProfile();
+  if (!profile) { alert('Create a Kids profile first.'); return; }
+  const target = { type: 'profile', url: profile.url, displayName: profile.name };
+  switch (preset) {
+    case 'pause-now':
+      await fetch(`${API}/api/eero/profiles/pause`, eeroPut({ profileUrl: profile.url, paused: true }));
+      break;
+    case 'unpause-now':
+      // Cancel one-off schedules targeting kids and unpause profile + any device-paused kids devices.
+      for (const s of (eeroState.schedules || [])) {
+        if (s.pauseUntil && (s.target.url === profile.url || (eeroState.snapshot?.devices || []).some(d => d.url === s.target.url && (d.profile?.url === profile.url)))) {
+          await fetch(`${API}/api/eero/schedules/${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+        }
+      }
+      await fetch(`${API}/api/eero/profiles/pause`, eeroPut({ profileUrl: profile.url, paused: false }));
+      // also un-pause individual paused devices in the profile
+      const allDevices = eeroState.snapshot?.devices || [];
+      const inProfile = allDevices.filter(d => d.profile?.url === profile.url && d.paused);
+      for (const d of inProfile) {
+        await fetch(`${API}/api/eero/devices/pause`, eeroPut({ deviceUrl: d.url, paused: false }));
+      }
+      break;
+    case 'until-7am':
+      await fetch(`${API}/api/eero/schedules/pause-for`, eeroPost({ target, minutes: minutesUntilNext(7, 0) }));
+      break;
+    case 'for-1h':
+      await fetch(`${API}/api/eero/schedules/pause-for`, eeroPost({ target, minutes: 60 }));
+      break;
+    case 'for-15m':
+      await fetch(`${API}/api/eero/schedules/pause-for`, eeroPost({ target, minutes: 15 }));
+      break;
+    case 'bedtime-schedule':
+      await fetch(`${API}/api/eero/schedules`, eeroPost({
+        name: `${profile.name} bedtime`,
+        target,
+        rules: [{ days: [0,1,2,3,4,5,6], startMinutes: 21*60, endMinutes: 7*60 }],
+        enabled: true,
+      }));
+      break;
+    case 'school-schedule':
+      await fetch(`${API}/api/eero/schedules`, eeroPost({
+        name: `${profile.name} school hours`,
+        target,
+        rules: [{ days: [1,2,3,4,5], startMinutes: 9*60, endMinutes: 15*60 }],
+        enabled: true,
+      }));
+      break;
+  }
+  await eeroSync();
+  await refreshEeroSchedules();
+  renderEeroKids();
+  showEeroToast(`Done: ${preset.replace(/-/g, ' ')}`);
+}
+
 // ── schedule (block / unblock) ─────────────────────────────────────────
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -2620,6 +2906,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
+    if (eeroActiveSubtab === 'kids') renderEeroKids();
   });
 });
 

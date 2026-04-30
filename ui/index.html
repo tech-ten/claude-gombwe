@@ -249,6 +249,7 @@
           <!-- Sub-tab nav -->
           <div class="eero-subnav" id="eeroSubnav">
             <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
+            <button class="eero-subtab" data-eero-tab="kids">Kids</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
             <button class="eero-subtab" data-eero-tab="schedule">Schedule</button>
@@ -288,6 +289,46 @@
                 <span class="muted" id="eeroEventCount"></span>
               </div>
               <div id="eeroEvents"></div>
+            </div>
+          </div>
+
+          <!-- Kids Control -->
+          <div class="eero-pane" data-eero-pane="kids">
+            <div class="kids-header card eero-card">
+              <div class="kids-header-info">
+                <h2 class="kids-title" id="kidsTitle">Kids</h2>
+                <div class="kids-status muted small" id="kidsStatus">…</div>
+              </div>
+              <div class="kids-presets">
+                <button class="btn-primary btn-sm" data-kids-preset="pause-now" title="Pause all kids' devices immediately">Pause now</button>
+                <button class="btn-sm" data-kids-preset="until-7am" title="Block until 7am tomorrow">Until 7am</button>
+                <button class="btn-sm" data-kids-preset="for-1h">+ 1h</button>
+                <button class="btn-sm" data-kids-preset="for-15m">+ 15m</button>
+                <button class="btn-sm btn-success" data-kids-preset="unpause-now" title="Resume all">Resume</button>
+                <button class="btn-sm" data-kids-preset="bedtime-schedule" title="Recurring 9pm-7am every night">Bedtime schedule</button>
+                <button class="btn-sm" data-kids-preset="school-schedule" title="Recurring weekdays 9am-3pm pause">School-hours schedule</button>
+              </div>
+            </div>
+
+            <div class="kids-grid" id="kidsGrid"></div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Today's activity</span>
+                <span class="muted small" id="kidsActivitySummary"></span>
+              </div>
+              <div id="kidsActivity"></div>
+            </div>
+
+            <div class="eero-two-col">
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>Active schedules</span></div>
+                <div id="kidsSchedules"></div>
+              </div>
+              <div class="card eero-card">
+                <div class="eero-card-header"><span>Recent events</span></div>
+                <div id="kidsEvents"></div>
+              </div>
             </div>
           </div>
 
