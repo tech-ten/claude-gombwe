@@ -212,7 +212,15 @@ export class EeroScheduler {
         this.saveState();
         this.store.logAction(`schedule.apply`, { type, url, paused: blocked });
       } catch (err: any) {
-        this.store.logAction(`schedule.error`, { type, url, paused: blocked, error: err.message });
+        // 404 means the device or profile no longer exists. Drop it from
+        // lastApplied so we stop hammering the API on every tick.
+        if (err?.status === 404) {
+          this.lastApplied.delete(url);
+          this.saveState();
+          this.store.logAction(`schedule.prune`, { type, url, reason: 'target no longer exists' });
+        } else {
+          this.store.logAction(`schedule.error`, { type, url, paused: blocked, error: err.message });
+        }
       }
     }
   }
