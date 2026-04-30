@@ -201,7 +201,7 @@ export class EeroScheduler {
       const current = type === 'device' ? deviceState.get(url) : profileState.get(url);
       // Only push if state truly differs and we haven't just set it.
       if (last === blocked) continue;
-      if (current === blocked) { this.lastApplied.set(url, blocked); continue; }
+      if (current === blocked) { this.lastApplied.set(url, blocked); this.saveState(); continue; }
       try {
         if (type === 'device') {
           await this.client.setDevicePaused(url, blocked);
