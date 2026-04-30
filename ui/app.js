@@ -1837,9 +1837,10 @@ function renderEeroDevices() {
     const checked = eeroSelectedDevices.has(d.url) ? 'checked' : '';
     const dot = d.connected ? 'online' : 'offline';
     const isThisDevice = (eeroState.hostMacs || []).includes((d.mac || '').toLowerCase());
+    const pauseTag = renderPauseTag(d);
     const flags = [
       isThisDevice ? '<span class="eero-tag this-device" title="The host running gombwe">this device</span>' : '',
-      d.paused ? '<span class="eero-tag paused">paused</span>' : '',
+      pauseTag,
       d.blacklisted ? '<span class="eero-tag blocked">blocked</span>' : '',
       d.profile?.name ? `<span class="eero-tag profile">${esc(d.profile.name)}</span>` : '',
       d.is_guest ? '<span class="eero-tag guest">guest</span>' : '',
@@ -1895,8 +1896,18 @@ function renderEeroDevices() {
   });
 
   list.querySelectorAll('[data-act="profile"]').forEach(sel => {
+    const previousValue = sel.value;
     sel.onchange = async () => {
-      await fetch(`${API}/api/eero/devices/profile`, eeroPut({ deviceUrl: sel.dataset.url, profileUrl: sel.value || null }));
+      const newProfileUrl = sel.value || null;
+      if (newProfileUrl) {
+        const targetProfile = (eeroState.snapshot?.profiles || []).find(p => p.url === newProfileUrl);
+        const device = (eeroState.snapshot?.devices || []).find(d => d.url === sel.dataset.url);
+        if (targetProfile && device && !confirmKidProfileAssignment(targetProfile, [device])) {
+          sel.value = previousValue;
+          return;
+        }
+      }
+      await fetch(`${API}/api/eero/devices/profile`, eeroPut({ deviceUrl: sel.dataset.url, profileUrl: newProfileUrl }));
       eeroSync();
     };
   });
@@ -2017,8 +2028,16 @@ function renderEeroProfiles() {
   list.querySelectorAll('[data-act="profile-save"]').forEach(b => {
     b.onclick = async () => {
       const profileUrl = b.dataset.url;
+      const profile = profiles.find(p => p.url === profileUrl);
+      const previousUrls = new Set((profile?.devices || []).map(d => d.url || d));
       const checks = Array.from(list.querySelectorAll(`input[data-profile="${profileUrl}"]:checked`));
       const deviceUrls = checks.map(c => c.dataset.pdev);
+      // Only NEW additions trigger the adult-device check.
+      const newlyAdded = deviceUrls
+        .filter(u => !previousUrls.has(u))
+        .map(u => allDevices.find(d => d.url === u))
+        .filter(Boolean);
+      if (!confirmKidProfileAssignment(profile, newlyAdded)) return;
       b.disabled = true; b.textContent = 'Saving…';
       try {
         const r = await fetch(`${API}/api/eero/profiles/devices`, eeroPut({ profileUrl, deviceUrls }));
@@ -2320,8 +2339,8 @@ function renderEeroKids() {
   if (!titleEl || !gridEl) return;
 
   if (!profile) {
-    titleEl.textContent = 'No kids profile';
-    statusEl.innerHTML = 'Create a profile named <strong>Kids</strong> in the Profiles tab and add the children\'s devices to it.';
+    titleEl.textContent = 'Access Control';
+    statusEl.innerHTML = 'Create a profile in the Profiles tab and add devices to it. Access Control will pick up the first non-default profile (or one whose name contains "kid", "school", "bedtime", etc.) and surface its devices, schedules, and filtering here.';
     gridEl.innerHTML = '';
     activityEl.innerHTML = '';
     schedListEl.innerHTML = '';
@@ -2869,6 +2888,49 @@ async function pauseTargetFor(target, minutes) {
 
 // ── helpers ────────────────────────────────────────────────────────────
 function eeroPost(body) { return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; }
+
+// Build the "paused" tag with the reason as a tooltip and a short suffix.
+function renderPauseTag(device) {
+  const directlyPaused = !!device.paused;
+  const profilePaused = !!device.profile?.paused;
+  if (!directlyPaused && !profilePaused) return '';
+  const reason = device.pausedReason;
+  if (!reason) return '<span class="eero-tag paused">paused</span>';
+  if (reason.source === 'schedule') {
+    const sub = reason.scope === 'profile' ? ` via ${reason.profile}` : '';
+    return `<span class="eero-tag paused" title="Schedule: ${esc(reason.name)}${esc(sub)}">paused — ${esc(reason.name)}</span>`;
+  }
+  if (reason.source === 'manual' && reason.scope === 'profile') {
+    return `<span class="eero-tag paused" title="Profile ${esc(reason.profile)} is manually paused">paused — profile ${esc(reason.profile)}</span>`;
+  }
+  return '<span class="eero-tag paused" title="Manually paused">paused</span>';
+}
+
+// Heuristic: does this device look like an adult's primary device?
+const ADULT_NAME_RE = /\b(iphone|macbook|macmini|mac mini|imac|laptop|desktop|surface|thinkpad|ipad pro)\b/i;
+function looksLikeAdultDevice(device) {
+  const isHost = (eeroState.hostMacs || []).includes((device.mac || '').toLowerCase());
+  if (isHost) return true;
+  return ADULT_NAME_RE.test(device.display_name || device.hostname || '');
+}
+
+function looksLikeKidProfile(profile) {
+  return /\b(kid|child|bedtime|school|youth|junior|teen|nursery)\b/i.test(profile?.name || '');
+}
+
+// Returns true to proceed, false to cancel. Asks the user when they're about
+// to add adult-looking devices to a kid-pattern profile.
+function confirmKidProfileAssignment(profile, devicesBeingAdded) {
+  if (!looksLikeKidProfile(profile)) return true;
+  const adults = (devicesBeingAdded || []).filter(looksLikeAdultDevice);
+  if (adults.length === 0) return true;
+  const names = adults.map(d => d.display_name || d.hostname || d.mac).join(', ');
+  return confirm(
+    `These look like adult devices:\n\n  ${names}\n\n` +
+    `Adding them to "${profile.name}" means they'll be paused by any schedule attached to that profile (e.g. bedtime).\n\n` +
+    `Add anyway?`
+  );
+}
 function eeroPut(body) { return { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }; }
 
 async function eeroAction(confirmText, fn) {
