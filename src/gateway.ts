@@ -19,6 +19,7 @@ import { DiscordChannel } from './channels/discord.js';
 import { EeroClient } from './eero.js';
 import { EeroStore } from './eero-store.js';
 import { EeroScheduler } from './eero-schedules.js';
+import { NextDNSClient } from './nextdns.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -48,6 +49,7 @@ export class Gateway {
   private eero: EeroClient;
   private eeroStore: EeroStore;
   private eeroScheduler: EeroScheduler;
+  private nextdns: NextDNSClient;
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -115,6 +117,7 @@ export class Gateway {
       this.broadcast({ type: `eero:${event.type}` as any, data: event.data, timestamp: event.time });
     });
     this.eeroScheduler = new EeroScheduler(config.dataDir, this.eero, this.eeroStore);
+    this.nextdns = new NextDNSClient(config.dataDir);
 
     this.setupAgentEvents();
     this.setupWebSocket();
@@ -1304,6 +1307,177 @@ The ingredients should be grocery item names with quantities scaled for ${family
       if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
       audit('schedule.delete', { id });
       res.json({ ok: true });
+    });
+
+    // ── NextDNS (DNS-based filtering) ─────────────────────────────────
+    const nextdnsErr = (res: Response, err: any) => {
+      const status = err?.status || 500;
+      res.status(status).json({ error: err?.message || 'NextDNS error', body: err?.body });
+    };
+
+    this.app.get('/api/nextdns/config', (_req: Request, res: Response) => {
+      const c = this.nextdns.loadConfig();
+      // Redact the API key — UI only needs to know whether one is set.
+      res.json({
+        configured: !!(c.apiKey && c.configId),
+        configId: c.configId || null,
+        profileName: c.profileName || null,
+        hasKey: !!c.apiKey,
+        resolverIPs: this.nextdns.resolverIPs(),
+        dohEndpoint: this.nextdns.dohEndpoint(),
+      });
+    });
+
+    this.app.put('/api/nextdns/config', async (req: Request, res: Response) => {
+      try {
+        const { apiKey, configId, profileName } = req.body || {};
+        const cfg = this.nextdns.saveConfig({ apiKey, configId, profileName });
+        // If only an API key was provided, list profiles to discover the configId.
+        if (cfg.apiKey && !cfg.configId) {
+          const profs = await this.nextdns.listProfiles();
+          const first = profs?.data?.[0];
+          if (first) this.nextdns.saveConfig({ configId: first.id, profileName: first.name });
+        }
+        const out = this.nextdns.loadConfig();
+        audit('nextdns.config', { configId: out.configId });
+        res.json({ configured: !!(out.apiKey && out.configId), configId: out.configId, profileName: out.profileName });
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/profile', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.profile()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/denylist', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.denylist()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.post('/api/nextdns/denylist', async (req: Request, res: Response) => {
+      try {
+        const { domain } = req.body || {};
+        if (!domain) { res.status(400).json({ error: 'domain required' }); return; }
+        const out = await this.nextdns.addDeny(domain);
+        audit('nextdns.deny.add', { domain });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.delete('/api/nextdns/denylist', async (req: Request, res: Response) => {
+      try {
+        const domain = (req.query.domain as string) || req.body?.domain;
+        const out = await this.nextdns.removeDeny(domain);
+        audit('nextdns.deny.remove', { domain });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/allowlist', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.allowlist()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.post('/api/nextdns/allowlist', async (req: Request, res: Response) => {
+      try {
+        const out = await this.nextdns.addAllow(req.body?.domain);
+        audit('nextdns.allow.add', { domain: req.body?.domain });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.delete('/api/nextdns/allowlist', async (req: Request, res: Response) => {
+      try {
+        const domain = (req.query.domain as string) || req.body?.domain;
+        const out = await this.nextdns.removeAllow(domain);
+        audit('nextdns.allow.remove', { domain });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    // Parental services (TikTok, Instagram, etc) and categories (porn, gambling, …)
+    this.app.get('/api/nextdns/services', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.parentalServices()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.post('/api/nextdns/services', async (req: Request, res: Response) => {
+      try {
+        const out = await this.nextdns.addParentalService(req.body?.id);
+        audit('nextdns.service.add', { id: req.body?.id });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.delete('/api/nextdns/services', async (req: Request, res: Response) => {
+      try {
+        const id = (req.query.id as string) || req.body?.id;
+        const out = await this.nextdns.removeParentalService(id);
+        audit('nextdns.service.remove', { id });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/categories', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.parentalCategories()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.post('/api/nextdns/categories', async (req: Request, res: Response) => {
+      try {
+        const out = await this.nextdns.addParentalCategory(req.body?.id);
+        audit('nextdns.category.add', { id: req.body?.id });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+    this.app.delete('/api/nextdns/categories', async (req: Request, res: Response) => {
+      try {
+        const id = (req.query.id as string) || req.body?.id;
+        const out = await this.nextdns.removeParentalCategory(id);
+        audit('nextdns.category.remove', { id });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.patch('/api/nextdns/parental', async (req: Request, res: Response) => {
+      try {
+        const { field, value } = req.body || {};
+        const out = await this.nextdns.setParentalToggle(field, !!value);
+        audit('nextdns.parental.toggle', { field, value });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.patch('/api/nextdns/security', async (req: Request, res: Response) => {
+      try {
+        const { field, value } = req.body || {};
+        const out = await this.nextdns.setSecurityToggle(field, !!value);
+        audit('nextdns.security.toggle', { field, value });
+        res.json(out);
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/logs', async (_req: Request, res: Response) => {
+      try { res.json(await this.nextdns.logs()); } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    this.app.get('/api/nextdns/analytics', async (_req: Request, res: Response) => {
+      try {
+        const [status, domains] = await Promise.all([
+          this.nextdns.analyticsStatus().catch(() => null),
+          this.nextdns.analyticsTopDomains().catch(() => null),
+        ]);
+        res.json({ status, domains });
+      } catch (err: any) { nextdnsErr(res, err); }
+    });
+
+    // Point the eero at NextDNS — sets the network's custom DNS to NextDNS
+    // resolver IPs. Affects every device on the network at once.
+    this.app.post('/api/eero/dns/point-at-nextdns', async (req: Request, res: Response) => {
+      try {
+        const ips = this.nextdns.resolverIPs();
+        const url = req.body?.networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.request('PUT', url, { dns: { mode: 'custom', custom: { ips } } });
+        audit('eero.dns.point-at-nextdns', { ips });
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
+    });
+
+    this.app.post('/api/eero/dns/reset', async (req: Request, res: Response) => {
+      try {
+        const url = req.body?.networkUrl || (await this.eero.defaultNetworkUrl());
+        const out = await this.eero.request('PUT', url, { dns: { mode: 'automatic' } });
+        audit('eero.dns.reset', {});
+        res.json(out);
+      } catch (err: any) { eeroError(res, err); }
     });
 
     // Convenience: pause a device or profile for N minutes (auto-unpause).
