@@ -127,9 +127,19 @@ export class EeroClient {
     return this.put(deviceUrl, { nickname });
   }
 
-  // Move a device to a profile (or null/empty to detach).
-  setDeviceProfile(deviceUrl: string, profileUrl: string | null) {
-    return this.put(deviceUrl, { profile: profileUrl });
+  // Move a device to a profile. eero's API accepts the profile as an object
+  // { url } on the device resource — bare strings return 200 but silently
+  // do nothing. To clear a device's profile, use setProfileDevices to replace
+  // the source profile's device list (PUT device { profile: null } is a
+  // no-op too).
+  setDeviceProfile(deviceUrl: string, profileUrl: string) {
+    return this.put(deviceUrl, { profile: { url: profileUrl } });
+  }
+
+  // Replace a profile's full device list. Use this for additions, removals,
+  // and bulk reassignment.
+  setProfileDevices(profileUrl: string, deviceUrls: string[]) {
+    return this.put(profileUrl, { devices: deviceUrls.map(url => ({ url })) });
   }
 
   // Block / unblock a device entirely (separate from profile pause).

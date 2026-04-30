@@ -1888,27 +1888,67 @@ function renderEeroBulkBar() {
   bar.classList.toggle('hidden', eeroSelectedDevices.size === 0);
 }
 
+let eeroExpandedProfiles = new Set();
+
 function renderEeroProfiles() {
   const list = document.getElementById('eeroProfileList');
   if (!list) return;
   const profiles = eeroState.snapshot?.profiles || [];
+  const allDevices = eeroState.snapshot?.devices || [];
+
   if (profiles.length === 0) {
     list.innerHTML = '<div class="muted small" style="padding:16px">No profiles. Create one above.</div>';
     return;
   }
-  list.innerHTML = profiles.map(p => `
-    <div class="eero-profile">
-      <div>
-        <div class="eero-profile-name">${esc(p.name)}</div>
-        <div class="muted small">${(p.devices || []).length} devices · ${p.paused ? 'paused' : 'active'}</div>
-      </div>
-      <div class="eero-profile-actions">
-        <button class="btn-sm" data-act="profile-pause" data-url="${esc(p.url)}" data-on="${p.paused ? '1' : '0'}">${p.paused ? 'Unpause' : 'Pause'}</button>
-        <button class="btn-sm btn-danger" data-act="profile-delete" data-url="${esc(p.url)}">Delete</button>
-      </div>
-    </div>
-  `).join('');
 
+  list.innerHTML = profiles.map(p => {
+    const profileDeviceUrls = new Set((p.devices || []).map(d => d.url || d));
+    const expanded = eeroExpandedProfiles.has(p.url);
+    return `
+      <div class="eero-profile-card">
+        <div class="eero-profile-row">
+          <div>
+            <div class="eero-profile-name">${esc(p.name)}</div>
+            <div class="muted small">${profileDeviceUrls.size} device${profileDeviceUrls.size !== 1 ? 's' : ''} · ${p.paused ? 'paused' : 'active'}</div>
+          </div>
+          <div class="eero-profile-actions">
+            <button class="btn-sm" data-act="profile-toggle" data-url="${esc(p.url)}">${expanded ? 'Hide devices' : 'Manage devices'}</button>
+            <button class="btn-sm" data-act="profile-pause" data-url="${esc(p.url)}" data-on="${p.paused ? '1' : '0'}">${p.paused ? 'Unpause' : 'Pause'}</button>
+            <button class="btn-sm btn-danger" data-act="profile-delete" data-url="${esc(p.url)}">Delete</button>
+          </div>
+        </div>
+        ${expanded ? `
+          <div class="eero-profile-devices">
+            <div class="muted small">Tick devices to include in <strong>${esc(p.name)}</strong>. Save applies the change in one PUT.</div>
+            ${allDevices.map(d => {
+              const inProfile = profileDeviceUrls.has(d.url);
+              const otherProfile = d.profile?.url && d.profile.url !== p.url ? d.profile.name : '';
+              return `
+                <label class="eero-profile-device">
+                  <input type="checkbox" data-pdev="${esc(d.url)}" data-profile="${esc(p.url)}" ${inProfile ? 'checked' : ''}>
+                  <span class="eero-profile-device-name">${esc(d.display_name || d.hostname || d.mac)}</span>
+                  <span class="muted small">${esc(d.mac || '')}${otherProfile ? ` · currently in <em>${esc(otherProfile)}</em>` : ''}</span>
+                </label>
+              `;
+            }).join('')}
+            <div class="form-row">
+              <button class="btn-primary btn-sm" data-act="profile-save" data-url="${esc(p.url)}">Save device list</button>
+              <span class="muted small">Note: a device can only be in one profile. Adding it here removes it from any other profile.</span>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-act="profile-toggle"]').forEach(b => {
+    b.onclick = () => {
+      const url = b.dataset.url;
+      if (eeroExpandedProfiles.has(url)) eeroExpandedProfiles.delete(url);
+      else eeroExpandedProfiles.add(url);
+      renderEeroProfiles();
+    };
+  });
   list.querySelectorAll('[data-act="profile-pause"]').forEach(b => {
     b.onclick = async () => {
       await fetch(`${API}/api/eero/profiles/pause`, eeroPut({ profileUrl: b.dataset.url, paused: b.dataset.on !== '1' }));
@@ -1918,6 +1958,25 @@ function renderEeroProfiles() {
   list.querySelectorAll('[data-act="profile-delete"]').forEach(b => {
     b.onclick = () => eeroAction('Delete this profile?', () =>
       fetch(`${API}/api/eero/profiles?profileUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
+  });
+  list.querySelectorAll('[data-act="profile-save"]').forEach(b => {
+    b.onclick = async () => {
+      const profileUrl = b.dataset.url;
+      const checks = Array.from(list.querySelectorAll(`input[data-profile="${profileUrl}"]:checked`));
+      const deviceUrls = checks.map(c => c.dataset.pdev);
+      b.disabled = true; b.textContent = 'Saving…';
+      try {
+        const r = await fetch(`${API}/api/eero/profiles/devices`, eeroPut({ profileUrl, deviceUrls }));
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.error || `Failed: ${r.status}`);
+        } else {
+          showEeroToast(`Saved ${deviceUrls.length} device${deviceUrls.length !== 1 ? 's' : ''} to profile`);
+          await eeroSync();
+        }
+      } catch (err) { alert(err.message); }
+      finally { b.disabled = false; b.textContent = 'Save device list'; }
+    };
   });
 }
 
