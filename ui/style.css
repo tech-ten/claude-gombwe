@@ -1731,6 +1731,10 @@ body {
 .eero-tag.blocked { background: #f1d6d6; color: #8a2e2e; }
 .eero-tag.profile { background: var(--bg-deep); color: var(--text-2); }
 .eero-tag.guest { background: #e9e3d5; color: #6b5a2e; }
+.eero-tag.this-device { background: #d6eedb; color: #2e6b3a; }
+
+.eero-device.this-device { background: rgba(89,162,99,0.06); }
+.eero-device.this-device .eero-device-status.online { box-shadow: 0 0 0 3px rgba(89,162,99,0.25); }
 
 .eero-section-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
 .eero-form-block { display: flex; flex-direction: column; gap: 8px; }
