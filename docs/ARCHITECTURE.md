@@ -55,7 +55,9 @@ Wraps the `claude` CLI. Two modes:
 - Uses `--resume <sessionId>` for follow-up messages in the same conversation
 - Passes `--mcp-config` with built-in MCP servers (e.g., `gombwe-family` for meal/grocery management)
 - Claude keeps full internal state (every file read, command run, decision made)
-- Returns the response and the session ID for next time
+- Returns `{response, sessionId, ok, error?}` — `ok=false` on non-zero exit or `is_error` result events, with the real error surfaced in `error`
+
+**Stale-session auto-recovery** (`src/gateway.ts`): if `--resume <id>` fails (e.g., session was cleaned up server-side or the machine was reset), the gateway detects the failure, starts a fresh session, and prepends the last 10 verbatim turns from the local transcript as context. The new session ID is then stored so subsequent messages resume cleanly. Verbatim replay (not summarised) is chosen because chat is jumpy/random — there's little to compress — and stable prefixes benefit from prompt caching.
 
 **Task mode** (`agent.runTask()`) — the completion loop:
 1. Wraps the prompt with an autonomy instruction ("never ask questions, just do it")

@@ -309,11 +309,53 @@ export class Gateway {
         if (skillsCtx) chatMessage = `${skillsCtx}\n\n---\n\nUser message: ${msg.text}`;
       }
 
-      const result = await this.agent.chat(
+      let result = await this.agent.chat(
         chatMessage,
         this.config.agents.workingDir,
         claudeSessionId || undefined,
       );
+
+      // Resume failed (session gone server-side or locally). Retry fresh with
+      // verbatim replay of recent turns so the new session has continuity.
+      // Verbatim (not summarised) because Discord chat is jumpy/random — there
+      // are no themes to compress, and prompt caching favours stable prefixes.
+      if (!result.ok && claudeSessionId) {
+        const skillsCtx = this.skills.buildSkillsPrompt();
+        // session.transcript already includes the just-added current user msg
+        // (appended above), so drop the last entry before slicing.
+        const history = session.transcript.slice(0, -1);
+        const recent = history.slice(-10).filter(t => t.role === 'user' || t.role === 'assistant');
+        const replay = recent.length
+          ? 'Previous conversation (resumed after session loss):\n' +
+            recent.map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`).join('\n') +
+            '\n\n---\n\n'
+          : '';
+        const retryMessage =
+          (skillsCtx ? `${skillsCtx}\n\n---\n\n` : '') +
+          replay +
+          `Current message: ${msg.text}`;
+        console.warn(
+          `[gateway] resume failed for ${msg.sessionKey} (stale claudeSessionId=${claudeSessionId}); ` +
+          `retrying fresh with ${recent.length} turns of replayed context. ` +
+          `cause=${result.error || 'unknown'}`,
+        );
+        result = await this.agent.chat(
+          retryMessage,
+          this.config.agents.workingDir,
+          undefined,
+        );
+        if (result.ok) {
+          console.log(
+            `[gateway] resume retry succeeded for ${msg.sessionKey}: ` +
+            `new claudeSessionId=${result.sessionId}, replayed=${recent.length} turns`,
+          );
+        } else {
+          console.error(
+            `[gateway] resume retry ALSO FAILED for ${msg.sessionKey}: ` +
+            `cause=${result.error || 'unknown'}`,
+          );
+        }
+      }
 
       // Save the Claude session ID so next message resumes the conversation
       if (result.sessionId) {

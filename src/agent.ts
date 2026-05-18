@@ -356,7 +356,7 @@ export class AgentRuntime extends EventEmitter {
     message: string,
     workingDir: string,
     claudeSessionId?: string,
-  ): Promise<{ response: string; sessionId: string | null }> {
+  ): Promise<{ response: string; sessionId: string | null; ok: boolean; error?: string }> {
     return new Promise((resolve) => {
       const args: string[] = [];
 
@@ -388,7 +388,15 @@ export class AgentRuntime extends EventEmitter {
 
       let buffer = '';
       let fullResponse = '';
+      let stderr = '';
       let sessionId: string | null = claudeSessionId || null;
+      // Failure can surface two ways: non-zero exit, OR a `result` event with
+      // is_error:true while the process exits cleanly (e.g. bad --resume).
+      let streamError: string | null = null;
+
+      proc.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
 
       proc.stdout?.on('data', (chunk: Buffer) => {
         buffer += chunk.toString();
@@ -409,9 +417,14 @@ export class AgentRuntime extends EventEmitter {
               fullResponse += event.content;
               this.emit('chat:output', { text: event.content });
             } else if (event.type === 'result') {
-              const text = event.result || event.content || '';
-              fullResponse += text;
-              this.emit('chat:output', { text });
+              if (event.is_error || event.subtype === 'error_during_execution') {
+                const errs = Array.isArray(event.errors) ? event.errors.join('; ') : '';
+                streamError = errs || event.result || event.content || 'unknown error';
+              } else {
+                const text = event.result || event.content || '';
+                fullResponse += text;
+                this.emit('chat:output', { text });
+              }
             }
           } catch {
             fullResponse += line;
@@ -420,18 +433,28 @@ export class AgentRuntime extends EventEmitter {
       });
 
       proc.on('close', (code) => {
-        if (code === 0) {
-          resolve({ response: fullResponse.trim(), sessionId });
+        const ok = code === 0 && !streamError;
+        if (ok) {
+          resolve({ response: fullResponse.trim(), sessionId, ok: true });
         } else {
+          const errMsg = streamError || stderr.trim() || `exit ${code}`;
+          console.error(`[chat] claude failed: exit=${code} error=${errMsg.slice(0, 500)}`);
           resolve({
-            response: fullResponse.trim() || 'Sorry, something went wrong. Try again.',
+            response: fullResponse.trim() || `Claude error: ${errMsg.slice(0, 300)}`,
             sessionId,
+            ok: false,
+            error: errMsg,
           });
         }
       });
 
       proc.on('error', () => {
-        resolve({ response: 'Failed to start Claude. Is the claude CLI installed?', sessionId: null });
+        resolve({
+          response: 'Failed to start Claude. Is the claude CLI installed?',
+          sessionId: null,
+          ok: false,
+          error: 'spawn failed',
+        });
       });
     });
   }
