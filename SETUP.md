@@ -125,6 +125,17 @@ gombwe up                       Start everything (gateway + proxy + channels)
 
 Or just say it naturally: "put butter chicken on Saturday dinner", "we need milk and eggs".
 
+### Working directory (in chat — Discord, Telegram, web)
+
+```
+/pwd                    Show current working directory for this session
+/cd <path>              Set working directory for this session (persists)
+/cd                     Reset to the default from gombwe.json
+/in <path> <message>    One-shot: run <message> in <path>, session default unchanged
+```
+
+Resolution order at every message: `/in` override → session `/cd` → `config.agents.workingDir`. `~` and relative paths are expanded; gombwe rejects paths that don't exist or aren't directories. Useful when you want a Discord channel pinned to one project but occasionally peek elsewhere.
+
 ## How It Works
 
 ```
@@ -149,3 +160,36 @@ You (Terminal / Discord / Telegram / Web / Cron / Triggers)
              + --mcp-config (gombwe-family)
              (your Max subscription)
 ```
+
+## Development
+
+If you're hacking on gombwe itself (not just installing it):
+
+```bash
+git clone https://github.com/tech-ten/claude-gombwe.git
+cd claude-gombwe
+npm install
+npm link              # makes the global `gombwe` command point at this dir
+npm run build         # compiles src/ → dist/ (and chmods dist/index.js)
+gombwe start          # runs the local code
+```
+
+After every source change, `npm run build` is enough — the npm link means `gombwe start` immediately runs the updated `dist/index.js`. No reinstall needed.
+
+### Releasing a new version
+
+Releases are published to npm via GitHub Actions trusted publishing (OIDC). No tokens to manage; provenance attestation is attached to every release.
+
+```bash
+npm version patch                          # bumps package.json and tags
+git push origin main --tags
+gh release create vX.Y.Z --target main --generate-notes
+```
+
+Creating the GitHub Release triggers `.github/workflows/publish.yml`, which:
+
+1. Checks out the tag, sets up Node 24 (npm 11.x — needed for the trusted-publishing OIDC handshake)
+2. Builds, then runs `npm publish --access public --provenance`
+3. Presents its OIDC identity to npm; npm verifies it matches the trusted-publisher config (publisher: GitHub Actions, repo: `tech-ten/claude-gombwe`, workflow: `publish.yml`, environment: `npm`)
+
+If the workflow fails with `npm error 404 ... PUT ...claude-gombwe`, the OIDC identity wasn't accepted — check the trusted-publisher config on npmjs.com → package → Settings → Trusted Publisher matches exactly (case-sensitive, filename only, no path).

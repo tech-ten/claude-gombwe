@@ -309,9 +309,16 @@ claude-gombwe/
 │   └── IDENTITY.md        # Agent identity config
 ├── docs/
 │   ├── WHY.md             # Why this project exists
-│   └── ARCHITECTURE.md    # This file
+│   ├── ARCHITECTURE.md    # This file
+│   ├── API.md             # REST API and WebSocket reference
+│   ├── COMPLETION-LOOP.md # How retry/continue/verify works
+│   ├── GROCERY.md         # Grocery automation (Woolworths & Coles)
+│   └── SKILLS.md          # Skill format, native tools, custom skills
+├── .github/workflows/
+│   └── publish.yml        # CI publish via npm trusted publishing (OIDC)
 ├── package.json
 ├── tsconfig.json
+├── LICENSE                # MIT
 ├── SETUP.md               # Step-by-step setup guide
 └── README.md              # Project overview
 ```

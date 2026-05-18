@@ -395,10 +395,47 @@ When you fire a task, gombwe doesn't just run it once:
 
 Every step uses `--resume` so Claude remembers everything — every file read, command run, and decision made.
 
+## Working Directory Per Session
+
+Every chat or task runs in a directory you can pick per conversation. The resolution order at every message is:
+
+1. `/in <path> <msg>` — one-shot override for a single message
+2. `/cd <path>` — persistent override for the current session (stored in `_index.json`, survives restarts)
+3. `config.agents.workingDir` — global default from `~/.claude-gombwe/gombwe.json`
+
+So you can keep a Discord channel pinned to one project (`/cd ~/code/projectA`), occasionally peek at another (`/in ~/code/projectB what's the test status?`), and inspect what you've set (`/pwd`). Paths support `~` expansion and are validated before use.
+
+## Resilient Chat Sessions
+
+`claude --resume <id>` can fail — sessions get cleaned up server-side, the machine reboots, or weeks pass. When that happens, gombwe transparently:
+
+1. Detects the failure (non-zero exit **or** an `is_error` event in the stream-json output)
+2. Replays the last 10 verbatim turns from the local transcript (`~/.claude-gombwe/data/sessions/*.jsonl`) as preamble to a fresh `claude` session
+3. Stores the new session ID, so subsequent messages resume cleanly
+
+You see this as `[gateway] resume failed for … retrying fresh with N turns of replayed context` in the gombwe log, followed by `resume retry succeeded`. To the end-user on Discord/Telegram/web, it just looks like the bot replied normally.
+
+---
+
+## Releasing
+
+Gombwe publishes to npm via **GitHub Actions trusted publishing** (OIDC). No tokens stored anywhere; provenance attestation is attached to every release.
+
+To cut a new version:
+
+```bash
+npm version patch          # or minor / major — bumps package.json + creates a git tag
+git push origin main --tags
+gh release create vX.Y.Z --title "vX.Y.Z" --target main --generate-notes
+```
+
+Creating the GitHub Release triggers `.github/workflows/publish.yml`, which runs on Node 24 (npm 11.x, needed for the OIDC handshake) and publishes via the `npm` environment with `--provenance`. The trusted-publisher config on npmjs.com pins the publisher to `tech-ten/claude-gombwe` + workflow `publish.yml` + environment `npm`.
+
 ---
 
 ## Documentation
 
+- [SETUP.md](SETUP.md) — Step-by-step setup
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Complete technical architecture
 - [docs/COMPLETION-LOOP.md](docs/COMPLETION-LOOP.md) — How retry/continue/verify works
 - [docs/SKILLS.md](docs/SKILLS.md) — Skill format, native tools, creating custom skills
