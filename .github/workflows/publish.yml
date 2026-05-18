@@ -15,9 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24   # ships with npm 11.x; trusted-publishing OIDC needs 11.5.1+
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest   # trusted publishing OIDC requires npm 11.5.1+
       - run: npm install
       - run: npm run build
       - run: npm publish --access public --provenance
