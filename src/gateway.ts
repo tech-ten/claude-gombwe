@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter } from './types.js';
 import { saveConfig } from './config.js';
@@ -265,126 +265,158 @@ export class Gateway {
     }
 
     // Wire up message handling for all channels
-    const messageHandler = async (msg: IncomingMessage) => {
-      const session = this.sessions.getOrCreate(msg.sessionKey, msg.channel);
+    for (const channel of this.channels.values()) {
+      channel.onMessage((msg) => this.handleIncoming(msg));
+    }
+  }
+
+  /** Resolve a path: expand ~, resolve relative paths against $HOME. */
+  private expandPath(p: string): string {
+    let out = p.trim();
+    if (out.startsWith('~/') || out === '~') {
+      out = out.replace(/^~/, process.env.HOME || '');
+    }
+    if (!isAbsolute(out)) {
+      out = resolvePath(process.env.HOME || process.cwd(), out);
+    }
+    return out;
+  }
+
+  /** Validate an expanded path is an existing directory. */
+  private validateDir(path: string): { ok: true } | { ok: false; reason: string } {
+    if (!existsSync(path)) return { ok: false, reason: `path does not exist: ${path}` };
+    if (!statSync(path).isDirectory()) return { ok: false, reason: `path is not a directory: ${path}` };
+    return { ok: true };
+  }
+
+  /** Determine the cwd to use for this message: one-shot override → session → config default. */
+  private resolveWorkingDir(msg: IncomingMessage): string {
+    return (
+      msg.workingDirOverride ||
+      this.sessions.getWorkingDir(msg.sessionKey) ||
+      this.config.agents.workingDir
+    );
+  }
+
+  /**
+   * Main per-message dispatcher. Extracted from setupChannels() so that
+   * `/in <path> <text>` can re-dispatch with a one-shot cwd override.
+   * `opts.suppressLog` is set when re-dispatching, so the inner call
+   * doesn't double-record the user message in the transcript.
+   */
+  private async handleIncoming(
+    msg: IncomingMessage,
+    opts: { suppressLog?: boolean } = {},
+  ): Promise<void> {
+    const session = this.sessions.getOrCreate(msg.sessionKey, msg.channel);
+    if (!opts.suppressLog) {
       this.sessions.addEntry(msg.sessionKey, {
         role: 'user',
         content: msg.text,
         timestamp: msg.timestamp,
         channel: msg.channel,
       });
+    }
 
-      const channel = this.channels.get(msg.channel);
+    const channel = this.channels.get(msg.channel);
+    const workingDir = this.resolveWorkingDir(msg);
 
-      // --- All commands use / prefix ---
-      const trimmedText = msg.text.trim().replace(/\s+/g, ' ');
-      if (trimmedText.startsWith('/')) {
-        const [cmd, ...rest] = trimmedText.slice(1).split(' ');
-        const handled = await this.handleCommand(cmd.toLowerCase(), rest, msg, channel);
-        if (handled) return;
-      }
+    // --- All commands use / prefix ---
+    const trimmedText = msg.text.trim().replace(/\s+/g, ' ');
+    if (trimmedText.startsWith('/')) {
+      const [cmd, ...rest] = trimmedText.slice(1).split(' ');
+      const handled = await this.handleCommand(cmd.toLowerCase(), rest, msg, channel);
+      if (handled) return;
+    }
 
-      // --- Natural language family intent detection ---
-      const familyIntent = this.detectFamilyIntent(trimmedText);
-      if (familyIntent) {
-        const handled = await this.handleCommand(familyIntent.cmd, familyIntent.args, msg, channel);
-        if (handled) return;
-      }
+    // --- Natural language family intent detection ---
+    const familyIntent = this.detectFamilyIntent(trimmedText);
+    if (familyIntent) {
+      const handled = await this.handleCommand(familyIntent.cmd, familyIntent.args, msg, channel);
+      if (handled) return;
+    }
 
-      // --- Task mode (if session is set to task mode) ---
-      if (session.mode === 'task') {
-        const skillsPrompt = this.skills.buildSkillsPrompt();
-        const fullPrompt = skillsPrompt ? `${skillsPrompt}\n\n${msg.text}` : msg.text;
-        await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey);
-        return;
-      }
+    // --- Task mode (if session is set to task mode) ---
+    if (session.mode === 'task') {
+      const skillsPrompt = this.skills.buildSkillsPrompt();
+      const fullPrompt = skillsPrompt ? `${skillsPrompt}\n\n${msg.text}` : msg.text;
+      await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir);
+      return;
+    }
 
-      // --- Chat mode (default): conversational with --resume ---
-      const claudeSessionId = this.sessions.getClaudeSessionId(msg.sessionKey);
+    // --- Chat mode (default): conversational with --resume ---
+    const claudeSessionId = this.sessions.getClaudeSessionId(msg.sessionKey);
 
-      // Skills context for first message only (MCP handles family tools natively)
-      let chatMessage = msg.text;
-      if (!claudeSessionId) {
-        const skillsCtx = this.skills.buildSkillsPrompt();
-        if (skillsCtx) chatMessage = `${skillsCtx}\n\n---\n\nUser message: ${msg.text}`;
-      }
+    // Skills context for first message only (MCP handles family tools natively)
+    let chatMessage = msg.text;
+    if (!claudeSessionId) {
+      const skillsCtx = this.skills.buildSkillsPrompt();
+      if (skillsCtx) chatMessage = `${skillsCtx}\n\n---\n\nUser message: ${msg.text}`;
+    }
 
-      let result = await this.agent.chat(
-        chatMessage,
-        this.config.agents.workingDir,
-        claudeSessionId || undefined,
+    let result = await this.agent.chat(chatMessage, workingDir, claudeSessionId || undefined);
+
+    // Resume failed (session gone server-side or locally). Retry fresh with
+    // verbatim replay of recent turns so the new session has continuity.
+    // Verbatim (not summarised) because Discord chat is jumpy/random — there
+    // are no themes to compress, and prompt caching favours stable prefixes.
+    if (!result.ok && claudeSessionId) {
+      const skillsCtx = this.skills.buildSkillsPrompt();
+      // session.transcript already includes the just-added current user msg
+      // (appended above), so drop the last entry before slicing.
+      const history = session.transcript.slice(0, -1);
+      const recent = history.slice(-10).filter(t => t.role === 'user' || t.role === 'assistant');
+      const replay = recent.length
+        ? 'Previous conversation (resumed after session loss):\n' +
+          recent.map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`).join('\n') +
+          '\n\n---\n\n'
+        : '';
+      const retryMessage =
+        (skillsCtx ? `${skillsCtx}\n\n---\n\n` : '') +
+        replay +
+        `Current message: ${msg.text}`;
+      console.warn(
+        `[gateway] resume failed for ${msg.sessionKey} (stale claudeSessionId=${claudeSessionId}); ` +
+        `retrying fresh with ${recent.length} turns of replayed context. ` +
+        `cause=${result.error || 'unknown'}`,
       );
-
-      // Resume failed (session gone server-side or locally). Retry fresh with
-      // verbatim replay of recent turns so the new session has continuity.
-      // Verbatim (not summarised) because Discord chat is jumpy/random — there
-      // are no themes to compress, and prompt caching favours stable prefixes.
-      if (!result.ok && claudeSessionId) {
-        const skillsCtx = this.skills.buildSkillsPrompt();
-        // session.transcript already includes the just-added current user msg
-        // (appended above), so drop the last entry before slicing.
-        const history = session.transcript.slice(0, -1);
-        const recent = history.slice(-10).filter(t => t.role === 'user' || t.role === 'assistant');
-        const replay = recent.length
-          ? 'Previous conversation (resumed after session loss):\n' +
-            recent.map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`).join('\n') +
-            '\n\n---\n\n'
-          : '';
-        const retryMessage =
-          (skillsCtx ? `${skillsCtx}\n\n---\n\n` : '') +
-          replay +
-          `Current message: ${msg.text}`;
-        console.warn(
-          `[gateway] resume failed for ${msg.sessionKey} (stale claudeSessionId=${claudeSessionId}); ` +
-          `retrying fresh with ${recent.length} turns of replayed context. ` +
+      result = await this.agent.chat(retryMessage, workingDir, undefined);
+      if (result.ok) {
+        console.log(
+          `[gateway] resume retry succeeded for ${msg.sessionKey}: ` +
+          `new claudeSessionId=${result.sessionId}, replayed=${recent.length} turns`,
+        );
+      } else {
+        console.error(
+          `[gateway] resume retry ALSO FAILED for ${msg.sessionKey}: ` +
           `cause=${result.error || 'unknown'}`,
         );
-        result = await this.agent.chat(
-          retryMessage,
-          this.config.agents.workingDir,
-          undefined,
-        );
-        if (result.ok) {
-          console.log(
-            `[gateway] resume retry succeeded for ${msg.sessionKey}: ` +
-            `new claudeSessionId=${result.sessionId}, replayed=${recent.length} turns`,
-          );
-        } else {
-          console.error(
-            `[gateway] resume retry ALSO FAILED for ${msg.sessionKey}: ` +
-            `cause=${result.error || 'unknown'}`,
-          );
-        }
       }
+    }
 
-      // Save the Claude session ID so next message resumes the conversation
-      if (result.sessionId) {
-        this.sessions.setClaudeSessionId(msg.sessionKey, result.sessionId);
-      }
+    // Save the Claude session ID so next message resumes the conversation
+    if (result.sessionId) {
+      this.sessions.setClaudeSessionId(msg.sessionKey, result.sessionId);
+    }
 
-      // Record and send the response
-      this.sessions.addEntry(msg.sessionKey, {
-        role: 'assistant',
-        content: result.response,
+    // Record and send the response
+    this.sessions.addEntry(msg.sessionKey, {
+      role: 'assistant',
+      content: result.response,
+      timestamp: new Date().toISOString(),
+      channel: msg.channel,
+    });
+
+    // Send response back through the originating channel
+    channel?.send(msg.sessionKey, result.response);
+
+    // Broadcast to web dashboard so all channels are visible there
+    if (msg.channel !== 'web') {
+      this.broadcast({
+        type: 'session:message',
+        data: { sessionKey: msg.sessionKey, message: result.response, channel: msg.channel },
         timestamp: new Date().toISOString(),
-        channel: msg.channel,
       });
-
-      // Send response back through the originating channel
-      channel?.send(msg.sessionKey, result.response);
-
-      // Broadcast to web dashboard so all channels are visible there
-      if (msg.channel !== 'web') {
-        this.broadcast({
-          type: 'session:message',
-          data: { sessionKey: msg.sessionKey, message: result.response, channel: msg.channel },
-          timestamp: new Date().toISOString(),
-        });
-      }
-    };
-
-    for (const channel of this.channels.values()) {
-      channel.onMessage(messageHandler);
     }
   }
 
@@ -395,6 +427,7 @@ export class Gateway {
     channel?: ChannelAdapter,
   ): Promise<boolean> {
     const reply = (text: string) => channel?.send(msg.sessionKey, text);
+    const workingDir = this.resolveWorkingDir(msg);
 
     switch (cmd) {
       case 'help':
@@ -408,7 +441,10 @@ export class Gateway {
           `/tasks — list running/recent tasks\n` +
           `/cancel <id> — cancel a running task\n` +
           `/skills — list available skills\n` +
-          `/model <name> — switch model (opus/sonnet/haiku)\n\n` +
+          `/model <name> — switch model (opus/sonnet/haiku)\n` +
+          `/pwd — show current working directory for this session\n` +
+          `/cd <path> — set working directory for this session (alone to reset)\n` +
+          `/in <path> <msg> — run one message in <path> without changing the session default\n\n` +
           `**Family:**\n` +
           `Just say it naturally — "add chicken curry to Wednesday dinner", "we need milk", "order the groceries"\n\n` +
           `Or use commands:\n` +
@@ -439,6 +475,51 @@ export class Gateway {
         }
         this.sessions.setMode(msg.sessionKey, mode);
         await reply(`Switched to **${mode}** mode.${mode === 'task' ? ' All messages will run as autonomous tasks.' : ' Messages are conversational with memory.'}`);
+        return true;
+      }
+
+      case 'pwd': {
+        const override = this.sessions.getWorkingDir(msg.sessionKey);
+        const effective = override || this.config.agents.workingDir;
+        await reply(
+          `Working directory: \`${effective}\`` +
+          (override ? '  _(set via /cd; /cd alone to reset)_' : '  _(default from config; /cd <path> to override)_'),
+        );
+        return true;
+      }
+
+      case 'cd': {
+        if (args.length === 0) {
+          this.sessions.setWorkingDir(msg.sessionKey, undefined);
+          await reply(`Working directory reset to default: \`${this.config.agents.workingDir}\``);
+          return true;
+        }
+        // Join args so quoted paths-with-spaces work too (e.g. /cd ~/code/Metcash/Data Engineering)
+        const raw = args.join(' ');
+        const expanded = this.expandPath(raw);
+        const v = this.validateDir(expanded);
+        if (!v.ok) { await reply(`/cd failed: ${v.reason}`); return true; }
+        this.sessions.setWorkingDir(msg.sessionKey, expanded);
+        await reply(`Working directory set to \`${expanded}\` for this session. (Use /cd alone to reset, /pwd to check.)`);
+        return true;
+      }
+
+      case 'in': {
+        if (args.length < 2) {
+          await reply('Usage: /in <path> <message>  — runs one message in <path> without changing your session default');
+          return true;
+        }
+        const pathArg = args[0];
+        const rest = args.slice(1).join(' ');
+        const expanded = this.expandPath(pathArg);
+        const v = this.validateDir(expanded);
+        if (!v.ok) { await reply(`/in failed: ${v.reason}`); return true; }
+        // Re-dispatch the inner message with a one-shot cwd override.
+        // suppressLog avoids double-recording — the original /in <...> was already logged.
+        await this.handleIncoming(
+          { ...msg, text: rest, workingDirOverride: expanded },
+          { suppressLog: true },
+        );
         return true;
       }
 
@@ -590,7 +671,7 @@ export class Gateway {
         if (!prompt) { await reply(`Usage: /${cmd} <what to do>`); return true; }
         const skillsPrompt = this.skills.buildSkillsPrompt();
         const fullPrompt = skillsPrompt ? `${skillsPrompt}\n\n${prompt}` : prompt;
-        await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey);
+        await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir);
         return true;
       }
 
@@ -759,7 +840,7 @@ export class Gateway {
         const buyPrompt = skillsPrompt
           ? `${skillsPrompt}\n\n/grocery-order ${itemsToOrder.join(', ')}`
           : `/grocery-order ${itemsToOrder.join(', ')}`;
-        await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey);
+        await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey, workingDir);
         return true;
       }
 
@@ -859,7 +940,7 @@ export class Gateway {
             return true;
           }
           const prompt = `${skill.instructions}\n\nUser request: ${args.join(' ')}`;
-          await this.agent.runTask(prompt, msg.channel, msg.sessionKey);
+          await this.agent.runTask(prompt, msg.channel, msg.sessionKey, workingDir);
           return true;
         }
         return false; // Not a known command

@@ -279,6 +279,9 @@ Type `/` to see all commands with autocomplete. Key ones:
 /fix <description>      Same as /task
 /model opus             Switch to Opus (or sonnet, haiku)
 /set discord.token X    Configure from chat
+/pwd                    Show current working directory for this session
+/cd <path>              Set working directory for this session (alone resets)
+/in <path> <message>    Run one message in <path> without changing session default
 
 # Family
 /dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)

@@ -95,6 +95,22 @@ export class SessionManager {
     this.persistIndex();
   }
 
+  /** Set or clear the per-session working directory override. */
+  setWorkingDir(key: string, workingDir: string | undefined): void {
+    const session = this.sessions.get(key);
+    if (!session) return;
+    if (workingDir === undefined || workingDir === '') {
+      delete session.workingDir;
+    } else {
+      session.workingDir = workingDir;
+    }
+    this.persistIndex();
+  }
+
+  getWorkingDir(key: string): string | undefined {
+    return this.sessions.get(key)?.workingDir;
+  }
+
   listSessions(): Session[] {
     return Array.from(this.sessions.values())
       .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());

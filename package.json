@@ -35,7 +35,7 @@
   "homepage": "https://github.com/tech-ten/claude-gombwe",
   "scripts": {
     "clean": "shx rm -rf dist && shx mkdir dist",
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "dev": "run-p watch-server watch-assets",
     "watch-server": "tsx watch src/index.ts",

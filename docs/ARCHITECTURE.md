@@ -86,6 +86,9 @@ Tracks conversations across channels:
 - Sessions store the Claude CLI session ID for `--resume`
 - Transcripts are stored as JSONL files in `~/.claude-gombwe/data/sessions/`
 - Sessions have a mode: `chat` (conversational) or `task` (autonomous)
+- Sessions optionally store a `workingDir` override (set via `/cd`) — every chat/task in the session then runs in that directory until reset
+
+**Working-directory resolution** for each message: `/in <path> ...` override → session's `/cd` value → `config.agents.workingDir` default. `/in` provides a one-shot cwd for a single message without changing the session's persistent setting; `/pwd` reports the current effective value.
 
 ### 4. Channel Adapters (`src/channels/`)
 

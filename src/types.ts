@@ -54,6 +54,9 @@ export interface Session {
   claudeSessionId?: string;
   // What mode this session is in
   mode: 'chat' | 'task';
+  // Per-session working directory override (set via /cd). When unset,
+  // commands fall back to config.agents.workingDir.
+  workingDir?: string;
 }
 
 export interface TranscriptEntry {
@@ -175,6 +178,9 @@ export interface IncomingMessage {
   text: string;
   sender: string;
   timestamp: string;
+  // One-shot working-directory override (set by /in). Does not affect
+  // the session's persistent workingDir.
+  workingDirOverride?: string;
 }
 
 export type WSEventType =
