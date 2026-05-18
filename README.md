@@ -405,4 +405,4 @@ Every step uses `--resume` so Claude remembers everything — every file read, c
 
 ## License
 
-MIT
+[MIT](LICENSE) © Tendai Mudavanhu
