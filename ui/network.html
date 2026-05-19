@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Network — Gombwe</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/ui/network.css">
+</head>
+<body>
+
+  <!-- ── top strip ─────────────────────────────────────────────────── -->
+  <header class="topstrip">
+    <div class="container topstrip-inner">
+      <span class="wordmark">Gombwe</span>
+      <span class="topstrip-sep" aria-hidden="true"></span>
+      <span class="topstrip-section">Network</span>
+      <span class="topstrip-status" id="topStatus">
+        <span class="status-dot" id="statusDot" data-state="connecting" aria-hidden="true"></span>
+        <span id="statusText">Connecting</span>
+      </span>
+    </div>
+  </header>
+
+  <main class="container main">
+
+    <!-- ── hero figures ─────────────────────────────────────────────── -->
+    <section class="hero" aria-labelledby="heroHeading">
+      <p class="kicker" id="heroHeading">The household, tonight</p>
+      <div class="figures">
+        <article class="figure">
+          <span class="figure-number" id="figDevices">—</span>
+          <span class="figure-label" id="figDevicesLabel">devices on network</span>
+        </article>
+        <article class="figure">
+          <span class="figure-number" id="figPeople">—</span>
+          <span class="figure-label" id="figPeopleLabel">people active</span>
+        </article>
+        <article class="figure">
+          <span class="figure-number" id="figData">—</span>
+          <span class="figure-label" id="figDataLabel">data moved today</span>
+        </article>
+      </div>
+    </section>
+
+    <hr class="rule">
+
+    <!-- ── people section ───────────────────────────────────────────── -->
+    <section class="section" aria-labelledby="peopleHeading">
+      <header class="section-head">
+        <h2 class="section-title" id="peopleHeading">The household</h2>
+        <p class="section-sub" id="peopleSub">Members and their devices.</p>
+      </header>
+      <ol class="rowlist" id="peopleList" role="list"></ol>
+      <p class="empty" id="peopleEmpty" hidden>No people yet. Assign a device below to begin.</p>
+    </section>
+
+    <hr class="rule">
+
+    <!-- ── household devices section ────────────────────────────────── -->
+    <section class="section" aria-labelledby="hhHeading">
+      <header class="section-head">
+        <h2 class="section-title" id="hhHeading">Household devices</h2>
+        <p class="section-sub" id="hhSub">Shared infrastructure — TVs, speakers, sensors.</p>
+      </header>
+      <ol class="rowlist" id="householdList" role="list"></ol>
+      <p class="empty" id="householdEmpty" hidden>Nothing here yet.</p>
+    </section>
+
+  </main>
+
+  <!-- ── toast region ─────────────────────────────────────────────── -->
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <!-- ── assign-to-person modal ───────────────────────────────────── -->
+  <div class="scrim" id="modalScrim" hidden></div>
+  <aside class="modal" id="assignModal" role="dialog" aria-modal="true" aria-labelledby="assignTitle" hidden>
+    <div class="modal-inner">
+      <header class="modal-head">
+        <h3 class="modal-title" id="assignTitle">Assign device</h3>
+        <button type="button" class="modal-close" id="assignClose" aria-label="Close">×</button>
+      </header>
+      <p class="modal-sub">Choose a person for <span id="assignDeviceName">this device</span>.</p>
+      <div class="assign-options" id="assignOptions"></div>
+      <div class="assign-new">
+        <label class="assign-new-label" for="assignNewName">Add a new person</label>
+        <div class="assign-new-row">
+          <input type="text" id="assignNewName" placeholder="First name" autocomplete="off">
+          <button type="button" class="btn btn-primary" id="assignNewBtn">Add</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-text" id="assignClear">Move to household</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── row template (person) ────────────────────────────────────── -->
+  <template id="tpl-person-row">
+    <li class="row row-person" role="listitem">
+      <button class="row-trigger" type="button" aria-expanded="false">
+        <span class="monogram" data-bind="monogram"></span>
+        <span class="row-body">
+          <span class="row-title" data-bind="name"></span>
+          <span class="row-sub" data-bind="sub"></span>
+        </span>
+        <span class="row-meta">
+          <span class="row-meta-primary" data-bind="meta1"></span>
+          <span class="row-meta-secondary" data-bind="meta2"></span>
+        </span>
+      </button>
+      <div class="row-children" data-bind="children" hidden></div>
+    </li>
+  </template>
+
+  <!-- ── row template (device) ────────────────────────────────────── -->
+  <template id="tpl-device-row">
+    <li class="row row-device" role="listitem">
+      <div class="row-trigger row-trigger-device" tabindex="0">
+        <span class="row-body">
+          <span class="row-title-line">
+            <span class="row-title" data-bind="name"></span>
+            <button type="button" class="row-pencil" data-action="rename" aria-label="Rename">
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 11h2l6.5-6.5-2-2L1 9v2zm8.5-7L11 2.5 9.5 1 8 2.5 9.5 4z" fill="currentColor"/></svg>
+            </button>
+          </span>
+          <span class="row-sub" data-bind="activity"></span>
+        </span>
+        <span class="row-actions">
+          <button type="button" class="btn-quiet" data-action="block" data-bind="blockBtn">Pause</button>
+          <button type="button" class="btn-icon" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-label="More">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="3" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="11" cy="7" r="1.2" fill="currentColor"/></svg>
+          </button>
+          <div class="menu" data-bind="menu" hidden role="menu">
+            <button type="button" class="menu-item" data-mins="30" role="menuitem">Pause for 30 minutes</button>
+            <button type="button" class="menu-item" data-mins="120" role="menuitem">Pause for 2 hours</button>
+            <button type="button" class="menu-item" data-mins="until_tomorrow" role="menuitem">Pause until tomorrow 6am</button>
+            <button type="button" class="menu-item" data-mins="0" role="menuitem">Pause indefinitely</button>
+            <hr class="menu-rule">
+            <button type="button" class="menu-item" data-action="assign" role="menuitem">Assign to person…</button>
+            <button type="button" class="menu-item" data-action="toggle-kid" data-bind="kidToggle" role="menuitem">Add to kid list</button>
+            <button type="button" class="menu-item" data-action="toggle-details" role="menuitem">Show details</button>
+          </div>
+        </span>
+      </div>
+      <div class="details" data-bind="details" hidden>
+        <div class="details-grid">
+          <dl class="details-list">
+            <div class="dt-row"><dt>IP</dt><dd><code data-bind="dIp">—</code></dd></div>
+            <div class="dt-row"><dt>MAC</dt><dd><code data-bind="dMac">—</code></dd></div>
+            <div class="dt-row"><dt>Vendor</dt><dd data-bind="dVendor">—</dd></div>
+            <div class="dt-row"><dt>Last seen</dt><dd data-bind="dLastSeen">—</dd></div>
+            <div class="dt-row"><dt>Connections</dt><dd><code data-bind="dConns">0</code></dd></div>
+            <div class="dt-row"><dt>Today</dt><dd data-bind="dToday">—</dd></div>
+          </dl>
+          <div class="details-spark">
+            <p class="details-label">Activity, last 24 hours</p>
+            <div data-bind="spark" class="spark"></div>
+          </div>
+          <div class="details-dests">
+            <p class="details-label">Destinations <span class="details-label-meta" data-bind="destsCount"></span></p>
+            <ol class="dest-list dest-list-scroll" data-bind="dests"></ol>
+          </div>
+        </div>
+        <div class="details-dns">
+          <p class="details-label">DNS queries <span class="details-label-meta" data-bind="dnsCount"></span></p>
+          <ol class="dns-list dns-list-scroll" data-bind="dnsList">
+            <li class="dns-empty">Waiting for queries — they appear here within seconds of being made.</li>
+          </ol>
+        </div>
+      </div>
+    </li>
+  </template>
+
+  <script src="/ui/network.js" defer></script>
+</body>
+</html>

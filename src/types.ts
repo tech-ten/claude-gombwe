@@ -197,7 +197,11 @@ export type WSEventType =
   | 'eero:profile-paused'
   | 'eero:profile-unpaused'
   | 'eero:speedtest'
-  | 'eero:alert';
+  | 'eero:alert'
+  | 'network:device:update'
+  | 'network:status:update'
+  | 'network:policy:flagged'
+  | 'network:policy:blocked';
 
 export interface WSEvent {
   type: WSEventType;

@@ -1,0 +1,469 @@
+/**
+ * Network monitoring + control service.
+ *
+ * Wraps the MikroTik client and the JSONL data the collector writes, exposing
+ * the higher-level shape the dashboard wants:
+ *   - per-device summary (online, vendor, today's bandwidth, top destinations, blocked state)
+ *   - one-click block / unblock with optional scheduled expiry
+ *   - persistent device aliases (friendly names the user types)
+ *
+ * No EventEmitter or WebSocket wiring here — that lives in the gateway. This
+ * file is the data layer.
+ */
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry } from './mikrotik-client.js';
+import { ipResolver } from './ip-name-resolver.js';
+
+const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const ALIASES_PATH = join(homedir(), '.claude-gombwe', 'network-aliases.json');
+const OWNERS_PATH = join(homedir(), '.claude-gombwe', 'network-owners.json');
+const BLOCKS_PATH = join(homedir(), '.claude-gombwe', 'network-blocks.json');
+const KIDLIST_PATH = join(homedir(), '.claude-gombwe', 'network-kid-list.json');
+const POLICY_ACTIONS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-actions.jsonl');
+
+export interface DeviceSummary {
+  mac: string;
+  ip: string;
+  name: string;
+  hostname: string;
+  vendor: string;
+  owner: string | null;       // Person who owns the device (set by user; null = household/unassigned)
+  kid: boolean;               // On the kid list → AI policy scanner may auto-block for this device
+  online: boolean;
+  last_seen: string;
+  active_connections: number;
+  today_bytes_down: number;
+  today_bytes_up: number;
+  blocked: boolean;
+  block_expires: string | null;
+  top_destinations_today: Array<{ host: string; bytes: number; connections: number }>;
+}
+
+export interface NetworkStatus {
+  router: { model: string; version: string; uptime: string; cpu_load: number };
+  online_count: number;
+  known_count: number;
+  current_bandwidth: { down_mbps: number; up_mbps: number };
+  data_collector: { running: boolean; first_snapshot: string | null; snapshot_count: number };
+}
+
+interface AliasMap { [mac: string]: string; }
+interface OwnerMap { [mac: string]: string; }
+interface BlockState { [mac: string]: { rule_id: string; blocked_until: string | null; created_at: string; }; }
+interface KidList { macs: string[]; }
+
+/** A tiny offline OUI lookup — top vendors only. Good enough for the dashboard. */
+const OUI_PREFIXES: Array<[string, string]> = [
+  ['30:3A:4A', 'eero'],
+  ['08:C3:B3', 'Hon Hai (TV)'],
+  ['74:40:BB', 'Brother'],
+  ['00:1B:63', 'Apple'], ['00:1F:F3', 'Apple'], ['00:25:00', 'Apple'],
+  ['28:6A:BA', 'Apple'], ['3C:15:C2', 'Apple'], ['68:AB:1E', 'Apple'],
+  ['F0:18:98', 'Apple'], ['DC:A9:04', 'Apple'], ['BC:67:1C', 'Apple'],
+  ['D0:BA:E4', 'MXChip / Microsoft'],
+];
+
+function ouiOf(mac: string): string {
+  const prefix = mac.slice(0, 8).toUpperCase();
+  // Locally-administered bit (second hex of first byte = 2,6,A,E) → MAC randomization (iOS/Android privacy)
+  const first = parseInt(mac.slice(0, 2), 16);
+  if ((first & 0x02) !== 0) return 'Randomized';
+  for (const [pfx, vendor] of OUI_PREFIXES) {
+    if (prefix === pfx) return vendor;
+  }
+  return 'Unknown';
+}
+
+function readJsonOrEmpty<T>(path: string, fallback: T): T {
+  try { return existsSync(path) ? JSON.parse(readFileSync(path, 'utf-8')) as T : fallback; }
+  catch { return fallback; }
+}
+
+function writeJson(path: string, value: unknown): void {
+  writeFileSync(path, JSON.stringify(value, null, 2));
+}
+
+function todayJsonlPath(): string {
+  return join(DATA_DIR, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+}
+
+/** Read today's JSONL snapshots. Each line is one minute's full snapshot. Cheap enough to re-read on every request. */
+function readTodaySnapshots(): Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }> {
+  const path = todayJsonlPath();
+  if (!existsSync(path)) return [];
+  const text = readFileSync(path, 'utf-8');
+  const out: Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }> = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+export class NetworkService {
+  private aliases: AliasMap = readJsonOrEmpty(ALIASES_PATH, {});
+  private owners: OwnerMap = readJsonOrEmpty(OWNERS_PATH, {});
+  private blocks: BlockState = readJsonOrEmpty(BLOCKS_PATH, {});
+  private kidList: KidList = readJsonOrEmpty(KIDLIST_PATH, { macs: [] });
+  // Per-kid auto-block rules added by the policy scanner: mac → hostname → ruleId(s)
+  private kidAutoBlocks: Map<string, Map<string, string[]>> = new Map();
+  private timers: Map<string, NodeJS.Timeout> = new Map();
+
+  constructor() {
+    // On startup, re-arm scheduled-unblock timers for any blocks that still have a future expiry.
+    for (const [mac, state] of Object.entries(this.blocks)) {
+      if (state.blocked_until) {
+        const remaining = new Date(state.blocked_until).getTime() - Date.now();
+        if (remaining > 0) this.scheduleUnblock(mac, remaining);
+        else this.unblock(mac).catch(() => { /* will retry next request */ });
+      }
+    }
+  }
+
+  // ── Status ─────────────────────────────────────────────────────
+  async status(): Promise<NetworkStatus> {
+    const [resource, leases, ifaces] = await Promise.all([
+      mikrotik.systemResource(),
+      mikrotik.dhcpLeases(),
+      mikrotik.interfaceStats(),
+    ]);
+
+    const onlineMacs = new Set(leases.filter(l => l.status === 'bound').map(l => l['mac-address']?.toUpperCase()).filter(Boolean));
+    const knownMacs = new Set(leases.map(l => l['mac-address']?.toUpperCase()).filter(Boolean));
+
+    // Sum up rx/tx bits/s across WAN-ish interfaces. ether1 is the conventional WAN port.
+    const wan = ifaces.find(i => i.name === 'ether1');
+    const downMbps = wan?.['rx-bits-per-second'] ? parseInt(wan['rx-bits-per-second']) / 1_000_000 : 0;
+    const upMbps   = wan?.['tx-bits-per-second'] ? parseInt(wan['tx-bits-per-second']) / 1_000_000 : 0;
+
+    const snapshots = readTodaySnapshots();
+
+    return {
+      router: {
+        model: resource['board-name'] ?? 'unknown',
+        version: resource.version ?? 'unknown',
+        uptime: resource.uptime ?? '?',
+        cpu_load: parseInt(resource['cpu-load'] ?? '0') || 0,
+      },
+      online_count: onlineMacs.size,
+      known_count: knownMacs.size,
+      current_bandwidth: { down_mbps: +downMbps.toFixed(2), up_mbps: +upMbps.toFixed(2) },
+      data_collector: {
+        running: snapshots.length > 0 && (Date.now() - new Date(snapshots[snapshots.length - 1].ts).getTime() < 5 * 60_000),
+        first_snapshot: snapshots[0]?.ts ?? null,
+        snapshot_count: snapshots.length,
+      },
+    };
+  }
+
+  // ── Devices ────────────────────────────────────────────────────
+  async devices(): Promise<DeviceSummary[]> {
+    const [leases, conns, dnsCache] = await Promise.all([
+      mikrotik.dhcpLeases(),
+      mikrotik.connections(),
+      mikrotik.dnsCache().catch(() => [] as MtDnsCacheEntry[]),
+    ]);
+
+    // Build IP → hostname map from DNS cache, so we can show readable destinations.
+    const ipToHost = new Map<string, string>();
+    for (const e of dnsCache) {
+      if (e.address && e.name) ipToHost.set(e.address, e.name);
+    }
+
+    // Aggregate today's connection bytes per (src_mac, dst_host) — but
+    // CORRECTLY this time. Each snapshot reports each still-open connection's
+    // *cumulative* byte counters; a 2-hour TCP session captured 120 times
+    // would otherwise be counted 120× if we just summed. Instead, key every
+    // unique connection by its 5-tuple and keep the MAX bytes seen (which
+    // is the connection's final running total at the moment we last saw it).
+    // Sum across unique connections at the end.
+    const snapshots = readTodaySnapshots();
+
+    // Per-connection: 5-tuple → {mac, host, up, down, hits}
+    // - up   = max orig-bytes seen (device → outside)
+    // - down = max repl-bytes seen (outside → device)
+    // - hits = how many snapshots this connection appeared in (proxy for "session count")
+    interface ConnTotal { mac: string; host: string; up: number; down: number; hits: number }
+    const connTotals: Map<string, ConnTotal> = new Map();
+
+    for (const snap of snapshots) {
+      const ipToMac = new Map<string, string>();
+      for (const lease of snap.devices) {
+        if (lease.address && lease['mac-address']) ipToMac.set(lease.address, lease['mac-address'].toUpperCase());
+      }
+      for (const c of snap.connections) {
+        const srcAddr = c['src-address'] ?? '';
+        const dstAddr = c['dst-address'] ?? '';
+        const srcIp = srcAddr.split(':')[0];
+        const dstIp = dstAddr.split(':')[0];
+        if (!srcIp || !dstIp) continue;
+        const mac = ipToMac.get(srcIp);
+        if (!mac) continue;
+        const origBytes = parseInt(c['orig-bytes'] ?? '0') || 0;
+        const replBytes = parseInt(c['repl-bytes'] ?? '0') || 0;
+
+        // 5-tuple key: src_address (with port) + dst_address (with port) + protocol.
+        // Distinct connections always have distinct 5-tuples on the same router until conntrack expires.
+        const key = `${c.protocol ?? '?'}|${srcAddr}|${dstAddr}`;
+        // Pick the most-specific destination name:
+        //   1. MikroTik DNS cache (exact hostname the device queried)
+        //   2. IpNameResolver (heuristic ranges first, then reverse DNS w/ caching)
+        //   3. Raw IP (only if nothing resolved yet)
+        const host = ipToHost.get(dstIp) ?? ipResolver().resolveSync(dstIp);
+
+        const existing = connTotals.get(key);
+        if (!existing) {
+          connTotals.set(key, { mac, host, up: origBytes, down: replBytes, hits: 1 });
+        } else {
+          // Keep the max for each direction — counters only increase within a connection.
+          if (origBytes > existing.up) existing.up = origBytes;
+          if (replBytes > existing.down) existing.down = replBytes;
+          existing.hits += 1;
+        }
+      }
+    }
+
+    // Now fold per-connection totals into per-MAC and per-destination summaries.
+    const todayPerMac: Map<string, { down: number; up: number; dests: Map<string, { bytes: number; conns: number }> }> = new Map();
+    for (const t of connTotals.values()) {
+      const entry = todayPerMac.get(t.mac) ?? { down: 0, up: 0, dests: new Map() };
+      entry.up   += t.up;
+      entry.down += t.down;
+      const d = entry.dests.get(t.host) ?? { bytes: 0, conns: 0 };
+      d.bytes += t.up + t.down;
+      d.conns += 1;   // one unique connection contributes one to the count, not one per snapshot
+      entry.dests.set(t.host, d);
+      todayPerMac.set(t.mac, entry);
+    }
+
+    const activeConnsByMac = new Map<string, number>();
+    {
+      const ipToMacNow = new Map<string, string>();
+      for (const lease of leases) {
+        if (lease.address && lease['mac-address']) ipToMacNow.set(lease.address, lease['mac-address'].toUpperCase());
+      }
+      for (const c of conns) {
+        const srcIp = c['src-address']?.split(':')[0];
+        if (!srcIp) continue;
+        const mac = ipToMacNow.get(srcIp);
+        if (!mac) continue;
+        activeConnsByMac.set(mac, (activeConnsByMac.get(mac) ?? 0) + 1);
+      }
+    }
+
+    const summaries: DeviceSummary[] = leases.map(lease => {
+      const mac = (lease['mac-address'] ?? '').toUpperCase();
+      const ip = lease.address ?? '';
+      const hostname = lease['host-name'] ?? '';
+      const today = todayPerMac.get(mac);
+      const topDests = today
+        ? [...today.dests.entries()]
+            .sort((a, b) => b[1].bytes - a[1].bytes)
+            .slice(0, 5)
+            .map(([host, v]) => ({ host, bytes: v.bytes, connections: v.conns }))
+        : [];
+      const blockState = this.blocks[mac];
+      return {
+        mac, ip,
+        name: this.aliases[mac] ?? hostname ?? mac,
+        hostname,
+        vendor: ouiOf(mac),
+        owner: this.owners[mac] ?? null,
+        kid: this.isKid(mac),
+        online: lease.status === 'bound',
+        last_seen: new Date().toISOString(),  // refined when we have history
+        active_connections: activeConnsByMac.get(mac) ?? 0,
+        today_bytes_down: today?.down ?? 0,
+        today_bytes_up: today?.up ?? 0,
+        blocked: !!blockState,
+        block_expires: blockState?.blocked_until ?? null,
+        top_destinations_today: topDests,
+      };
+    });
+
+    return summaries.sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return b.today_bytes_down + b.today_bytes_up - (a.today_bytes_down + a.today_bytes_up);
+    });
+  }
+
+  // ── Aliases ────────────────────────────────────────────────────
+  setAlias(mac: string, name: string): void {
+    const key = mac.toUpperCase();
+    if (!name) delete this.aliases[key];
+    else this.aliases[key] = name;
+    writeJson(ALIASES_PATH, this.aliases);
+  }
+
+  // ── Owners (person assignment for person-first grouping) ───────
+  setOwner(mac: string, owner: string | null): void {
+    const key = mac.toUpperCase();
+    if (!owner) delete this.owners[key];
+    else this.owners[key] = owner;
+    writeJson(OWNERS_PATH, this.owners);
+  }
+
+  // ── Kid list (per-device policy scoping) ──────────────────────
+  isKid(mac: string): boolean {
+    return this.kidList.macs.includes(mac.toUpperCase());
+  }
+
+  kidMacs(): string[] {
+    return [...this.kidList.macs];
+  }
+
+  setKid(mac: string, on: boolean): void {
+    const key = mac.toUpperCase();
+    const set = new Set(this.kidList.macs);
+    if (on) set.add(key); else set.delete(key);
+    this.kidList.macs = [...set];
+    writeJson(KIDLIST_PATH, this.kidList);
+  }
+
+  // ── Block / Unblock ────────────────────────────────────────────
+  async block(mac: string, durationMinutes: number | null): Promise<{ rule_id: string; blocked_until: string | null; killed_flows: number }> {
+    const key = mac.toUpperCase();
+    // If already blocked, unblock first to avoid duplicate firewall rules.
+    if (this.blocks[key]) await this.unblock(key);
+
+    const name = this.aliases[key] ?? key;
+    const expiresAt = durationMinutes ? new Date(Date.now() + durationMinutes * 60_000) : null;
+    const comment = `gombwe-block ${name}${expiresAt ? ` until ${expiresAt.toISOString()}` : ' indefinite'}`;
+    const ruleId = await mikrotik.addMacBlock(key, comment);
+
+    // Find the device's current IP so we can also sever live connections.
+    // The drop rule alone only stops NEW packets; for true preemption we
+    // remove conntrack entries for this device's IP. Best-effort — missing
+    // lease just means no active flows to kill.
+    let killed = 0;
+    try {
+      const leases = await mikrotik.dhcpLeases();
+      const lease = leases.find(l => l['mac-address']?.toUpperCase() === key && l.status === 'bound');
+      if (lease?.address) {
+        killed = await mikrotik.killConnectionsFromIp(lease.address);
+      }
+    } catch (err) {
+      console.warn(`[network] block: kill-active-flows for ${key} failed:`, err);
+    }
+
+    this.blocks[key] = {
+      rule_id: ruleId,
+      blocked_until: expiresAt?.toISOString() ?? null,
+      created_at: new Date().toISOString(),
+    };
+    writeJson(BLOCKS_PATH, this.blocks);
+
+    if (expiresAt) this.scheduleUnblock(key, expiresAt.getTime() - Date.now());
+
+    return { rule_id: ruleId, blocked_until: this.blocks[key].blocked_until, killed_flows: killed };
+  }
+
+  /**
+   * Used by the policy scanner: block a specific hostname for one kid device.
+   * Scoped per-MAC, so adult devices on the same network are unaffected.
+   * Resolves the hostname to its current IPs, adds a per-MAC drop rule per IP,
+   * kills any active connections to those IPs from the kid's device,
+   * persists the action for audit.
+   */
+  async autoBlockHostnameForKid(mac: string, hostname: string, reason: string, severity: 'low'|'med'|'high'): Promise<{ rule_ids: string[]; ips: string[]; killed: number }> {
+    const key = mac.toUpperCase();
+    if (!this.isKid(key)) {
+      throw new Error(`autoBlockHostnameForKid: ${key} is not on the kid list`);
+    }
+
+    // Resolve the hostname to its current IPs. Use Node's stdlib resolver
+    // rather than asking MikroTik — that way we don't pollute the MikroTik
+    // DNS cache with a query we're about to deny.
+    const dns = await import('node:dns');
+    const ips: string[] = await new Promise(resolve => {
+      dns.resolve4(hostname, (err, addrs) => resolve(err ? [] : addrs));
+    });
+    // IPv6 too, best-effort
+    const ips6: string[] = await new Promise(resolve => {
+      dns.resolve6(hostname, (err, addrs) => resolve(err ? [] : addrs));
+    });
+    const allIps = [...ips, ...ips6];
+
+    const ruleIds: string[] = [];
+    for (const ip of allIps) {
+      try {
+        const id = await mikrotik.addDstBlockForMac(key, ip, `gombwe-auto kid=${this.aliases[key] ?? key} host=${hostname} severity=${severity}`);
+        ruleIds.push(id);
+      } catch (err) {
+        console.warn(`[policy] addDstBlockForMac failed for ${key}→${ip}:`, err);
+      }
+    }
+
+    // Track so we can remove later (e.g. on un-flag)
+    const macMap = this.kidAutoBlocks.get(key) ?? new Map();
+    macMap.set(hostname, ruleIds);
+    this.kidAutoBlocks.set(key, macMap);
+
+    // Kill any active sessions from this kid's device.
+    let killed = 0;
+    try {
+      const leases = await mikrotik.dhcpLeases();
+      const lease = leases.find(l => l['mac-address']?.toUpperCase() === key && l.status === 'bound');
+      if (lease?.address) {
+        killed = await mikrotik.killConnectionsFromIp(lease.address);
+      }
+    } catch { /* best-effort */ }
+
+    // Persist for audit / dashboard "what got blocked, why, when"
+    try {
+      const line = JSON.stringify({
+        ts: new Date().toISOString(),
+        mac: key,
+        name: this.aliases[key] ?? null,
+        hostname,
+        reason,
+        severity,
+        ips: allIps,
+        rule_ids: ruleIds,
+        killed_flows: killed,
+      });
+      const { appendFileSync } = await import('node:fs');
+      appendFileSync(POLICY_ACTIONS_PATH, line + '\n', { mode: 0o600 });
+    } catch (err) { console.warn('[policy] write audit failed:', err); }
+
+    return { rule_ids: ruleIds, ips: allIps, killed };
+  }
+
+  /** Return the recent policy actions journal (newest last). */
+  policyActions(limit = 200): Array<Record<string, unknown>> {
+    try {
+      const text = readFileSync(POLICY_ACTIONS_PATH, 'utf-8');
+      const lines = text.trim().split('\n').slice(-limit);
+      return lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) as Array<Record<string, unknown>>;
+    } catch { return []; }
+  }
+
+  async unblock(mac: string): Promise<void> {
+    const key = mac.toUpperCase();
+    const state = this.blocks[key];
+    if (!state) return;
+    await mikrotik.removeRule(state.rule_id);
+    delete this.blocks[key];
+    writeJson(BLOCKS_PATH, this.blocks);
+    const t = this.timers.get(key);
+    if (t) { clearTimeout(t); this.timers.delete(key); }
+  }
+
+  private scheduleUnblock(mac: string, delayMs: number): void {
+    const prev = this.timers.get(mac);
+    if (prev) clearTimeout(prev);
+    const t = setTimeout(() => {
+      this.unblock(mac).catch(err => console.error(`[network] scheduled unblock failed for ${mac}: ${err}`));
+    }, delayMs);
+    this.timers.set(mac, t);
+  }
+}
+
+/** Lazy singleton — gateway constructs it after `mikrotik.load()`. */
+let _instance: NetworkService | null = null;
+export function getNetworkService(): NetworkService {
+  if (!_instance) _instance = new NetworkService();
+  return _instance;
+}

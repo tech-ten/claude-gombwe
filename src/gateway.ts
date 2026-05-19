@@ -20,6 +20,10 @@ import { EeroClient } from './eero.js';
 import { EeroStore } from './eero-store.js';
 import { EeroScheduler } from './eero-schedules.js';
 import { NextDNSClient } from './nextdns.js';
+import { mikrotik } from './mikrotik-client.js';
+import { getNetworkService } from './network-service.js';
+import { dnsReceiver } from './dns-log-receiver.js';
+import { policyScanner } from './policy-scanner.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -1089,12 +1093,128 @@ export class Gateway {
     // Serve control panel UI
     this.app.use('/ui', express.static(join(__dirname, '..', 'ui')));
 
+    // Network dashboard (standalone page in the same ui/ dir — network.html/.js/.css)
+    this.app.get('/network', (_req: Request, res: Response) => {
+      res.sendFile(join(__dirname, '..', 'ui', 'network.html'));
+    });
+
     // Redirect root to UI
     this.app.get('/', (_req: Request, res: Response) => {
       res.redirect('/ui');
     });
 
     // --- REST API ---
+
+    // ── Network monitoring + control ─────────────────────────────
+    this.app.get('/api/network/status', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().status()); }
+      catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
+    });
+
+    this.app.get('/api/network/devices', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().devices()); }
+      catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
+    });
+
+    this.app.post('/api/network/devices/:mac/block', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac);
+      const duration = req.body?.duration_minutes ?? null;
+      try {
+        const result = await getNetworkService().block(mac, duration);
+        res.json({ ok: true, ...result });
+        this.broadcast({ type: 'network:device:update', data: { mac: mac.toUpperCase(), blocked: true, block_expires: result.blocked_until }, timestamp: new Date().toISOString() });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+
+    this.app.post('/api/network/devices/:mac/unblock', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac);
+      try {
+        await getNetworkService().unblock(mac);
+        res.json({ ok: true });
+        this.broadcast({ type: 'network:device:update', data: { mac: mac.toUpperCase(), blocked: false, block_expires: null }, timestamp: new Date().toISOString() });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+
+    this.app.post('/api/network/devices/:mac/name', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac);
+      const name = (req.body?.name ?? '').toString().trim();
+      getNetworkService().setAlias(mac, name);
+      res.json({ ok: true });
+      this.broadcast({ type: 'network:device:update', data: { mac: mac.toUpperCase(), name }, timestamp: new Date().toISOString() });
+    });
+
+    // Person-first grouping: assign a device to a person (or null to unassign → "Household devices")
+    this.app.post('/api/network/devices/:mac/owner', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac);
+      const ownerRaw = req.body?.owner;
+      const owner = ownerRaw === null || ownerRaw === '' ? null : String(ownerRaw).trim() || null;
+      getNetworkService().setOwner(mac, owner);
+      res.json({ ok: true });
+      this.broadcast({ type: 'network:device:update', data: { mac: mac.toUpperCase(), owner }, timestamp: new Date().toISOString() });
+    });
+
+    // Recent DNS queries, optionally filtered by client IP (e.g. ?client=192.168.88.245)
+    this.app.get('/api/network/dns/recent', (req: Request, res: Response) => {
+      const client = req.query.client as string | undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 200, 2000);
+      const recent = dnsReceiver().recent(limit);
+      res.json(client ? recent.filter(r => r.client_ip === client) : recent);
+    });
+
+    // Per-client DNS summary (count + top hostnames) over the in-memory ring
+    this.app.get('/api/network/dns/summary', (_req: Request, res: Response) => {
+      const summary = dnsReceiver().perClientSummary();
+      const out: Record<string, { count: number; blocked: number; top: Array<{ hostname: string; count: number }> }> = {};
+      for (const [client, agg] of Object.entries(summary)) {
+        const top = [...agg.hostnames.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([hostname, count]) => ({ hostname, count }));
+        out[client] = { count: agg.count, blocked: agg.blocked, top };
+      }
+      res.json(out);
+    });
+
+    // ── Kid list (per-device policy scoping) ─────────────────────
+    // GET → who's currently on the kid list
+    this.app.get('/api/network/kid-list', (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      res.json({ macs: getNetworkService().kidMacs() });
+    });
+
+    // POST /api/network/devices/:mac/kid  body: { enabled: true|false }
+    this.app.post('/api/network/devices/:mac/kid', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac).toUpperCase();
+      const enabled = !!req.body?.enabled;
+      getNetworkService().setKid(mac, enabled);
+      res.json({ ok: true, mac, enabled });
+      this.broadcast({ type: 'network:device:update', data: { mac, kid: enabled }, timestamp: new Date().toISOString() });
+    });
+
+    // ── Policy scanner ────────────────────────────────────────────
+    // GET recent policy actions (audit journal)
+    this.app.get('/api/network/policy/actions', (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      res.json(getNetworkService().policyActions(500));
+    });
+
+    // POST → trigger a manual scan now (useful for testing, also UI button)
+    this.app.post('/api/network/policy/scan', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await policyScanner().tick()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
 
     // Tasks
     this.app.get('/api/tasks', (_req: Request, res: Response) => {
@@ -1969,6 +2089,46 @@ The ingredients should be grocery item names with quantities scaled for ${family
     this.skills.load();
     console.log(`[gombwe] Loaded ${this.skills.listSkills().length} skills`);
 
+    // Load MikroTik creds (optional — quietly disable network features if absent)
+    if (mikrotik.load()) {
+      try {
+        getNetworkService();  // pre-construct so timers re-arm on startup
+        console.log(`[gombwe] MikroTik configured @ ${mikrotik.host}`);
+      } catch (err) {
+        console.warn(`[gombwe] MikroTik configured but service init failed:`, err);
+      }
+      // Start the DNS log receiver — listens on udp:1514 for MikroTik's
+      // remote-syslogged dns,packet stream. Fed by the logging-action config
+      // we set up via REST during MikroTik bring-up.
+      try {
+        dnsReceiver().start();
+      } catch (err) {
+        console.warn(`[gombwe] dns-receiver failed to start:`, err);
+      }
+
+      // Start the AI policy scanner. Has zero impact on devices not on the
+      // kid list — it strictly filters input by kid-list membership before
+      // sending anything to Claude or acting on the result.
+      try {
+        const scanner = policyScanner();
+        scanner.on('flagged', evt => this.broadcast({
+          type: 'network:policy:flagged' as never,
+          data: evt,
+          timestamp: new Date().toISOString(),
+        }));
+        scanner.on('blocked', evt => this.broadcast({
+          type: 'network:policy:blocked' as never,
+          data: evt,
+          timestamp: new Date().toISOString(),
+        }));
+        scanner.start();
+      } catch (err) {
+        console.warn(`[gombwe] policy scanner failed to start:`, err);
+      }
+    } else {
+      console.log(`[gombwe] MikroTik not configured (no ~/.claude-gombwe/mikrotik.json) — network features disabled`);
+    }
+
     // Start channels
     for (const [name, channel] of this.channels) {
       try {
@@ -2002,6 +2162,23 @@ The ingredients should be grocery item names with quantities scaled for ${family
     const eeroCfg = this.eeroStore.loadConfig();
     if (eeroCfg.samplerEnabled) {
       console.log(`[gombwe] eero sampler running every ${Math.round(eeroCfg.samplerIntervalMs / 1000)}s`);
+    }
+
+    // Network dashboard live updates: broadcast router status every 5s so the
+    // bandwidth meter and "live" indicator stay fresh without the client polling.
+    // Skipped silently if MikroTik isn't configured.
+    if (mikrotik.configured) {
+      const broadcastStatus = async () => {
+        try {
+          const status = await getNetworkService().status();
+          this.broadcast({ type: 'network:status:update', data: status, timestamp: new Date().toISOString() });
+        } catch (err) {
+          // One-line warn — don't spam the log if the router is briefly unreachable
+          console.warn(`[network] status broadcast skipped: ${err instanceof Error ? err.message : err}`);
+        }
+      };
+      setInterval(broadcastStatus, 5_000);
+      console.log(`[gombwe] network status broadcaster running every 5s`);
     }
 
     // Start server
