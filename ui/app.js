@@ -827,7 +827,14 @@ async function loadFamily() {
     if (!familyData.nonFoodList) familyData.nonFoodList = [];
     if (!familyData.lastOrdered) familyData.lastOrdered = null;
   } catch {}
-  await loadRecipes();
+  // Fetch the auxiliary grocery-intelligence files in parallel — none of
+  // them block render; missing files just produce empty sections.
+  await Promise.all([
+    loadRecipes(),
+    loadDeals(),
+    loadMealPlan(),
+    loadWatchlist(),
+  ]);
   renderAll();
 }
 
@@ -837,7 +844,10 @@ function renderAll() {
   renderGroceryList();
   renderNonFoodList();
   renderPantryList();
+  renderDeals();
+  renderMealPlan();
   renderRecipes();
+  renderWatchlist();
   renderSchoolEvents();
   renderOrderStatus();
   renderActionLog();
@@ -1401,10 +1411,312 @@ async function saveRecipe(name, data) {
   } catch {}
 }
 
+// ── Today's Deals ────────────────────────────────────────────────────
+//
+// Reads /api/family/deals (which reads grocery-deals-latest.json). Surfaces
+// rock-bottom items + Coles/Woolworths cart totals + free-delivery status.
+// Selected items can be pushed straight into familyData.groceryList — then
+// the existing Order Now button picks them up.
+
+let dealsData = null;        // last snapshot fetched
+const selectedDealNames = new Set();   // user's tick selection
+
+async function loadDeals() {
+  try {
+    const res = await fetch(`${API}/api/family/deals`);
+    const j = await res.json();
+    dealsData = j?.rock_bottom ? j : null;
+  } catch { dealsData = null; }
+}
+
+function renderDeals() {
+  const container = document.getElementById('dealsList');
+  const metaEl = document.getElementById('dealsMeta');
+  if (!container) return;
+
+  if (!dealsData) {
+    container.innerHTML = '<div class="empty-list">No price-watcher snapshot yet. The daily 06:00 cron writes it; or run <code>node scripts/grocery-watch.mjs</code> manually.</div>';
+    if (metaEl) metaEl.textContent = '';
+    return;
+  }
+
+  const rb = dealsData.rock_bottom || [];
+  const w = dealsData.carts?.woolworths;
+  const c = dealsData.carts?.coles;
+  if (metaEl) {
+    const wTxt = w ? `W: $${w.total}${w.free_delivery ? ' ✓ free' : ` (need $${(75 - w.total).toFixed(2)} more)`}` : '';
+    const cTxt = c ? `C: $${c.total}${c.free_delivery ? ' ✓ free' : ` (need $${(50 - c.total).toFixed(2)} more)`}` : '';
+    metaEl.textContent = `${rb.length} rock-bottom · ${wTxt} · ${cTxt}`;
+  }
+
+  if (rb.length === 0) {
+    container.innerHTML = '<div class="empty-list">Nothing at rock-bottom right now. Watching ' + (dealsData.items?.length ?? '?') + ' items; check back tomorrow.</div>';
+    return;
+  }
+
+  container.innerHTML = rb.map(item => {
+    const name = item.name;
+    const checked = selectedDealNames.has(name);
+    const price = item.best?.price?.toFixed(2) ?? '?';
+    const store = item.best?.store ?? '?';
+    return `
+      <label class="deal-row">
+        <input type="checkbox" data-deal-name="${esc(name)}" ${checked ? 'checked' : ''}>
+        <span class="deal-name">${esc(name)}</span>
+        <span class="deal-price">$${price} <span class="deal-store">${esc(store)}</span></span>
+        <span class="deal-ceiling">ceiling $${item.max_price}</span>
+      </label>
+    `;
+  }).join('');
+
+  container.querySelectorAll('input[data-deal-name]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const n = cb.dataset.dealName;
+      if (cb.checked) selectedDealNames.add(n); else selectedDealNames.delete(n);
+    });
+  });
+}
+
+document.getElementById('dealsImportBtn')?.addEventListener('click', async () => {
+  const names = [...selectedDealNames];
+  if (names.length === 0) { alert('Tick at least one deal first.'); return; }
+  try {
+    const res = await fetch(`${API}/api/family/grocery/import-deals`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'unknown error');
+    logAction('user', 'deals imported', `${j.added} item(s) added to grocery list`);
+    selectedDealNames.clear();
+    await loadFamily();   // re-fetch + re-render everything (now Grocery List has the new items pre-ticked)
+  } catch (err) {
+    alert(`Couldn't import: ${err.message}`);
+  }
+});
+
+// ── Suggested Dinner Plan ────────────────────────────────────────────
+//
+// Reads /api/family/meal-plan. Shows 7-day picks with per-person mods.
+// "Regenerate" fires the planner. "Apply to Week" writes dinners into
+// familyData.meals (the existing Week grid).
+
+let planData = null;
+
+async function loadMealPlan() {
+  try {
+    const res = await fetch(`${API}/api/family/meal-plan`);
+    const j = await res.json();
+    planData = j?.dinners ? j : null;
+  } catch { planData = null; }
+}
+
+function renderMealPlan() {
+  const container = document.getElementById('planList');
+  const metaEl = document.getElementById('planMeta');
+  if (!container) return;
+
+  if (!planData) {
+    container.innerHTML = '<div class="empty-list">No plan generated yet. Sunday 17:00 cron writes it; or click <strong>Regenerate</strong> to run it now.</div>';
+    if (metaEl) metaEl.textContent = '';
+    return;
+  }
+
+  const bc = planData.budget_context || {};
+  if (metaEl) {
+    metaEl.textContent = `${planData.days || 7} days · $${planData.totals?.est_cost ?? '?'} total · $${bc.daily_allowance ?? '?'}/day allowance`;
+  }
+
+  const rows = (planData.dinners || []).map(d => {
+    if (d.status !== 'planned') {
+      return `<div class="plan-row"><span class="plan-date">${esc(d.date)}</span><span class="plan-name muted">${esc(d.status)}</span></div>`;
+    }
+    const flag = d.over_daily_allowance ? '<span class="plan-flag" title="Over daily budget">⚠</span>' : '';
+    const mods = d.modifications && Object.keys(d.modifications).length
+      ? `<details class="plan-mods"><summary>${Object.keys(d.modifications).length} mods</summary>${Object.entries(d.modifications).map(([w, m]) => `<div><span class="recipe-mod-who">${esc(w)}</span>: ${esc(m)}</div>`).join('')}</details>`
+      : '';
+    return `
+      <div class="plan-row">
+        <span class="plan-date">${esc(d.date)}</span>
+        <span class="plan-name">${esc(d.name)}</span>
+        <span class="plan-cost">$${d.est_cost_aud ?? '?'}</span>
+        ${flag}
+        ${mods}
+      </div>
+    `;
+  }).join('');
+  container.innerHTML = rows;
+}
+
+document.getElementById('planRegenBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('planRegenBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Regenerating…'; }
+  try {
+    const res = await fetch(`${API}/api/family/meal-plan/regenerate`, { method: 'POST' });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'regen failed');
+    planData = j.plan;
+    logAction('gombwe', 'meal plan regenerated', `${planData?.dinners?.length || 0} day(s)`);
+    renderMealPlan();
+  } catch (err) {
+    alert(`Couldn't regenerate: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Regenerate'; }
+  }
+});
+
+document.getElementById('planApplyBtn')?.addEventListener('click', async () => {
+  if (!planData) { alert('No plan to apply. Click Regenerate first.'); return; }
+  const force = confirm('Apply the plan to the Week grid?\n\nOK: only fill EMPTY dinner slots (preserves your manual entries).\nCancel: do nothing.\n\nTo overwrite existing entries too, hold Shift while clicking.');
+  if (!force) return;
+  const useForce = window.event?.shiftKey === true;   // shift = overwrite
+  try {
+    const res = await fetch(`${API}/api/family/meal-plan/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: useForce }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'apply failed');
+    logAction('user', 'meal plan applied', `${j.applied} dinner(s) written, ${j.skipped} preserved`);
+    await loadFamily();
+  } catch (err) {
+    alert(`Couldn't apply: ${err.message}`);
+  }
+});
+
+// ── Watchlist ────────────────────────────────────────────────────────
+//
+// Reads /api/family/watchlist (decorated with latest prices). Inline-editable
+// max_price. Add new items via the form below the list. Remove via × button.
+
+let watchlistData = { items: [] };
+
+async function loadWatchlist() {
+  try {
+    const res = await fetch(`${API}/api/family/watchlist`);
+    watchlistData = await res.json();
+    if (!watchlistData.items) watchlistData.items = [];
+  } catch { watchlistData = { items: [] }; }
+}
+
+function renderWatchlist() {
+  const container = document.getElementById('watchlistList');
+  const metaEl = document.getElementById('watchlistMeta');
+  if (!container) return;
+  const items = watchlistData.items || [];
+  if (metaEl) metaEl.textContent = `${items.length} item(s) tracked`;
+
+  if (items.length === 0) {
+    container.innerHTML = '<div class="empty-list">No watchlist yet. Add items below; the 06:00 cron starts polling tomorrow.</div>';
+    return;
+  }
+
+  // Group by category for readability
+  const byCat = {};
+  for (const i of items) (byCat[i.category || 'other'] ??= []).push(i);
+
+  let html = '';
+  for (const cat of Object.keys(byCat).sort()) {
+    html += `<div class="wl-cat-head">${esc(cat)}</div>`;
+    for (const item of byCat[cat]) {
+      const wPrice = item.latest?.w != null ? `$${item.latest.w.toFixed(2)}` : '—';
+      const cPrice = item.latest?.c != null ? `$${item.latest.c.toFixed(2)}` : '—';
+      html += `
+        <div class="wl-row">
+          <span class="wl-name">${esc(item.name)}</span>
+          <span class="wl-prices">W: ${wPrice} · C: ${cPrice}</span>
+          <span class="wl-max">max
+            <input type="number" class="wl-max-input" data-wl-name="${esc(item.name)}" value="${item.max_price}" step="0.01" min="0">
+          </span>
+          <button class="wl-remove" data-wl-remove="${esc(item.name)}" title="Remove from watchlist">×</button>
+        </div>
+      `;
+    }
+  }
+  container.innerHTML = html;
+
+  // Wire inline max_price edits
+  container.querySelectorAll('.wl-max-input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const name = inp.dataset.wlName;
+      const newMax = parseFloat(inp.value);
+      if (!isFinite(newMax) || newMax <= 0) { renderWatchlist(); return; }
+      const found = (watchlistData.items || []).find(i => i.name === name);
+      if (!found) return;
+      try {
+        const res = await fetch(`${API}/api/family/watchlist`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'add', item: { ...found, max_price: newMax } }),
+        });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.error || 'failed');
+        found.max_price = newMax;
+        logAction('user', 'watchlist edited', `${name}: max $${newMax}`);
+      } catch (err) {
+        alert(`Couldn't update: ${err.message}`);
+        renderWatchlist();
+      }
+    });
+  });
+
+  // Wire remove buttons
+  container.querySelectorAll('[data-wl-remove]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.wlRemove;
+      if (!confirm(`Remove "${name}" from the watchlist?`)) return;
+      try {
+        const res = await fetch(`${API}/api/family/watchlist`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'remove', item: { name } }),
+        });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.error || 'failed');
+        watchlistData.items = (watchlistData.items || []).filter(i => i.name !== name);
+        logAction('user', 'watchlist removed', name);
+        renderWatchlist();
+      } catch (err) {
+        alert(`Couldn't remove: ${err.message}`);
+      }
+    });
+  });
+}
+
+document.getElementById('watchlistAddForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name     = document.getElementById('wlName')?.value.trim();
+  const maxPrice = parseFloat(document.getElementById('wlMax')?.value);
+  const category = document.getElementById('wlCategory')?.value.trim().toLowerCase();
+  if (!name || !isFinite(maxPrice) || !category) { alert('Need name, max price, and category.'); return; }
+  try {
+    const res = await fetch(`${API}/api/family/watchlist`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', item: { name, max_price: maxPrice, category } }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    logAction('user', 'watchlist added', `${name} (max $${maxPrice})`);
+    e.target.reset();
+    await loadWatchlist();
+    renderWatchlist();
+  } catch (err) {
+    alert(`Couldn't add: ${err.message}`);
+  }
+});
+
+function ingredientDisplay(ing) {
+  // Old format: strings. New format (post dinner-bank merge): {name, qty, where_to_get, watchlist_match}.
+  if (typeof ing === 'string') return ing;
+  if (ing && typeof ing === 'object') {
+    return ing.name + (ing.qty ? ' — ' + ing.qty : '');
+  }
+  return String(ing);
+}
+
 function renderRecipes() {
   const container = document.getElementById('recipeList');
   if (!container) return;
-  const names = Object.keys(recipesData).sort();
+  // Filter out the merged-file metadata key + sort
+  const names = Object.keys(recipesData).filter(n => !n.startsWith('_')).sort();
 
   if (names.length === 0) {
     container.innerHTML = '<div class="card"><div class="empty-list">No recipes yet. Add meals to the planner and ingredients will be extracted automatically.</div></div>';
@@ -1421,33 +1733,66 @@ function renderRecipes() {
     const card = document.createElement('div');
     card.className = 'recipe-card';
 
+    // Metadata enriched recipes (from dinner-bank merge) carry category, cost,
+    // prep, modifications, diet_tags. Surface them when present.
+    const isObjectIngredients = ingredients.some(i => typeof i !== 'string');
+    const catBadge = recipe.category ? `<span class="recipe-cat-badge cat-${esc(recipe.category)}">${esc(recipe.category)}</span>` : '';
+    const metaBits = [];
+    if (recipe.main_protein) metaBits.push(esc(recipe.main_protein));
+    if (typeof recipe.est_cost_aud === 'number') metaBits.push(`~$${recipe.est_cost_aud} for 6`);
+    if (recipe.prep_minutes) metaBits.push(`${recipe.prep_minutes} min`);
+    if (recipe.leftovers_pack) metaBits.push('leftovers OK');
+    const metaLine = metaBits.length ? `<div class="recipe-meta">${metaBits.join(' · ')}</div>` : '';
+
     let ingredientsHtml = '';
     ingredients.forEach((ing, idx) => {
-      const isHuman = prefs[ing] === 'human';
-      const tag = isHuman
-        ? '<span class="recipe-ingredient-tag human">preference</span>'
-        : '<span class="recipe-ingredient-tag auto">auto</span>';
+      const display = ingredientDisplay(ing);
+      const editable = typeof ing === 'string';   // only string ingredients are click-to-edit
+      const isHuman = editable && prefs[ing] === 'human';
+      const tag = !editable
+        ? '<span class="recipe-ingredient-tag struct">structured</span>'
+        : isHuman
+          ? '<span class="recipe-ingredient-tag human">preference</span>'
+          : '<span class="recipe-ingredient-tag auto">auto</span>';
+      const nameAttrs = editable
+        ? `class="recipe-ingredient-name" data-recipe="${esc(name)}" data-idx="${idx}"`
+        : `class="recipe-ingredient-name recipe-ingredient-name-struct"`;
       ingredientsHtml += `
         <div class="recipe-ingredient">
-          <span class="recipe-ingredient-name" data-recipe="${esc(name)}" data-idx="${idx}">${esc(ing)}</span>
+          <span ${nameAttrs}>${esc(display)}</span>
           ${tag}
           <button class="recipe-ingredient-remove" data-recipe="${esc(name)}" data-idx="${idx}">remove</button>
         </div>
       `;
     });
 
+    const modsHtml = recipe.modifications && Object.keys(recipe.modifications).length
+      ? `<div class="recipe-mods"><div class="recipe-mods-title">Per-person modifications</div>` +
+        Object.entries(recipe.modifications).map(([who, mod]) =>
+          `<div class="recipe-mod"><span class="recipe-mod-who">${esc(who)}</span>: ${esc(mod)}</div>`
+        ).join('') + `</div>`
+      : '';
+
+    const dietHtml = recipe.diet_tags?.length
+      ? `<div class="recipe-tags">${recipe.diet_tags.map(t => `<span class="recipe-tag">${esc(t)}</span>`).join(' ')}</div>`
+      : '';
+
     card.innerHTML = `
       <div class="recipe-header" data-recipe="${esc(name)}">
-        <span class="recipe-name">${esc(name)}</span>
+        <span class="recipe-name">${esc(name)} ${catBadge}</span>
         <span class="recipe-count">${ingredients.length} ingredients</span>
       </div>
+      ${metaLine}
       <div class="recipe-body${expanded ? '' : ' collapsed'}">
         ${ingredientsHtml}
+        ${isObjectIngredients ? '' : `
         <form class="recipe-add-form" data-recipe="${esc(name)}">
           <input type="text" placeholder="Add ingredient..." data-recipe="${esc(name)}">
           <button type="submit" class="btn-primary btn-sm">Add</button>
-        </form>
+        </form>`}
         ${recipe.recipe ? `<div class="recipe-instructions">${esc(recipe.recipe)}</div>` : ''}
+        ${modsHtml}
+        ${dietHtml}
       </div>
     `;
     container.appendChild(card);

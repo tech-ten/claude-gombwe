@@ -1727,6 +1727,164 @@ The ingredients should be grocery item names with quantities scaled for ${family
       }
     });
 
+    // ── Grocery intelligence (under /api/family/* to stay in the Family tab grouping) ─
+    // These are read-mostly views over JSON files the cron + watcher produce.
+    // None of them touch the existing groceryList/Order Now flow — they layer
+    // alongside it.
+
+    const dealsFile      = join(this.config.dataDir, 'grocery-deals-latest.json');
+    const watchlistFile  = join(this.config.dataDir, 'grocery-watchlist.json');
+    const pricesFile     = join(this.config.dataDir, 'grocery-prices.jsonl');
+    const mealPlanFile   = join(this.config.dataDir, 'meal-plan-latest.json');
+
+    const readJsonOr = <T,>(path: string, fallback: T): T => {
+      try { return JSON.parse(readFileSync(path, 'utf-8')) as T; }
+      catch { return fallback; }
+    };
+
+    // GET /api/family/deals — today's rock-bottom snapshot from grocery-watch.mjs
+    this.app.get('/api/family/deals', (_req: Request, res: Response) => {
+      const report = readJsonOr<any>(dealsFile, null);
+      if (!report) {
+        res.json({ ok: false, reason: 'No snapshot yet — daily 06:00 cron has not run, or grocery-watch.mjs has never been invoked.' });
+        return;
+      }
+      res.json(report);
+    });
+
+    // GET /api/family/watchlist — current watchlist, augmented with the most-
+    // recent price observation per item per store from grocery-prices.jsonl
+    this.app.get('/api/family/watchlist', (_req: Request, res: Response) => {
+      const wl: any = readJsonOr(watchlistFile, { items: [] });
+      // Build "latest price per item per store" map from the JSONL ring
+      const latestByItem: Record<string, { w: number | null, c: number | null, ts: string }> = {};
+      try {
+        const text = readFileSync(pricesFile, 'utf-8');
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const rec = JSON.parse(line);
+            const cur = latestByItem[rec.item];
+            if (!cur || rec.ts > cur.ts) {
+              latestByItem[rec.item] = { w: rec.woolworths_price ?? null, c: rec.coles_price ?? null, ts: rec.ts };
+            }
+          } catch { /* skip malformed */ }
+        }
+      } catch { /* no log yet */ }
+      // Decorate items with their latest prices
+      const decorated = (wl.items || []).map((item: any) => ({
+        ...item,
+        latest: latestByItem[item.name] ?? null,
+      }));
+      res.json({ ...wl, items: decorated });
+    });
+
+    // POST /api/family/watchlist — add/remove items
+    //   body: { action: "add" | "remove", item: { name, max_price, category, search_terms?, expected_promo?, expected_rrp?, target_stockpile?, notes? } }
+    //   for remove, item.name (substring) is enough.
+    this.app.post('/api/family/watchlist', (req: Request, res: Response) => {
+      const { action, item } = req.body ?? {};
+      if (!action || !item?.name) { res.status(400).json({ error: 'action and item.name required' }); return; }
+      const wl: any = readJsonOr(watchlistFile, { items: [] });
+      if (!wl.items) wl.items = [];
+      if (action === 'remove') {
+        const q = String(item.name).toLowerCase();
+        const before = wl.items.length;
+        wl.items = wl.items.filter((i: any) => !i.name.toLowerCase().includes(q));
+        writeFileSync(watchlistFile, JSON.stringify(wl, null, 2));
+        res.json({ ok: true, removed: before - wl.items.length });
+        return;
+      }
+      if (action === 'add') {
+        if (typeof item.max_price !== 'number' || !item.category) {
+          res.status(400).json({ error: 'item.max_price (number) and item.category required for add' });
+          return;
+        }
+        const idx = wl.items.findIndex((i: any) => i.name.toLowerCase() === item.name.toLowerCase());
+        const entry = {
+          name: item.name,
+          max_price: item.max_price,
+          category: item.category,
+          search_terms: item.search_terms?.length ? item.search_terms : [item.name.toLowerCase()],
+          expected_promo: item.expected_promo ?? null,
+          expected_rrp:   item.expected_rrp   ?? null,
+          min_stockpile:  idx >= 0 ? (wl.items[idx].min_stockpile ?? 0) : 0,
+          target_stockpile: item.target_stockpile ?? 1,
+          ...(item.notes ? { notes: item.notes } : {}),
+        };
+        if (idx >= 0) wl.items[idx] = entry; else wl.items.push(entry);
+        writeFileSync(watchlistFile, JSON.stringify(wl, null, 2));
+        res.json({ ok: true, entry, updated: idx >= 0 });
+        return;
+      }
+      res.status(400).json({ error: `unknown action "${action}" — use add or remove` });
+    });
+
+    // GET /api/family/meal-plan — the 7-day dinner plan from meal-plan.mjs
+    this.app.get('/api/family/meal-plan', (_req: Request, res: Response) => {
+      const plan = readJsonOr<any>(mealPlanFile, null);
+      if (!plan) {
+        res.json({ ok: false, reason: 'No plan yet — Sunday 17:00 cron has not run, or meal-plan.mjs has never been invoked.' });
+        return;
+      }
+      res.json(plan);
+    });
+
+    // POST /api/family/meal-plan/regenerate — fire meal-plan.mjs synchronously
+    this.app.post('/api/family/meal-plan/regenerate', async (_req: Request, res: Response) => {
+      try {
+        const { execSync } = await import('node:child_process');
+        const repoRoot = join(__dirname, '..');
+        execSync(`node ${join(repoRoot, 'scripts/meal-plan.mjs')}`, { cwd: repoRoot, timeout: 30000 });
+        const plan = readJsonOr<any>(mealPlanFile, null);
+        res.json({ ok: true, plan });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    // POST /api/family/meal-plan/apply — write the planner's picks into
+    // familyData.meals so the existing Week grid shows them. Preserves any
+    // manually-entered meals in the same slots; the planner only fills empty
+    // dinner slots unless force=true is sent.
+    this.app.post('/api/family/meal-plan/apply', (req: Request, res: Response) => {
+      const { force = false } = req.body ?? {};
+      const plan = readJsonOr<any>(mealPlanFile, null);
+      if (!plan?.dinners?.length) { res.status(400).json({ error: 'No meal plan to apply — regenerate first' }); return; }
+      const family = this.loadFamilyData();
+      if (!family.meals) family.meals = {};
+      let applied = 0, skipped = 0;
+      for (const d of plan.dinners) {
+        if (d.status !== 'planned') continue;
+        if (!family.meals[d.date]) family.meals[d.date] = {};
+        const existing = family.meals[d.date].dinner;
+        if (existing && !force) { skipped++; continue; }
+        family.meals[d.date].dinner = d.name;
+        applied++;
+      }
+      this.saveFamilyData(family);
+      res.json({ ok: true, applied, skipped });
+    });
+
+    // POST /api/family/grocery/import-deals — add selected rock-bottom items
+    // to familyData.groceryList. The existing Order Now button takes it from there.
+    //   body: { names: string[] }
+    this.app.post('/api/family/grocery/import-deals', (req: Request, res: Response) => {
+      const { names } = req.body ?? {};
+      if (!Array.isArray(names) || names.length === 0) { res.status(400).json({ error: 'names[] required' }); return; }
+      const family = this.loadFamilyData();
+      if (!family.groceryList) family.groceryList = [];
+      let added = 0;
+      for (const name of names) {
+        const exists = family.groceryList.some((i: any) => i.name.toLowerCase() === String(name).toLowerCase());
+        if (exists) continue;
+        family.groceryList.push({ name: String(name), checked: true, source: 'deals' });
+        added++;
+      }
+      this.saveFamilyData(family);
+      res.json({ ok: true, added });
+    });
+
     // ── eero: home network full control ─────────────────────────────────
     const eeroError = (res: Response, err: any) => {
       const status = err?.status === 401 ? 401 : (err?.status || 500);

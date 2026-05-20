@@ -694,6 +694,31 @@
             </div>
           </div>
 
+          <!-- Today's Deals (from daily price-watcher cron) -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Today's Deals</h2>
+              <div class="family-section-actions">
+                <span class="recipe-hint" id="dealsMeta"></span>
+                <button class="btn-primary btn-sm" id="dealsImportBtn">Add selected to Grocery List</button>
+              </div>
+            </div>
+            <div class="card" id="dealsList"></div>
+          </div>
+
+          <!-- Suggested Dinner Plan (from meal-plan.mjs cron) -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Suggested Dinner Plan</h2>
+              <div class="family-section-actions">
+                <span class="recipe-hint" id="planMeta"></span>
+                <button class="btn-ghost btn-sm" id="planRegenBtn">Regenerate</button>
+                <button class="btn-primary btn-sm" id="planApplyBtn">Apply to Week</button>
+              </div>
+            </div>
+            <div class="card" id="planList"></div>
+          </div>
+
           <!-- Recipes -->
           <div class="family-section">
             <div class="family-section-header">
@@ -701,6 +726,23 @@
               <span class="recipe-hint">Click ingredients to edit. Changes are saved as your preferences.</span>
             </div>
             <div id="recipeList"></div>
+          </div>
+
+          <!-- Watchlist (items the daily price-watcher tracks) -->
+          <div class="family-section">
+            <div class="family-section-header">
+              <h2 class="family-section-title">Watchlist</h2>
+              <span class="recipe-hint" id="watchlistMeta"></span>
+            </div>
+            <div class="card" id="watchlistList"></div>
+            <div class="grocery-add">
+              <form id="watchlistAddForm">
+                <input type="text"   id="wlName"     placeholder="Item name (e.g. Cold Power 4L)" required>
+                <input type="number" id="wlMax"      placeholder="Max $" step="0.01" min="0" required>
+                <input type="text"   id="wlCategory" placeholder="Category (laundry, pantry, …)" required>
+                <button type="submit" class="btn-primary btn-sm">Add to watchlist</button>
+              </form>
+            </div>
           </div>
 
           <!-- School / Kids -->
