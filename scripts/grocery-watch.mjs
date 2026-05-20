@@ -70,48 +70,215 @@ async function getPage(browser, domain) {
   return page;
 }
 
-// ── Search APIs (mirror grocery-buy.mjs, but read-only) ──────────────
+// ── Product confirmation (not blind price ranges) ────────────────────
+//
+// A returned product is a real match for our watchlist item only when:
+//   - every size token (e.g. 4L, 500g, 1kg, 220g) in the watchlist name
+//     also appears in the product name (normalised),
+//   - the pack count matches (12 pack ≠ 4 pack ≠ each),
+//   - the unit type matches: a "per kg" watchlist item rejects "each"
+//     products and vice versa.
+//
+// Price is only used as a last-line floor ($0.10 minimum) — never as the
+// primary judge, because legit half-price specials and bad matches can
+// overlap on price alone.
+
+function normaliseName(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[-,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTokens(itemName) {
+  const norm = normaliseName(itemName);
+  const tokens = { sizes: [], pack: null, perKg: false, each: false };
+  // Volumes / weights like 4L, 500ml, 1kg, 1.4kg, 220g, 75L
+  const sizeRe = /(\d+(?:\.\d+)?)\s?(l|ml|g|kg|cl)\b/g;
+  let m;
+  while ((m = sizeRe.exec(norm)) !== null) tokens.sizes.push(`${m[1]}${m[2]}`);
+  // Pack counts: "12 pack", "24 pack", "8 pack", "12pk", "5 pk"
+  const packRe = /(\d+)\s?(pack|pk)\b/;
+  const pm = norm.match(packRe);
+  if (pm) tokens.pack = parseInt(pm[1], 10);
+  // Unit types
+  if (norm.includes('per kg') || /\bper\s+kg\b/.test(norm)) tokens.perKg = true;
+  if (norm.includes(' each') || norm.endsWith(' each')) tokens.each = true;
+  return tokens;
+}
+
+function productMatches(watchlistName, productName, unitString) {
+  const want = extractTokens(watchlistName);
+  const got = normaliseName(productName);
+  const unit = normaliseName(unitString || '');
+
+  // Size tokens must all appear in product name
+  for (const s of want.sizes) {
+    // Accept "4l" matching "4l", "4 l", "4 litre", "4 litres"
+    const num = s.replace(/[a-z]/g, '');
+    const u = s.replace(/[\d.]/g, '');
+    const altLitres = u === 'l' ? `${num} litre` : null;
+    const altMl     = u === 'ml' ? `${num} mil` : null;
+    if (!got.includes(s)
+        && !got.includes(`${num} ${u}`)
+        && !(altLitres && got.includes(altLitres))
+        && !(altMl && got.includes(altMl))) {
+      return false;
+    }
+  }
+  // Pack count must match
+  if (want.pack !== null) {
+    const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk)\\b`);
+    if (!packRe.test(got)) return false;
+  }
+  // Unit type
+  if (want.perKg) {
+    // Product must indicate per-kg pricing somewhere (name or unit-string)
+    const looksKg = /\bper\s+kg\b/.test(got) || /\$\s?[\d.]+\s*\/\s*\d*\s*kg/.test(unit) || /per\s+kg/.test(unit);
+    if (!looksKg) return false;
+  }
+  if (want.each && !want.perKg) {
+    // Must be sold each (not per kg)
+    const looksEach = /\beach\b/.test(got) || /\beach\b/.test(unit);
+    if (!looksEach) return false;
+  }
+  return true;
+}
+
+// ── Search APIs ──────────────────────────────────────────────────────
 
 async function woolworthsBest(page, term) {
   return page.evaluate(async (q) => {
     try {
-      const res = await fetch(`https://www.woolworths.com.au/apis/ui/Search/products?searchTerm=${encodeURIComponent(q)}&pageSize=5`, { headers: { Accept: 'application/json' } });
+      const res = await fetch(`https://www.woolworths.com.au/apis/ui/Search/products?searchTerm=${encodeURIComponent(q)}&pageSize=10`, { headers: { Accept: 'application/json' } });
       if (!res.ok) return null;
       const data = await res.json();
       const products = (data?.Products || []).flatMap(p => p?.Products || []).filter(Boolean);
-      if (!products.length) return null;
-      let cheapest = null;
-      for (const p of products) {
-        const price = p?.Price ?? p?.InstorePrice;
-        if (typeof price !== 'number') continue;
-        if (!cheapest || price < cheapest.price) {
-          cheapest = { name: p?.DisplayName || p?.Name || '?', price, stockcode: p?.Stockcode || null };
-        }
-      }
-      return cheapest;
-    } catch { return null; }
+      // Return ALL viable products so the caller can pick the cheapest CONFIRMED one
+      return products.map(p => ({
+        name: p?.DisplayName || p?.Name || '?',
+        price: typeof p?.Price === 'number' ? p.Price : (typeof p?.InstorePrice === 'number' ? p.InstorePrice : null),
+        cup: p?.CupString || '',                  // e.g. "$3.55 / Per 2L" — unit price string
+        stockcode: p?.Stockcode || null,
+      })).filter(x => typeof x.price === 'number');
+    } catch { return []; }
   }, term);
 }
 
-async function colesBest(page, term) {
-  return page.evaluate(async (q) => {
+// Coles internal endpoint, captured at startup by sniffing the SPA's own
+// search requests. Once we know the URL pattern we hit it directly via
+// page.evaluate(fetch) — same low-latency model as Woolworths.
+let colesApiPattern = null;
+let colesApiHeaders = null;
+
+async function discoverColesApi(page) {
+  console.log('  Discovering Coles internal search endpoint…');
+  const candidates = [];
+  const onResp = async (response) => {
     try {
-      const res = await fetch(`https://www.coles.com.au/api/bff/products?q=${encodeURIComponent(q)}&page=1`, { headers: { Accept: 'application/json' } });
+      const url = response.url();
+      if (!url.includes('coles.com.au')) return;
+      if (response.status() !== 200) return;
+      const ct = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      const text = await response.text();
+      if (text.length < 200) return;
+      // Heuristic: a search-results JSON will contain product-shaped data —
+      // a name/price tuple plus our search term ("milk") somewhere.
+      if (/milk/i.test(text) && /price|pricing|\$/i.test(text) && /name/i.test(text)) {
+        candidates.push({ url, sample: text.slice(0, 300) });
+      }
+    } catch { /* response stream not capturable — ignore */ }
+  };
+  page.on('response', onResp);
+  try {
+    await page.goto('https://www.coles.com.au/search/products?q=milk', { waitUntil: 'networkidle2', timeout: 25000 });
+  } catch { /* navigation might time out but the responses are usually in by then */ }
+  await wait(2500);
+  page.off('response', onResp);
+
+  // Prefer URLs that look like product search endpoints (mention 'search' or 'product')
+  candidates.sort((a, b) => {
+    const score = (u) => (u.includes('search') ? 2 : 0) + (u.includes('product') ? 2 : 0) + (u.includes('graphql') ? 1 : 0);
+    return score(b.url) - score(a.url);
+  });
+
+  if (candidates.length === 0) {
+    console.log('  No Coles JSON search endpoint discovered — falling back to DOM scrape.');
+    return null;
+  }
+
+  console.log(`  Found ${candidates.length} candidate(s). Top: ${candidates[0].url.slice(0, 90)}…`);
+  // Extract the query-template by replacing "milk" with a placeholder
+  const tpl = candidates[0].url.replace(/([?&]q=)milk/i, '$1{Q}').replace(/(query=)milk/i, '$1{Q}');
+  return tpl;
+}
+
+async function colesSearchViaApi(page, term, urlTemplate) {
+  return page.evaluate(async (q, tpl) => {
+    try {
+      const url = tpl.replace('{Q}', encodeURIComponent(q));
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'include' });
       if (!res.ok) return null;
       const data = await res.json();
-      const products = data?.pageProps?.searchResults?.results || data?.results || [];
-      if (!products.length) return null;
-      let cheapest = null;
-      for (const p of products) {
-        const price = p?.pricing?.now ?? p?.pricing?.normal;
-        if (typeof price !== 'number') continue;
-        if (!cheapest || price < cheapest.price) {
-          cheapest = { name: p?.name || '?', price };
-        }
-      }
-      return cheapest;
+      // Coles internal shape varies; defensively extract a list with
+      // {name, price[, unit]} from common locations.
+      const extractList = (d) => {
+        const candidates = [d?.results, d?.products, d?.items,
+          d?.pageProps?.searchResults?.results,
+          d?.data?.search?.products,
+          d?.data?.searchProducts?.results,
+        ].filter(Array.isArray);
+        return candidates[0] || [];
+      };
+      const list = extractList(data);
+      return list.map(p => ({
+        name: p?.name || p?.productName || p?.title || '?',
+        price: typeof p?.pricing?.now === 'number' ? p.pricing.now
+              : typeof p?.pricing?.normal === 'number' ? p.pricing.normal
+              : typeof p?.price === 'number' ? p.price
+              : null,
+        cup: p?.pricing?.unit?.value ? `${p.pricing.unit.value} ${p.pricing.unit.unit ?? ''}`.trim()
+            : p?.unitPrice || '',
+      })).filter(x => typeof x.price === 'number');
     } catch { return null; }
-  }, term);
+  }, term, urlTemplate);
+}
+
+async function colesSearchViaDom(page, term) {
+  try {
+    await page.goto(`https://www.coles.com.au/search/products?q=${encodeURIComponent(term)}`, {
+      waitUntil: 'domcontentloaded', timeout: 20000,
+    });
+  } catch { return []; }
+  try {
+    await page.waitForSelector('[data-testid="product-tile"]', { timeout: 8000 });
+  } catch { /* tiles never appeared — likely a captcha or zero results */ }
+  await wait(800);
+  return page.evaluate(() => {
+    const tiles = document.querySelectorAll('[data-testid="product-tile"]');
+    const out = [];
+    for (const tile of tiles) {
+      const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
+      const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
+      const unitEl  = tile.querySelector('.price__calculation_method, [data-testid="product-pricing-unit"]');
+      if (!titleEl || !priceEl) continue;
+      const name = titleEl.textContent.trim();
+      const m = priceEl.textContent.match(/\$(\d+\.\d{2})/);
+      if (!m || !name) continue;
+      out.push({ name, price: parseFloat(m[1]), cup: unitEl?.textContent?.trim() || '' });
+    }
+    return out;
+  });
+}
+
+async function colesBest(page, term) {
+  if (colesApiPattern) {
+    const list = await colesSearchViaApi(page, term, colesApiPattern);
+    if (list && list.length) return list;
+    // API returned nothing for this query — fall back to DOM for this one item
+  }
+  return colesSearchViaDom(page, term);
 }
 
 // ── Watchlist + history I/O ──────────────────────────────────────────
@@ -207,26 +374,70 @@ async function pollOnce(items) {
   const wPage = await getPage(browser, 'woolworths.com.au');
   const cPage = await getPage(browser, 'coles.com.au');
 
+  // One-shot discovery of Coles' internal search endpoint — saves us a
+  // full page navigation per query. Falls back to DOM scrape if discovery
+  // doesn't find anything.
+  colesApiPattern = await discoverColesApi(cPage);
+  console.log(colesApiPattern
+    ? `  Coles via internal API: ${colesApiPattern.slice(0, 80)}…`
+    : `  Coles via DOM scrape (slower fallback).`);
+
   const ts = new Date().toISOString();
   const records = [];
 
   for (const item of items) {
     const terms = item.search_terms?.length ? item.search_terms : [item.name];
-    let wBest = null, cBest = null;
+
+    // Accumulate ALL candidate products from every search term, then pick
+    // the cheapest that genuinely confirms (size + pack + unit + soft price
+    // floor). This handles cross-brand comparables — searching "salted
+    // butter 500g" and seeing Coles brand, Devondale, Western Star all at
+    // 500g; cheapest validated wins.
+    const wAll = [];
+    const cAll = [];
     for (const t of terms) {
-      if (!wBest) wBest = await woolworthsBest(wPage, t);
-      if (!cBest) cBest = await colesBest(cPage, t);
-      if (wBest && cBest) break;
-      await wait(200);
+      const ws = await woolworthsBest(wPage, t);
+      if (Array.isArray(ws)) wAll.push(...ws);
+      const cs = await colesBest(cPage, t);
+      if (Array.isArray(cs)) cAll.push(...cs);
+      // Stop early if we have enough candidates
+      if (wAll.length > 8 && cAll.length > 8) break;
+      await wait(150);
     }
+
+    // Confirm products by attribute (size/pack/unit). Soft floor of $0.10
+    // catches obvious data errors (negative price, scraping artefact, etc.)
+    const confirmed = (p) =>
+      typeof p.price === 'number' && p.price >= 0.10
+      && productMatches(item.name, p.name, p.cup);
+
+    const wValid = wAll.filter(confirmed).sort((a, b) => a.price - b.price);
+    const cValid = cAll.filter(confirmed).sort((a, b) => a.price - b.price);
+    const wBest = wValid[0] || null;
+    const cBest = cValid[0] || null;
+
+    // Capture rejects for forensics — cheapest reject per store so we can
+    // see WHY confirmation failed (helps the user iterate search_terms).
+    const wReject = !wBest && wAll.length ? wAll.slice().sort((a, b) => a.price - b.price)[0] : null;
+    const cReject = !cBest && cAll.length ? cAll.slice().sort((a, b) => a.price - b.price)[0] : null;
+
     const rec = {
       ts, item: item.name,
-      woolworths_price: wBest?.price ?? null, woolworths_name: wBest?.name ?? null,
-      coles_price:      cBest?.price ?? null, coles_name:      cBest?.name ?? null,
+      woolworths_price: wBest?.price ?? null,
+      woolworths_name:  wBest?.name  ?? null,
+      coles_price:      cBest?.price ?? null,
+      coles_name:       cBest?.name  ?? null,
+      candidates_seen:  { woolworths: wAll.length, coles: cAll.length },
+      candidates_valid: { woolworths: wValid.length, coles: cValid.length },
+      ...(wReject ? { _rejected_w: { name: wReject.name, price: wReject.price } } : {}),
+      ...(cReject ? { _rejected_c: { name: cReject.name, price: cReject.price } } : {}),
     };
     appendPrice(rec);
     records.push({ item, current: { woolworths: wBest, coles: cBest } });
-    process.stdout.write(`  ${item.name.padEnd(45)}  W: $${wBest?.price?.toFixed(2) ?? '   -'}  C: $${cBest?.price?.toFixed(2) ?? '   -'}\n`);
+
+    const wDisplay = wBest ? `$${wBest.price.toFixed(2)}` : (wAll.length ? `?(${wAll.length})` : '-');
+    const cDisplay = cBest ? `$${cBest.price.toFixed(2)}` : (cAll.length ? `?(${cAll.length})` : '-');
+    process.stdout.write(`  ${item.name.padEnd(45).slice(0, 45)}  W: ${wDisplay.padStart(8)}  C: ${cDisplay.padStart(8)}\n`);
   }
 
   browser.disconnect();
