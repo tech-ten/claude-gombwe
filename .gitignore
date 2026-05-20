@@ -37,3 +37,6 @@ Desktop.ini
 *.swo
 *.sublime-project
 *.sublime-workspace
+
+# Claude Code local state (worktrees for subagents, etc.) — never commit
+.claude/

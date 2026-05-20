@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Network · Gombwe</title>
+  <link rel="preconnect" href="https://rsms.me/" crossorigin />
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+  <link rel="stylesheet" href="/ui/network.css" />
+</head>
+<body>
+
+  <!-- ─── top strip ──────────────────────────────────────────────── -->
+  <header class="topbar" role="banner">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Gombwe</span>
+        <span class="brand-sub">Network</span>
+      </div>
+
+      <div class="status-line" id="statusLine" aria-live="polite">
+        <span class="live-dot" id="liveDot" data-state="connecting" aria-hidden="true"></span>
+        <span class="status-text" id="statusText">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+
+    <!-- ─── family section ──────────────────────────────────────── -->
+    <section class="section" id="familySection" aria-labelledby="familyHeading">
+      <div class="section-head">
+        <h2 id="familyHeading" class="section-title">Family</h2>
+        <p class="section-sub" id="familySub">Who's online right now</p>
+      </div>
+      <div class="people-row" id="peopleRow" role="list">
+        <!-- person cards injected by JS -->
+      </div>
+      <p class="empty-hint" id="peopleEmpty" hidden>
+        No people yet. Assign a device below to someone and they'll show up here.
+      </p>
+    </section>
+
+    <!-- ─── per-person device groups (expanded inline) ──────────── -->
+    <section class="section person-groups" id="personGroups" aria-label="Devices grouped by person">
+      <!-- group panels injected by JS -->
+    </section>
+
+    <!-- ─── household devices ────────────────────────────────────── -->
+    <section class="section" id="householdSection" aria-labelledby="householdHeading">
+      <div class="section-head">
+        <h2 id="householdHeading" class="section-title">Household devices</h2>
+        <p class="section-sub" id="householdSub">Shared things — TV, printer, smart home</p>
+      </div>
+      <div class="device-grid" id="householdGrid">
+        <!-- device cards injected by JS -->
+      </div>
+      <p class="empty-hint" id="householdEmpty" hidden>No household devices yet.</p>
+    </section>
+
+  </main>
+
+  <!-- ─── device card template ─────────────────────────────────── -->
+  <template id="tpl-device-card">
+    <article class="device-card" data-mac="" tabindex="0">
+      <header class="device-card-head">
+        <div class="device-card-title">
+          <h3 class="device-name" data-bind="name"></h3>
+          <button class="icon-btn rename-btn" data-action="rename" aria-label="Rename device" title="Rename">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M11.5 1.5 14.5 4.5 5 14H2v-3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <span class="status-pill" data-bind="statusPill" data-state="online">Online</span>
+      </header>
+
+      <p class="device-meta">
+        <code data-bind="ip"></code>
+        <span class="meta-sep">·</span>
+        <span data-bind="vendor"></span>
+      </p>
+
+      <p class="activity-line" data-bind="activity">
+        Quiet today
+      </p>
+
+      <div class="card-actions">
+        <div class="block-control">
+          <button class="btn btn-primary block-btn" data-action="block" data-bind="blockBtn">Pause</button>
+          <button class="btn btn-icon dropdown-trigger" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-label="Pause duration options">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="menu" data-bind="menu" role="menu" hidden>
+            <button class="menu-item" data-mins="30"             role="menuitem">Pause for 30 minutes</button>
+            <button class="menu-item" data-mins="120"            role="menuitem">Pause for 2 hours</button>
+            <button class="menu-item" data-mins="until_tomorrow" role="menuitem">Pause until tomorrow 6 am</button>
+            <button class="menu-item" data-mins="0"              role="menuitem">Pause indefinitely</button>
+          </div>
+        </div>
+
+        <button class="btn btn-ghost assign-btn" data-action="assign" data-bind="assignBtn">Assign to person…</button>
+      </div>
+
+      <button class="details-toggle" data-action="toggle-details" aria-expanded="false">
+        <span>Details</span>
+        <svg class="chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+
+      <div class="device-details" data-bind="details" hidden>
+        <dl class="kv">
+          <dt>IP</dt>          <dd><code data-bind="dIp"></code></dd>
+          <dt>MAC</dt>         <dd><code data-bind="dMac"></code></dd>
+          <dt>Vendor</dt>      <dd data-bind="dVendor"></dd>
+          <dt>Last seen</dt>   <dd data-bind="dLastSeen"></dd>
+          <dt>Connections</dt> <dd data-bind="dConns"></dd>
+          <dt>Today</dt>       <dd data-bind="dToday"></dd>
+        </dl>
+        <h4 class="details-sub">Top destinations today</h4>
+        <ul class="dest-list" data-bind="dests"></ul>
+        <div class="sparkline" data-bind="spark" aria-hidden="true"></div>
+      </div>
+    </article>
+  </template>
+
+  <!-- ─── assign-to-person dialog ──────────────────────────────── -->
+  <div class="modal-scrim" id="modalScrim" hidden></div>
+  <div class="modal" id="assignModal" role="dialog" aria-modal="true" aria-labelledby="assignTitle" hidden>
+    <header class="modal-head">
+      <h3 id="assignTitle">Assign device to someone</h3>
+      <button class="icon-btn" id="assignClose" aria-label="Close">
+        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <p class="modal-sub" id="assignDeviceName"></p>
+    <div class="assign-options" id="assignOptions"></div>
+    <div class="assign-divider"><span>or</span></div>
+    <div class="assign-new">
+      <label for="assignNewName">Add someone new</label>
+      <div class="row">
+        <input id="assignNewName" type="text" placeholder="First name" maxlength="40" autocomplete="off" />
+        <button class="btn btn-primary" id="assignNewBtn">Add</button>
+      </div>
+    </div>
+    <div class="assign-clear">
+      <button class="btn btn-ghost" id="assignClear">Move to Household devices</button>
+    </div>
+  </div>
+
+  <!-- ─── toasts ───────────────────────────────────────────────── -->
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="/ui/network.js" defer></script>
+</body>
+</html>
