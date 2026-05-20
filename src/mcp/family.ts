@@ -436,6 +436,181 @@ server.tool(
   }
 );
 
+// ════════════════════════════════════════════════════════════
+// Grocery intelligence — surfaces data produced by the daily
+// price watcher + meal planner + watchlist editor. Read-mostly.
+// ════════════════════════════════════════════════════════════
+
+const DEALS_FILE      = join(DATA_DIR, 'grocery-deals-latest.json');
+const MEAL_PLAN_FILE  = join(DATA_DIR, 'meal-plan-latest.json');
+const WATCHLIST_FILE  = join(DATA_DIR, 'grocery-watchlist.json');
+
+function loadJsonOr<T>(path: string, fallback: T): T {
+  try { return JSON.parse(readFileSync(path, 'utf-8')) as T; }
+  catch { return fallback; }
+}
+
+// ── Tool: get_grocery_deals ────────────────────────────────
+server.tool(
+  'get_grocery_deals',
+  'Get the latest grocery price-watcher snapshot — which items are at rock-bottom right now across Woolworths and Coles, plus the cart plan and whether free-delivery threshold is met. Reads ~/.claude-gombwe/data/grocery-deals-latest.json (written by the daily 06:00 cron).',
+  {
+    limit: z.number().int().min(1).max(50).default(20).optional().describe('How many rock-bottom items to list (default 20)'),
+  },
+  async ({ limit }) => {
+    const cap = limit ?? 20;
+    const report: any = loadJsonOr(DEALS_FILE, null);
+    if (!report) {
+      return { content: [{ type: 'text' as const, text: 'No grocery deals snapshot yet. Run `node scripts/grocery-watch.mjs` (or wait for the 06:00 cron).' }] };
+    }
+    const lines: string[] = [];
+    lines.push(`Snapshot from ${report.generated_at || '?'}`);
+    lines.push(`Rock-bottom: ${report.rock_bottom?.length || 0}  Eligible: ${report.eligible?.length || 0}  Waiting: ${report.waiting?.length || 0}  No data: ${report.no_data?.length || 0}`);
+    const w = report.carts?.woolworths;
+    const c = report.carts?.coles;
+    if (w) lines.push(`Woolworths cart: ${w.items.length} items, $${w.total} ${w.free_delivery ? '✓ free delivery' : `(need $${(75 - w.total).toFixed(2)} more)`}`);
+    if (c) lines.push(`Coles cart:      ${c.items.length} items, $${c.total} ${c.free_delivery ? '✓ free delivery' : `(need $${(50 - c.total).toFixed(2)} more)`}`);
+    if (report.rock_bottom?.length) {
+      lines.push('');
+      lines.push('Rock-bottom right now:');
+      for (const r of (report.rock_bottom as any[]).slice(0, cap)) {
+        lines.push(`  • ${r.name} @ $${r.best?.price?.toFixed?.(2) ?? r.best?.price} (${r.best?.store}, ceiling $${r.max_price})`);
+      }
+      if (report.rock_bottom.length > cap) lines.push(`  … +${report.rock_bottom.length - cap} more`);
+    }
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+  }
+);
+
+// ── Tool: get_meal_plan ────────────────────────────────────
+server.tool(
+  'get_meal_plan',
+  'Get the current 7-day dinner plan with per-person modifications, ingredients-to-buy, budget context. Reads ~/.claude-gombwe/data/meal-plan-latest.json. Generated weekly by the Sunday 17:00 cron; regenerate via `node scripts/meal-plan.mjs` if stale.',
+  {},
+  async () => {
+    const plan: any = loadJsonOr(MEAL_PLAN_FILE, null);
+    if (!plan) {
+      return { content: [{ type: 'text' as const, text: 'No meal plan generated yet. Run `node scripts/meal-plan.mjs` (or wait for Sunday 17:00 cron).' }] };
+    }
+    const bc = plan.budget_context || {};
+    const lines: string[] = [];
+    lines.push(`${plan.days || 7}-day dinner plan from ${plan.from}  (generated ${plan.generated_at})`);
+    lines.push(`Budget: $${bc.month_to_date_spent ?? '?'} spent / $${bc.monthly_target ?? '?'} target · daily allowance $${bc.daily_allowance ?? '?'} · plan implies $${bc.plan_implied_per_day ?? '?'}/day`);
+    lines.push('');
+    for (const d of (plan.dinners || [])) {
+      if (d.status !== 'planned') {
+        lines.push(`${d.date}: ${d.status === 'already-planned' ? 'already planned' : 'no pick'}`);
+        continue;
+      }
+      const flag = d.over_daily_allowance ? ' ⚠over-budget' : '';
+      lines.push(`${d.date}: ${d.name} — $${d.est_cost_aud}${flag} (${d.protein}/${d.veg_focus})`);
+      for (const [m, mod] of Object.entries(d.modifications || {})) {
+        lines.push(`  • ${m}: ${mod}`);
+      }
+      if (d.ingredients_needed?.length) {
+        const need = (d.ingredients_needed as any[]).slice(0, 6).map(i => i.name).join(', ');
+        lines.push(`  buy: ${need}${d.ingredients_needed.length > 6 ? ', …' : ''}`);
+      }
+    }
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+  }
+);
+
+// ── Tool: get_watchlist ────────────────────────────────────
+server.tool(
+  'get_watchlist',
+  'Show the grocery watchlist — the items the daily price-watcher polls across Woolworths and Coles. Each has a max_price ceiling, expected promo, and stockpile targets. Reads ~/.claude-gombwe/data/grocery-watchlist.json.',
+  {
+    category: z.string().optional().describe('Optional category filter (laundry, cleaning, personal-care, pantry, dairy-protein, frozen, bread, fruit-veg, kids-lunchbox, snacks, beverages)'),
+  },
+  async ({ category }) => {
+    const wl: any = loadJsonOr(WATCHLIST_FILE, { items: [] });
+    const items: any[] = wl.items || [];
+    const filtered = category ? items.filter(i => i.category === category) : items;
+    if (filtered.length === 0) {
+      return { content: [{ type: 'text' as const, text: category ? `No items in category "${category}".` : 'Watchlist is empty.' }] };
+    }
+    const byCategory: Record<string, any[]> = {};
+    for (const i of filtered) {
+      (byCategory[i.category || 'other'] ??= []).push(i);
+    }
+    const lines: string[] = [`Watchlist: ${filtered.length} items${category ? ` in "${category}"` : ' across ' + Object.keys(byCategory).length + ' categories'}\n`];
+    for (const cat of Object.keys(byCategory).sort()) {
+      lines.push(`[${cat}]`);
+      for (const item of byCategory[cat]) {
+        lines.push(`  • ${item.name}  max $${item.max_price}  (promo ~$${item.expected_promo ?? '?'}, rrp $${item.expected_rrp ?? '?'})`);
+      }
+    }
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+  }
+);
+
+// ── Tool: add_watchlist_item ───────────────────────────────
+server.tool(
+  'add_watchlist_item',
+  'Add a new item to the grocery watchlist (so the price-watcher starts tracking it daily). Writes to ~/.claude-gombwe/data/grocery-watchlist.json.',
+  {
+    name:            z.string().describe('Display name (e.g. "Cold Power 4L"). Include size in the name.'),
+    max_price:       z.number().describe('Your ceiling — the daily alert flags items at or below this.'),
+    category:        z.string().describe('Category bucket: laundry, cleaning, personal-care, pantry, dairy-protein, frozen, bread, fruit-veg, kids-lunchbox, snacks, beverages, other'),
+    search_terms:    z.array(z.string()).optional().describe('Search strings tried in order (default: just the name). Use multiple for cross-brand matching.'),
+    expected_promo:  z.number().optional().describe('Typical half-price/promo (for context only).'),
+    expected_rrp:    z.number().optional().describe('Typical RRP (for context only).'),
+    target_stockpile:z.number().int().optional().describe('When buying on promo, top up to this many. Default 1.'),
+    notes:           z.string().optional().describe('Free-form notes (e.g. "never substitute", "kids favourite").'),
+  },
+  async ({ name, max_price, category, search_terms, expected_promo, expected_rrp, target_stockpile, notes }) => {
+    const wl: any = loadJsonOr(WATCHLIST_FILE, { items: [] });
+    if (!wl.items) wl.items = [];
+    // Overwrite if same name already exists
+    const idx = wl.items.findIndex((i: any) => i.name.toLowerCase() === name.toLowerCase());
+    const entry: any = {
+      name, max_price, category,
+      search_terms: search_terms?.length ? search_terms : [name.toLowerCase()],
+      expected_promo: expected_promo ?? null,
+      expected_rrp:   expected_rrp   ?? null,
+      min_stockpile:  idx >= 0 ? (wl.items[idx].min_stockpile ?? 0) : 0,
+      target_stockpile: target_stockpile ?? 1,
+      ...(notes ? { notes } : {}),
+    };
+    if (idx >= 0) wl.items[idx] = entry; else wl.items.push(entry);
+    writeFileSync(WATCHLIST_FILE, JSON.stringify(wl, null, 2));
+    const family = loadFamily();
+    logAction(family, 'user', idx >= 0 ? 'watchlist updated' : 'watchlist added', `${name} (max $${max_price})`);
+    saveFamily(family);
+    return { content: [{ type: 'text' as const, text: `${idx >= 0 ? 'Updated' : 'Added'} watchlist item: ${name} — max $${max_price} (${category}). Tomorrow's 06:00 cron will start polling it.` }] };
+  }
+);
+
+// ── Tool: remove_watchlist_item ────────────────────────────
+server.tool(
+  'remove_watchlist_item',
+  'Remove an item from the grocery watchlist by name. Case-insensitive substring match.',
+  {
+    name: z.string().describe('Name (or partial name) of the item to remove'),
+  },
+  async ({ name }) => {
+    const wl: any = loadJsonOr(WATCHLIST_FILE, { items: [] });
+    if (!wl.items) wl.items = [];
+    const q = name.toLowerCase();
+    const matches = (wl.items as any[]).filter(i => i.name.toLowerCase().includes(q));
+    if (matches.length === 0) {
+      return { content: [{ type: 'text' as const, text: `No watchlist item matched "${name}".` }] };
+    }
+    if (matches.length > 1) {
+      const list = matches.map(m => `  • ${m.name}`).join('\n');
+      return { content: [{ type: 'text' as const, text: `Multiple matches for "${name}". Be more specific:\n${list}` }] };
+    }
+    const removed = matches[0];
+    wl.items = (wl.items as any[]).filter(i => i !== removed);
+    writeFileSync(WATCHLIST_FILE, JSON.stringify(wl, null, 2));
+    const family = loadFamily();
+    logAction(family, 'user', 'watchlist removed', removed.name);
+    saveFamily(family);
+    return { content: [{ type: 'text' as const, text: `Removed: ${removed.name}` }] };
+  }
+);
+
 // ── Start server ────────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();
