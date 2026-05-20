@@ -12,7 +12,7 @@ import { SkillLoader, executeSkillTool } from './skills.js';
 import { Scheduler } from './scheduler.js';
 import { TriggerEngine } from './triggers.js';
 import { WorkflowEngine } from './workflows.js';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, homedir } from 'node:os';
 import { WebChannel } from './channels/web.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
@@ -1216,6 +1216,188 @@ export class Gateway {
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
+    // ── History (long-term browsing rollups) ──────────────────────
+    // Query a date range; pre-computed rollups for past days + live-computed
+    // for today. Returns one DayRollup per day in the range.
+    //
+    //   GET /api/network/history?from=YYYY-MM-DD&to=YYYY-MM-DD
+    //                            &mac=AA:BB:CC:...   (optional, single device)
+    //                            &owner=Tendai       (optional, filter by owner)
+    //
+    // Defaults: last 30 days.
+    this.app.get('/api/network/history', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { buildDayRollup, readRollup } = await import('./history-rollup.js');
+        const { deviceMatchesOwner } = await import('./owner-heuristic.js');
+
+        const today = new Date().toISOString().slice(0, 10);
+        const defaultFrom = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const from   = String(req.query.from ?? defaultFrom);
+        const to     = String(req.query.to   ?? today);
+        const macQ   = req.query.mac   ? String(req.query.mac).toUpperCase() : null;
+        const ownerQ = req.query.owner ? String(req.query.owner)             : null;
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
+          return;
+        }
+
+        const dates: string[] = [];
+        for (let d = new Date(from); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+          dates.push(d.toISOString().slice(0, 10));
+          if (dates.length > 400) break;   // hard cap
+        }
+
+        const series = [];
+        for (const date of dates) {
+          let day = date === today ? null : readRollup(date);
+          if (!day) day = await buildDayRollup(date);
+
+          let devices = day.devices;
+          if (macQ)   devices = devices.filter(d => d.mac.toUpperCase() === macQ);
+          // Owner filter: explicit assignment OR heuristic guess from device names.
+          // Lets legacy rollups (where owner: null was persisted) still resolve.
+          if (ownerQ) devices = devices.filter(d => deviceMatchesOwner(d, ownerQ));
+          series.push({
+            date: day.date,
+            devices,
+            total_bytes: devices.reduce((s, d) => s + d.bytes_up + d.bytes_down, 0),
+            total_queries: devices.reduce((s, d) => s + d.dns_count, 0),
+          });
+        }
+
+        res.json({ from, to, mac: macQ, owner: ownerQ, days: series });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // ── Categories (app/category lookup database) ─────────────────
+    // Returns every known entry grouped by category, with recent DNS-query
+    // counts so the user can see which buckets are active on the network.
+    this.app.get('/api/network/categories', async (_req: Request, res: Response) => {
+      try {
+        const { getAllEntries, CATEGORY_ORDER, categorize } = await import('./app-categories.js');
+        const all = getAllEntries();
+
+        // Last-7-days DNS query counts per category
+        const dnsCounts: Record<string, number> = {};
+        const dnsLogPath = (date: string) => join(homedir(), '.claude-gombwe', 'data', 'network', `dns-${date}.jsonl`);
+        const today = new Date();
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(today.getTime() - i * 86400_000).toISOString().slice(0, 10);
+          const p = dnsLogPath(d);
+          if (!existsSync(p)) continue;
+          const text = readFileSync(p, 'utf-8');
+          for (const line of text.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const q = JSON.parse(line);
+              const { category } = categorize(q.hostname);
+              dnsCounts[category] = (dnsCounts[category] ?? 0) + 1;
+            } catch { /* skip */ }
+          }
+        }
+
+        const byCategory: Record<string, { entries: typeof all; count_recent_7d: number }> = {};
+        for (const cat of CATEGORY_ORDER) byCategory[cat] = { entries: [], count_recent_7d: dnsCounts[cat] ?? 0 };
+        for (const e of all) {
+          if (!byCategory[e.category]) byCategory[e.category] = { entries: [], count_recent_7d: 0 };
+          byCategory[e.category].entries.push(e);
+        }
+        res.json({ categories: byCategory, order: CATEGORY_ORDER });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Top hostnames from the last 7 days whose category is "unknown".
+    // This is the "grow the database from real traffic" surface.
+    this.app.get('/api/network/categories/uncategorized', async (req: Request, res: Response) => {
+      try {
+        const { categorize } = await import('./app-categories.js');
+        const limit = Math.min(200, parseInt(String(req.query.limit ?? '50'), 10) || 50);
+        const days  = Math.min(30,  parseInt(String(req.query.days  ?? '7'),  10) || 7);
+
+        const counts = new Map<string, { count: number; last_seen: string; blocked: number }>();
+        const today = new Date();
+        for (let i = 0; i < days; i++) {
+          const d = new Date(today.getTime() - i * 86400_000).toISOString().slice(0, 10);
+          const p = join(homedir(), '.claude-gombwe', 'data', 'network', `dns-${d}.jsonl`);
+          if (!existsSync(p)) continue;
+          const text = readFileSync(p, 'utf-8');
+          for (const line of text.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const q = JSON.parse(line);
+              if (!q.hostname) continue;
+              const cat = categorize(q.hostname);
+              if (cat.category !== 'unknown') continue;
+              const cur = counts.get(q.hostname) ?? { count: 0, last_seen: '', blocked: 0 };
+              cur.count += 1;
+              if (q.ts > cur.last_seen) cur.last_seen = q.ts;
+              if (q.blocked) cur.blocked += 1;
+              counts.set(q.hostname, cur);
+            } catch { /* skip */ }
+          }
+        }
+
+        const sorted = [...counts.entries()]
+          .map(([hostname, v]) => ({ hostname, ...v }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, limit);
+        res.json({ days, items: sorted });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Add or remove a user-override entry.
+    //   POST { action: "add",    suffix, app, category }
+    //   POST { action: "remove", suffix }
+    this.app.post('/api/network/categories', async (req: Request, res: Response) => {
+      try {
+        const { addUserEntry, removeUserEntry, CATEGORY_ORDER } = await import('./app-categories.js');
+        const { action, suffix, app, category } = req.body ?? {};
+        if (!suffix || typeof suffix !== 'string') { res.status(400).json({ error: 'suffix required' }); return; }
+        if (action === 'remove') {
+          const ok = removeUserEntry(suffix);
+          res.json({ ok, suffix });
+          return;
+        }
+        if (action === 'add') {
+          if (!app || typeof app !== 'string')      { res.status(400).json({ error: 'app required' }); return; }
+          if (!category || !CATEGORY_ORDER.includes(category)) {
+            res.status(400).json({ error: `category must be one of ${CATEGORY_ORDER.join(', ')}` });
+            return;
+          }
+          const entry = addUserEntry(suffix, app, category as any);
+          res.json({ ok: true, entry });
+          return;
+        }
+        res.status(400).json({ error: 'action must be "add" or "remove"' });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Manual rollup generator (useful after backfill issues; restricted to past dates)
+    this.app.post('/api/network/history/rollup/:date', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const date = String(req.params.date ?? '');
+      const today = new Date().toISOString().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: 'date must be YYYY-MM-DD' }); return; }
+      if (date >= today) { res.status(400).json({ error: 'cannot generate rollup for today (in progress)' }); return; }
+      try {
+        const { generateRollup } = await import('./history-rollup.js');
+        const r = await generateRollup(date);
+        res.json({ ok: true, date, devices: r.devices.length });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
     // Tasks
     this.app.get('/api/tasks', (_req: Request, res: Response) => {
       const status = _req.query.status as string | undefined;
@@ -2104,6 +2286,43 @@ The ingredients should be grocery item names with quantities scaled for ${family
         dnsReceiver().start();
       } catch (err) {
         console.warn(`[gombwe] dns-receiver failed to start:`, err);
+      }
+
+      // Start the passive mDNS listener (UDP/5353). Devices on the LAN broadcast
+      // AirPlay / HomeKit / _device-info announcements; we just absorb them so
+      // device names + Apple model codes show up in the dashboard.
+      try {
+        const { mdnsListener } = await import('./mdns-listener.js');
+        await mdnsListener().start();
+      } catch (err) {
+        console.warn(`[gombwe] mdns listener failed to start:`, err);
+      }
+
+      // Start the snapshot collector — periodic MikroTik state → JSONL.
+      // Replaces scripts/network-monitor.py so the capture pipeline lives
+      // entirely inside gombwe and can't silently die in the background.
+      try {
+        const { startSnapshotCollector } = await import('./snapshot-collector.js');
+        startSnapshotCollector();
+      } catch (err) {
+        console.warn(`[gombwe] snapshot collector failed to start:`, err);
+      }
+
+      // Start the history rollup pipeline (backfill any missing days, schedule
+      // midnight write of yesterday's rollup). Local-first long-term storage.
+      try {
+        const { startHistoryRollup } = await import('./history-rollup.js');
+        startHistoryRollup().catch(err => console.warn('[gombwe] history rollup failed:', err));
+      } catch (err) {
+        console.warn(`[gombwe] history rollup failed to start:`, err);
+      }
+
+      // Gzip raw JSONL older than 7 days, then daily. ~10× disk savings.
+      try {
+        const { startLogCompactor } = await import('./log-compactor.js');
+        startLogCompactor();
+      } catch (err) {
+        console.warn(`[gombwe] log compactor failed to start:`, err);
       }
 
       // Start the AI policy scanner. Has zero impact on devices not on the

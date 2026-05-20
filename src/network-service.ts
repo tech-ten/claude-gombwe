@@ -12,9 +12,15 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
+import { createRequire } from 'node:module';
 import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry } from './mikrotik-client.js';
 import { ipResolver } from './ip-name-resolver.js';
+import { mdnsListener } from './mdns-listener.js';
+// IEEE OUI registry, ~37k vendors keyed by 6-hex-digit prefix (no separators).
+// Each value is a multi-line string; the first line is the vendor name.
+// Loaded via createRequire so we don't need TS import-attribute support.
+const ouiData = createRequire(import.meta.url)('oui-data') as Record<string, string>;
 
 const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
 const ALIASES_PATH = join(homedir(), '.claude-gombwe', 'network-aliases.json');
@@ -29,6 +35,13 @@ export interface DeviceSummary {
   name: string;
   hostname: string;
   vendor: string;
+  model: string | null;         // mDNS-derived Apple model code, e.g. "Macmini9,1"
+  model_friendly: string | null;// human form of the model code, e.g. "Mac mini (M1, 2020)"
+  mdns_host: string | null;     // .local hostname from mDNS A/SRV
+  mdns_name: string | null;     // friendly instance label from mDNS PTR (e.g. "Tendai's iPhone")
+  mdns_category: string | null; // coarse device class: speaker, camera, printer, ...
+  mdns_services: string[];      // Bonjour service types this device advertises
+  self: boolean;                // true ⇢ this is the device gombwe is running on
   owner: string | null;       // Person who owns the device (set by user; null = household/unassigned)
   kid: boolean;               // On the kid list → AI policy scanner may auto-block for this device
   online: boolean;
@@ -54,26 +67,39 @@ interface OwnerMap { [mac: string]: string; }
 interface BlockState { [mac: string]: { rule_id: string; blocked_until: string | null; created_at: string; }; }
 interface KidList { macs: string[]; }
 
-/** A tiny offline OUI lookup — top vendors only. Good enough for the dashboard. */
-const OUI_PREFIXES: Array<[string, string]> = [
-  ['30:3A:4A', 'eero'],
-  ['08:C3:B3', 'Hon Hai (TV)'],
-  ['74:40:BB', 'Brother'],
-  ['00:1B:63', 'Apple'], ['00:1F:F3', 'Apple'], ['00:25:00', 'Apple'],
-  ['28:6A:BA', 'Apple'], ['3C:15:C2', 'Apple'], ['68:AB:1E', 'Apple'],
-  ['F0:18:98', 'Apple'], ['DC:A9:04', 'Apple'], ['BC:67:1C', 'Apple'],
-  ['D0:BA:E4', 'MXChip / Microsoft'],
-];
+/** Full IEEE OUI lookup, backed by the `oui-data` JSON registry (~37k vendors). */
+const OUI_TABLE = ouiData;
 
 function ouiOf(mac: string): string {
-  const prefix = mac.slice(0, 8).toUpperCase();
   // Locally-administered bit (second hex of first byte = 2,6,A,E) → MAC randomization (iOS/Android privacy)
   const first = parseInt(mac.slice(0, 2), 16);
+  if (isNaN(first)) return 'Unknown';
   if ((first & 0x02) !== 0) return 'Randomized';
-  for (const [pfx, vendor] of OUI_PREFIXES) {
-    if (prefix === pfx) return vendor;
+  // oui-data keys are uppercase, no separators, 6 hex digits.
+  const key = mac.replace(/[^0-9A-Fa-f]/g, '').slice(0, 6).toUpperCase();
+  const entry = OUI_TABLE[key];
+  if (!entry) return 'Unknown';
+  // Entries are multi-line ("VENDOR\nADDRESS\nCITY\nCOUNTRY"). Vendor is line one.
+  const vendor = entry.split('\n')[0].trim();
+  return vendor || 'Unknown';
+}
+
+/** Collect this Mac's own MAC addresses so we can self-identify the host device. */
+function localHostMacs(): Set<string> {
+  const macs = new Set<string>();
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.mac && i.mac !== '00:00:00:00:00:00') macs.add(i.mac.toUpperCase());
+    }
   }
-  return 'Unknown';
+  return macs;
+}
+
+/** Clean `os.hostname()` for display: strip trailing .local, replace dashes with spaces nothing else. */
+function selfDisplayName(): string {
+  const raw = osHostname().replace(/\.local\.?$/i, '');
+  // Keep the raw form (e.g. "tendais-Mac-mini") — users recognise this. They can rename in the UI.
+  return raw || 'Mac mini · gombwe';
 }
 
 function readJsonOrEmpty<T>(path: string, fallback: T): T {
@@ -110,6 +136,8 @@ export class NetworkService {
   // Per-kid auto-block rules added by the policy scanner: mac → hostname → ruleId(s)
   private kidAutoBlocks: Map<string, Map<string, string[]>> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
+  private selfMacs: Set<string> = localHostMacs();
+  private selfName: string = selfDisplayName();
 
   constructor() {
     // On startup, re-arm scheduled-unblock timers for any blocks that still have a future expiry.
@@ -253,6 +281,8 @@ export class NetworkService {
       }
     }
 
+    const mdns = mdnsListener();
+
     const summaries: DeviceSummary[] = leases.map(lease => {
       const mac = (lease['mac-address'] ?? '').toUpperCase();
       const ip = lease.address ?? '';
@@ -265,11 +295,36 @@ export class NetworkService {
             .map(([host, v]) => ({ host, bytes: v.bytes, connections: v.conns }))
         : [];
       const blockState = this.blocks[mac];
+      const isSelf = this.selfMacs.has(mac);
+      const mdnsHit = ip ? mdns.getByIp(ip) : undefined;
+
+      // Name precedence (most authoritative → least):
+      //   1. user alias (explicit rename)
+      //   2. self  ⇢ os.hostname()  (we know our own device)
+      //   3. mDNS friendly INSTANCE name (e.g. "Tendai's iPhone")
+      //   4. mDNS .local hostname
+      //   5. DHCP host-name
+      //   6. MAC (last-resort fallback)
+      const name =
+        this.aliases[mac] ||
+        (isSelf ? this.selfName : null) ||
+        mdnsHit?.name ||
+        mdnsHit?.host ||
+        hostname ||
+        mac;
+
       return {
         mac, ip,
-        name: this.aliases[mac] ?? hostname ?? mac,
+        name,
         hostname,
         vendor: ouiOf(mac),
+        model: mdnsHit?.model ?? null,
+        model_friendly: mdnsHit?.model_friendly ?? null,
+        mdns_host: mdnsHit?.host ?? null,
+        mdns_name: mdnsHit?.name ?? null,
+        mdns_category: mdnsHit?.category ?? null,
+        mdns_services: mdnsHit?.services ?? [],
+        self: isSelf,
         owner: this.owners[mac] ?? null,
         kid: this.isKid(mac),
         online: lease.status === 'bound',

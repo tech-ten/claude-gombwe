@@ -11,65 +11,300 @@
 </head>
 <body>
 
-  <!-- ── top strip ─────────────────────────────────────────────────── -->
-  <header class="topstrip">
-    <div class="container topstrip-inner">
-      <span class="wordmark">Gombwe</span>
-      <span class="topstrip-sep" aria-hidden="true"></span>
-      <span class="topstrip-section">Network</span>
-      <span class="topstrip-status" id="topStatus">
+  <!-- ── top utility strip (sits above content, not above sidebar) ───── -->
+  <header class="topstrip" role="banner">
+    <div class="topstrip-inner">
+      <button type="button" class="hamburger" id="hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2" y="4" width="12" height="1" fill="currentColor"/>
+          <rect x="2" y="8" width="12" height="1" fill="currentColor"/>
+          <rect x="2" y="12" width="12" height="1" fill="currentColor"/>
+        </svg>
+      </button>
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <span class="crumb crumb-root">Gombwe</span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb crumb-current" id="crumbView">Network</span>
+      </nav>
+      <div class="searchwrap">
+        <svg class="search-icon" width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+          <circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1"/>
+          <line x1="9.2" y1="9.2" x2="12.2" y2="12.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        </svg>
+        <input type="search" id="searchInput" class="search-input" placeholder="Search devices, people, hostnames" autocomplete="off" spellcheck="false">
+        <kbd class="search-hint" aria-hidden="true">/</kbd>
+      </div>
+      <span class="topstrip-status" id="topStatus" aria-live="polite">
         <span class="status-dot" id="statusDot" data-state="connecting" aria-hidden="true"></span>
-        <span id="statusText">Connecting</span>
+        <span class="status-text" id="statusText">Connecting</span>
       </span>
     </div>
   </header>
 
-  <main class="container main">
+  <div class="shell">
 
-    <!-- ── hero figures ─────────────────────────────────────────────── -->
-    <section class="hero" aria-labelledby="heroHeading">
-      <p class="kicker" id="heroHeading">The household, tonight</p>
-      <div class="figures">
-        <article class="figure">
-          <span class="figure-number" id="figDevices">—</span>
-          <span class="figure-label" id="figDevicesLabel">devices on network</span>
-        </article>
-        <article class="figure">
-          <span class="figure-number" id="figPeople">—</span>
-          <span class="figure-label" id="figPeopleLabel">people active</span>
-        </article>
-        <article class="figure">
-          <span class="figure-number" id="figData">—</span>
-          <span class="figure-label" id="figDataLabel">data moved today</span>
-        </article>
+    <!-- ── persistent left sidebar ──────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <nav class="navlist" role="navigation">
+        <button type="button" class="navitem is-active" data-view="devices" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+            <line x1="5" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1"/>
+            <line x1="8" y1="11" x2="8" y2="13" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          <span class="navlabel">Devices</span>
+        </button>
+        <button type="button" class="navitem" data-view="people" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="6" r="2.5" fill="none" stroke="currentColor" stroke-width="1"/>
+            <path d="M3 14 Q3 10 8 10 Q13 10 13 14" fill="none" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          <span class="navlabel">People</span>
+        </button>
+        <button type="button" class="navitem" data-view="apps" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="2" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1"/>
+            <rect x="9" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1"/>
+            <rect x="2" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1"/>
+            <rect x="9" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          <span class="navlabel">Apps</span>
+        </button>
+        <button type="button" class="navitem" data-view="activity" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <polyline points="2,10 5,7 8,9 11,4 14,6" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+          </svg>
+          <span class="navlabel">Activity</span>
+        </button>
+        <button type="button" class="navitem" data-view="blocks" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1"/>
+            <line x1="4.5" y1="11.5" x2="11.5" y2="4.5" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          <span class="navlabel">Blocks</span>
+        </button>
+        <button type="button" class="navitem" data-view="settings" role="link">
+          <svg class="navicon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1"/>
+            <path d="M8 1.5 L8 3.5 M8 12.5 L8 14.5 M1.5 8 L3.5 8 M12.5 8 L14.5 8 M3 3 L4.5 4.5 M11.5 11.5 L13 13 M3 13 L4.5 11.5 M11.5 4.5 L13 3" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          <span class="navlabel">Settings</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <p class="sidebar-foot-line">Gombwe local</p>
+        <p class="sidebar-foot-host" id="sidebarHost">localhost:18790</p>
       </div>
-    </section>
+    </aside>
 
-    <hr class="rule">
+    <!-- ── main content ─────────────────────────────────────────────── -->
+    <main class="content" id="content">
 
-    <!-- ── people section ───────────────────────────────────────────── -->
-    <section class="section" aria-labelledby="peopleHeading">
-      <header class="section-head">
-        <h2 class="section-title" id="peopleHeading">The household</h2>
-        <p class="section-sub" id="peopleSub">Members and their devices.</p>
-      </header>
-      <ol class="rowlist" id="peopleList" role="list"></ol>
-      <p class="empty" id="peopleEmpty" hidden>No people yet. Assign a device below to begin.</p>
-    </section>
+      <!-- ── devices view ───────────────────────────────────────────── -->
+      <section class="view view-devices" data-view="devices">
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Devices</h1>
+          <p class="summary" id="summary">—</p>
+        </header>
 
-    <hr class="rule">
+        <div class="controls">
+          <div class="filterpills" role="tablist" aria-label="Filter devices">
+            <button type="button" class="pill is-on" data-filter="all" role="tab" aria-selected="true">All</button>
+            <button type="button" class="pill" data-filter="online" role="tab" aria-selected="false">Online</button>
+            <button type="button" class="pill" data-filter="offline" role="tab" aria-selected="false">Offline</button>
+            <button type="button" class="pill" data-filter="paused" role="tab" aria-selected="false">Paused</button>
+            <button type="button" class="pill" data-filter="kids" role="tab" aria-selected="false">Kids</button>
+          </div>
+          <div class="sortwrap">
+            <button type="button" class="btn-text" id="scanNowBtn" title="Run a policy scan now">Run scan now</button>
+          </div>
+        </div>
 
-    <!-- ── household devices section ────────────────────────────────── -->
-    <section class="section" aria-labelledby="hhHeading">
-      <header class="section-head">
-        <h2 class="section-title" id="hhHeading">Household devices</h2>
-        <p class="section-sub" id="hhSub">Shared infrastructure — TVs, speakers, sensors.</p>
-      </header>
-      <ol class="rowlist" id="householdList" role="list"></ol>
-      <p class="empty" id="householdEmpty" hidden>Nothing here yet.</p>
-    </section>
+        <!-- table header (sticky) -->
+        <div class="thead" role="row">
+          <button type="button" class="th th-device" data-sort="name">Device <span class="th-arrow" aria-hidden="true"></span></button>
+          <button type="button" class="th th-owner" data-sort="owner">Owner <span class="th-arrow" aria-hidden="true"></span></button>
+          <button type="button" class="th th-activity" data-sort="activity">Activity <span class="th-arrow" aria-hidden="true"></span></button>
+          <button type="button" class="th th-seen is-sorted-desc" data-sort="last_seen">Last seen <span class="th-arrow" aria-hidden="true"></span></button>
+          <span class="th th-status">Status</span>
+          <span class="th th-actions" aria-hidden="true"></span>
+        </div>
 
-  </main>
+        <div class="groups" id="groups"></div>
+
+        <p class="empty-state" id="emptyState" hidden>No devices match this filter.</p>
+      </section>
+
+      <!-- ── activity view ──────────────────────────────────────────── -->
+      <section class="view view-activity" data-view="activity" hidden>
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Log</h1>
+          <p class="summary">Recent policy actions and DNS events.</p>
+        </header>
+        <div class="controls">
+          <button type="button" class="btn-text" id="scanNowBtn2">Run scan now</button>
+        </div>
+        <ol class="activity-feed" id="activityFeed"></ol>
+        <p class="empty-state" id="activityEmpty" hidden>No policy actions recorded yet.</p>
+      </section>
+
+      <!-- ── blocks view ────────────────────────────────────────────── -->
+      <section class="view view-blocks" data-view="blocks" hidden>
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Access Controls</h1>
+          <p class="summary" id="blocksSummary">—</p>
+        </header>
+        <div class="thead" role="row">
+          <span class="th th-device">Device</span>
+          <span class="th th-owner">Owner</span>
+          <span class="th th-activity">Reason</span>
+          <span class="th th-seen">Expires</span>
+          <span class="th th-status">Status</span>
+          <span class="th th-actions" aria-hidden="true"></span>
+        </div>
+        <div class="groups" id="blocksList"></div>
+        <p class="empty-state" id="blocksEmpty" hidden>Nothing paused right now.</p>
+      </section>
+
+      <!-- ── people view ────────────────────────────────────────────── -->
+      <section class="view view-people" data-view="people" hidden>
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Users</h1>
+          <p class="summary" id="peopleSummary">—</p>
+        </header>
+
+        <!-- list view: detailed table, one row per person -->
+        <div id="peopleListView">
+          <div class="thead thead-people" role="row">
+            <span class="th th-person">Person</span>
+            <span class="th th-pdevices">Devices</span>
+            <span class="th th-pactivity">Today</span>
+            <span class="th th-pflags"></span>
+          </div>
+          <div id="peopleList"></div>
+          <p class="empty-state" id="peopleEmptyState" hidden>No people yet. Assign a device below.</p>
+
+          <header class="group-head" id="unassignedHead" hidden>
+            <h3 class="group-title">Unassigned devices</h3>
+            <span class="group-count" id="unassignedCount">—</span>
+          </header>
+          <p class="group-empty-note" id="unassignedNote" hidden>Click <em>Assign</em> on any row to map it to a person — those bytes will then appear in that person's history.</p>
+          <div id="unassignedList"></div>
+        </div>
+
+        <!-- detail view: per-person history (hidden until a card is clicked) -->
+        <div id="peopleDetailView" hidden>
+          <div class="detail-back-bar">
+            <button type="button" class="btn-text" id="peopleBackBtn">← All users</button>
+            <div class="range-pills" role="tablist" aria-label="Time range">
+              <button type="button" class="pill is-on" data-range="30" role="tab" aria-selected="true">30 days</button>
+              <button type="button" class="pill" data-range="14" role="tab" aria-selected="false">14 days</button>
+              <button type="button" class="pill" data-range="7"  role="tab" aria-selected="false">7 days</button>
+            </div>
+          </div>
+
+          <header class="detail-head">
+            <span class="person-mono detail-mono" id="detailMono" data-tint="sage">T</span>
+            <div>
+              <h2 class="detail-name" id="detailName">—</h2>
+              <p class="detail-meta" id="detailMeta">—</p>
+            </div>
+          </header>
+
+          <section class="detail-section">
+            <header class="section-head">
+              <h3 class="section-title">Daily traffic</h3>
+              <span class="section-sub" id="trendTotal">—</span>
+            </header>
+            <div class="chart-card">
+              <svg id="trendChart" class="trend-chart" viewBox="0 0 800 240" preserveAspectRatio="none" aria-label="Daily traffic stacked by app category"></svg>
+              <div class="chart-legend" id="trendLegend"></div>
+            </div>
+          </section>
+
+          <section class="detail-section detail-grid">
+            <div>
+              <header class="section-head"><h3 class="section-title">Top apps</h3></header>
+              <ol class="rank-list" id="topApps"></ol>
+            </div>
+            <div>
+              <header class="section-head"><h3 class="section-title">Top destinations</h3></header>
+              <ol class="rank-list" id="topDests"></ol>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <header class="section-head"><h3 class="section-title">Devices</h3></header>
+            <ol class="rank-list" id="detailDevices"></ol>
+          </section>
+        </div>
+      </section>
+
+      <!-- ── apps view (categories database) ─────────────────────────── -->
+      <section class="view view-apps" data-view="apps" hidden>
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Apps</h1>
+          <p class="summary" id="appsSummary">—</p>
+        </header>
+
+        <!-- Uncategorized: grow the database from your own DNS traffic -->
+        <section class="detail-section">
+          <header class="section-head">
+            <h3 class="section-title">Uncategorized destinations</h3>
+            <span class="section-sub" id="uncatRange">last 7 days</span>
+          </header>
+          <p class="group-empty-note">Hostnames your network looked up that don't match any known app. Assign each one to a category — those bytes will then show up in the trend chart instead of the grey "unknown" band.</p>
+          <ol class="rank-list" id="uncatList">
+            <li class="rank-empty">Loading…</li>
+          </ol>
+        </section>
+
+        <!-- Per-category accordion -->
+        <section class="detail-section">
+          <header class="section-head">
+            <h3 class="section-title">Categories</h3>
+            <span class="section-sub" id="catTotal">—</span>
+          </header>
+          <div id="categoryList"></div>
+        </section>
+      </section>
+
+      <!-- ── settings view ──────────────────────────────────────────── -->
+      <section class="view view-settings" data-view="settings" hidden>
+        <header class="view-head">
+          <p class="eyebrow">Gombwe · Network</p>
+          <h1 class="display">Settings</h1>
+          <p class="summary">Network settings.</p>
+        </header>
+        <dl class="settings-list">
+          <div class="dt-row"><dt>Host</dt><dd><code id="setHost">—</code></dd></div>
+          <div class="dt-row"><dt>WebSocket</dt><dd><code id="setWs">—</code></dd></div>
+          <div class="dt-row"><dt>Devices tracked</dt><dd><code id="setCount">—</code></dd></div>
+          <div class="dt-row"><dt>Scan endpoint</dt><dd><code>POST /api/network/policy/scan</code></dd></div>
+        </dl>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ── floating action popover (anchored at runtime) ──────────────── -->
+  <div class="popover" id="popover" hidden role="menu">
+    <button type="button" class="popover-item" data-mins="30" role="menuitem">Pause for 30 minutes</button>
+    <button type="button" class="popover-item" data-mins="120" role="menuitem">Pause for 2 hours</button>
+    <button type="button" class="popover-item" data-mins="until_tomorrow" role="menuitem">Pause until tomorrow 6am</button>
+    <button type="button" class="popover-item" data-mins="0" role="menuitem">Pause indefinitely</button>
+    <hr class="popover-rule">
+    <button type="button" class="popover-item" data-paction="resume" id="popResume" role="menuitem" hidden>Resume now</button>
+    <button type="button" class="popover-item" data-paction="history" role="menuitem">View history</button>
+    <button type="button" class="popover-item" data-paction="rename" role="menuitem">Rename…</button>
+    <button type="button" class="popover-item" data-paction="assign" role="menuitem">Assign to person…</button>
+    <button type="button" class="popover-item" data-paction="toggle-kid" id="popKidToggle" role="menuitem">Add to kid list</button>
+  </div>
 
   <!-- ── toast region ─────────────────────────────────────────────── -->
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
@@ -97,81 +332,56 @@
     </div>
   </aside>
 
-  <!-- ── row template (person) ────────────────────────────────────── -->
-  <template id="tpl-person-row">
-    <li class="row row-person" role="listitem">
-      <button class="row-trigger" type="button" aria-expanded="false">
-        <span class="monogram" data-bind="monogram"></span>
-        <span class="row-body">
-          <span class="row-title" data-bind="name"></span>
-          <span class="row-sub" data-bind="sub"></span>
-        </span>
-        <span class="row-meta">
-          <span class="row-meta-primary" data-bind="meta1"></span>
-          <span class="row-meta-secondary" data-bind="meta2"></span>
-        </span>
-      </button>
-      <div class="row-children" data-bind="children" hidden></div>
-    </li>
-  </template>
-
-  <!-- ── row template (device) ────────────────────────────────────── -->
+  <!-- ── row template (device, table row) ─────────────────────────── -->
   <template id="tpl-device-row">
-    <li class="row row-device" role="listitem">
-      <div class="row-trigger row-trigger-device" tabindex="0">
-        <span class="row-body">
-          <span class="row-title-line">
-            <span class="row-title" data-bind="name"></span>
-            <button type="button" class="row-pencil" data-action="rename" aria-label="Rename">
-              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 11h2l6.5-6.5-2-2L1 9v2zm8.5-7L11 2.5 9.5 1 8 2.5 9.5 4z" fill="currentColor"/></svg>
-            </button>
-          </span>
-          <span class="row-sub" data-bind="activity"></span>
-        </span>
-        <span class="row-actions">
-          <button type="button" class="btn-quiet" data-action="block" data-bind="blockBtn">Pause</button>
-          <button type="button" class="btn-icon" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-label="More">
-            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="3" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="11" cy="7" r="1.2" fill="currentColor"/></svg>
+    <div class="trow" role="row" tabindex="0">
+      <div class="trow-main">
+        <div class="td td-device">
+          <span class="device-name" data-bind="name"></span>
+          <span class="pill-self" data-bind="selfPill" hidden>THIS HOST</span>
+        </div>
+        <div class="td td-owner" data-bind="owner">—</div>
+        <div class="td td-activity" data-bind="activity">—</div>
+        <div class="td td-seen" data-bind="seen">—</div>
+        <div class="td td-status">
+          <span class="pill-status" data-bind="statusPill">ONLINE</span>
+          <span class="pill-kid" data-bind="kidPill" hidden>KID</span>
+        </div>
+        <div class="td td-actions">
+          <button type="button" class="dots" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-label="Actions">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <circle cx="3" cy="7" r="1.2" fill="currentColor"/>
+              <circle cx="7" cy="7" r="1.2" fill="currentColor"/>
+              <circle cx="11" cy="7" r="1.2" fill="currentColor"/>
+            </svg>
           </button>
-          <div class="menu" data-bind="menu" hidden role="menu">
-            <button type="button" class="menu-item" data-mins="30" role="menuitem">Pause for 30 minutes</button>
-            <button type="button" class="menu-item" data-mins="120" role="menuitem">Pause for 2 hours</button>
-            <button type="button" class="menu-item" data-mins="until_tomorrow" role="menuitem">Pause until tomorrow 6am</button>
-            <button type="button" class="menu-item" data-mins="0" role="menuitem">Pause indefinitely</button>
-            <hr class="menu-rule">
-            <button type="button" class="menu-item" data-action="assign" role="menuitem">Assign to person…</button>
-            <button type="button" class="menu-item" data-action="toggle-kid" data-bind="kidToggle" role="menuitem">Add to kid list</button>
-            <button type="button" class="menu-item" data-action="toggle-details" role="menuitem">Show details</button>
-          </div>
-        </span>
+        </div>
       </div>
-      <div class="details" data-bind="details" hidden>
+      <div class="trow-details" data-bind="details" hidden>
         <div class="details-grid">
           <dl class="details-list">
             <div class="dt-row"><dt>IP</dt><dd><code data-bind="dIp">—</code></dd></div>
             <div class="dt-row"><dt>MAC</dt><dd><code data-bind="dMac">—</code></dd></div>
             <div class="dt-row"><dt>Vendor</dt><dd data-bind="dVendor">—</dd></div>
+            <div class="dt-row" data-bind="dModelRow" hidden><dt>Model</dt><dd data-bind="dModel">—</dd></div>
+            <div class="dt-row" data-bind="dMdnsRow" hidden><dt>Bonjour</dt><dd data-bind="dMdns">—</dd></div>
             <div class="dt-row"><dt>Last seen</dt><dd data-bind="dLastSeen">—</dd></div>
             <div class="dt-row"><dt>Connections</dt><dd><code data-bind="dConns">0</code></dd></div>
             <div class="dt-row"><dt>Today</dt><dd data-bind="dToday">—</dd></div>
           </dl>
-          <div class="details-spark">
-            <p class="details-label">Activity, last 24 hours</p>
-            <div data-bind="spark" class="spark"></div>
-          </div>
           <div class="details-dests">
             <p class="details-label">Destinations <span class="details-label-meta" data-bind="destsCount"></span></p>
-            <ol class="dest-list dest-list-scroll" data-bind="dests"></ol>
+            <ol class="dest-list" data-bind="dests"></ol>
+          </div>
+          <div class="details-dns">
+            <p class="details-label">DNS queries <span class="details-label-meta" data-bind="dnsCount"></span></p>
+            <ol class="dns-list" data-bind="dnsList">
+              <li class="dns-empty">Waiting for queries.</li>
+            </ol>
           </div>
         </div>
-        <div class="details-dns">
-          <p class="details-label">DNS queries <span class="details-label-meta" data-bind="dnsCount"></span></p>
-          <ol class="dns-list dns-list-scroll" data-bind="dnsList">
-            <li class="dns-empty">Waiting for queries — they appear here within seconds of being made.</li>
-          </ol>
-        </div>
       </div>
-    </li>
+    </div>
   </template>
 
   <script src="/ui/network.js" defer></script>

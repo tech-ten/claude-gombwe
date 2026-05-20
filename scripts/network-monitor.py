@@ -116,10 +116,18 @@ def main():
             n_conn = len(snap["connections"])
             print(f"[network-monitor] {snap['ts']} devices={n_devices} connections={n_conn} → {path.name}", flush=True)
             last_consecutive_errors = 0
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+        except KeyboardInterrupt:
+            raise
+        except BaseException as e:
+            # Catch EVERYTHING except SystemExit/KeyboardInterrupt. Previously this
+            # only caught URL/HTTP/Timeout/OSError, which let http.client.IncompleteRead
+            # (a HTTPException) kill the process silently and take down 11+ hours of
+            # collection. Long-running collector: no single poll failure should ever
+            # be fatal.
+            if isinstance(e, SystemExit):
+                raise
             last_consecutive_errors += 1
             print(f"[network-monitor] poll failed ({last_consecutive_errors}x): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-            # Exponential backoff capped at the poll interval, so we never *slow* the normal cadence.
             backoff = min(2 ** last_consecutive_errors, POLL_INTERVAL)
             time.sleep(backoff)
             continue
