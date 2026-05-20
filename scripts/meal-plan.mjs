@@ -6,7 +6,10 @@
  *   ~/.claude-gombwe/data/family.json         (members, dietary, pantry,
  *                                              meal_pattern, budget, existing
  *                                              meals)
- *   ~/.claude-gombwe/data/dinner-bank.json    (curated dinners with metadata)
+ *   ~/.claude-gombwe/data/recipes.json        (unified recipe bank — was merged
+ *                                              from dinner-bank.json on
+ *                                              2026-05-21; filter by
+ *                                              category="dinner")
  *   ~/.claude-gombwe/data/grocery-deals-latest.json
  *                                             (current rock-bottom / eligible
  *                                              items — informs picks)
@@ -40,7 +43,7 @@ import { join, dirname } from 'path';
 
 const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
 const FAMILY      = join(DATA_DIR, 'family.json');
-const BANK        = join(DATA_DIR, 'dinner-bank.json');
+const RECIPES     = join(DATA_DIR, 'recipes.json');
 const DEALS       = join(DATA_DIR, 'grocery-deals-latest.json');
 const PLAN_OUT    = join(DATA_DIR, 'meal-plan-latest.json');
 const TRANSACTIONS = '/Users/tendaimudavanhu/code/fin-statements/output/transactions.csv';
@@ -208,12 +211,29 @@ const dryRun = args.includes('--dry-run');
 const days   = parseInt(argVal('--days') || '7', 10);
 const fromArg = argVal('--from');
 
+/** Read recipes.json and return an array of dinner entries with `name`
+ *  attached (recipes.json is keyed by name; the picker logic expects an
+ *  array shape). Filters to category="dinner". */
+function loadDinnerBank() {
+  const all = readJson(RECIPES, {});
+  const dinners = [];
+  for (const [name, entry] of Object.entries(all)) {
+    if (name === '_meta') continue;
+    if (entry?.category !== 'dinner') continue;
+    dinners.push({ name, ...entry });
+  }
+  return { dinners };
+}
+
 async function main() {
   const family = readJson(FAMILY, {});
-  const bank   = readJson(BANK,   { dinners: [] });
+  const bank   = loadDinnerBank();
   const deals  = readJson(DEALS,  null);
 
-  if (!bank.dinners?.length) { console.error('No dinners in dinner-bank.json'); process.exit(1); }
+  if (!bank.dinners?.length) {
+    console.error('No dinner recipes found in recipes.json (entries need category="dinner").');
+    process.exit(1);
+  }
 
   const today = ymd(new Date());
   const fromDate = fromArg || today;

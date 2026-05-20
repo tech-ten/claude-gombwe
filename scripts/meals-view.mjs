@@ -10,11 +10,15 @@
  *   node scripts/meals-view.mjs pantry       # pantry only
  *   node scripts/meals-view.mjs recipe       # all recipes
  *   node scripts/meals-view.mjs recipe "chicken stir fry"  # specific recipe
+ *   node scripts/meals-view.mjs plan         # current 7-day dinner plan (auto-regen if stale)
+ *   node scripts/meals-view.mjs deals        # current rock-bottom grocery deals
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
 
@@ -149,23 +153,33 @@ function renderPantry() {
 
 // ── Recipes ──
 function renderRecipes(filter) {
-  const names = Object.keys(recipes).sort();
+  // Filter out the merged-file metadata key
+  const names = Object.keys(recipes).filter(n => !n.startsWith('_')).sort();
   if (names.length === 0) return '**Recipes**\nNo recipes saved yet.\n';
 
   if (filter) {
     const lower = filter.toLowerCase();
-    const match = names.find(n => n === lower || n.includes(lower));
-    if (!match) return `No recipe found for "${filter}".\nAvailable: ${names.join(', ')}`;
+    // Case-insensitive match: exact (lc==lc) → substring → fall through
+    const match = names.find(n => n.toLowerCase() === lower)
+               || names.find(n => n.toLowerCase().includes(lower));
+    if (!match) return `No recipe found for "${filter}".\nAvailable: ${names.join(', ')}\n`;
 
     const r = recipes[match];
     const prefs = r.preferences || {};
-    const lines = [`**${match}**\n`];
-    lines.push('Ingredients:');
-    for (const ing of r.ingredients) {
+    const lines = [`**${match}**`];
+    if (r.category)      lines.push(`_${r.category}${r.main_protein ? ' · ' + r.main_protein : ''}${r.est_cost_aud ? ' · ~$' + r.est_cost_aud + ' for 6' : ''}${r.prep_minutes ? ' · ' + r.prep_minutes + ' min' : ''}_`);
+    lines.push('\nIngredients:');
+    for (const ing of (r.ingredients || [])) {
+      const text = typeof ing === 'string' ? ing : `${ing.name || '?'}${ing.qty ? ' — ' + ing.qty : ''}`;
       const tag = prefs[ing] === 'human' ? ' [preference]' : '';
-      lines.push(`- ${ing}${tag}`);
+      lines.push(`- ${text}${tag}`);
     }
     if (r.recipe) lines.push(`\nMethod:\n${r.recipe}`);
+    if (r.modifications && Object.keys(r.modifications).length) {
+      lines.push('\nPer-person modifications:');
+      for (const [m, mod] of Object.entries(r.modifications)) lines.push(`  • ${m}: ${mod}`);
+    }
+    if (r.diet_tags?.length) lines.push(`\nTags: ${r.diet_tags.join(', ')}`);
     return lines.join('\n') + '\n';
   }
 
@@ -176,6 +190,70 @@ function renderRecipes(filter) {
     const humanCount = Object.values(r.preferences || {}).filter(v => v === 'human').length;
     const prefNote = humanCount > 0 ? `, ${humanCount} preferences` : '';
     lines.push(`- **${name}** — ${count} ingredients${prefNote}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+// ── Plan view (reads meal-plan-latest.json; regenerates if stale > 3 days) ─
+
+function renderPlan() {
+  const planPath = join(DATA_DIR, 'meal-plan-latest.json');
+  let plan = load('meal-plan-latest.json', null);
+  const isStale = !plan || !existsSync(planPath)
+    || (Date.now() - statSync(planPath).mtimeMs > 3 * 86_400_000);
+
+  if (isStale) {
+    // Re-run meal-plan.mjs to refresh. Same script the cron uses.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const result = spawnSync('node', [join(here, 'meal-plan.mjs')], { stdio: 'inherit' });
+    if (result.status !== 0) return '_Meal planner failed — check console output above._\n';
+    plan = load('meal-plan-latest.json', null);
+    if (!plan) return '_No meal plan available._\n';
+  }
+
+  const lines = [`**${plan.days}-Day Dinner Plan** — from ${plan.from}\n`];
+  const bc = plan.budget_context || {};
+  lines.push(`Budget: $${bc.month_to_date_spent ?? '?'} spent / $${bc.monthly_target ?? '?'} target · $${bc.daily_allowance ?? '?'} / day allowance · plan implies $${bc.plan_implied_per_day ?? '?'} / day\n`);
+  for (const d of plan.dinners || []) {
+    if (d.status === 'already-planned') {
+      lines.push(`**${d.date}** ${typeof d.existing === 'string' ? d.existing : '_already planned_'}`);
+      continue;
+    }
+    if (d.status !== 'planned') {
+      lines.push(`**${d.date}** _no pick_`);
+      continue;
+    }
+    const flag = d.over_daily_allowance ? ' ⚠' : '';
+    lines.push(`**${d.date}**${flag} ${d.name}  · $${d.est_cost_aud}  (${d.protein}/${d.veg_focus})`);
+    for (const [m, mod] of Object.entries(d.modifications || {})) {
+      lines.push(`  • ${m}: ${mod}`);
+    }
+    if (d.ingredients_needed?.length) {
+      const buy = d.ingredients_needed.map(i => i.name).slice(0, 5).join(', ');
+      lines.push(`  _Need: ${buy}${d.ingredients_needed.length > 5 ? ', …' : ''}_`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+// ── Deals view (reads grocery-deals-latest.json) ─────────────────────
+
+function renderDeals() {
+  const deals = load('grocery-deals-latest.json', null);
+  if (!deals) return '_No deals snapshot yet — run `node scripts/grocery-watch.mjs` first._\n';
+  const lines = [`**Today's Grocery Deals**\n`];
+  lines.push(`Rock-bottom: ${deals.rock_bottom?.length || 0}  ·  Eligible: ${deals.eligible?.length || 0}  ·  Waiting: ${deals.waiting?.length || 0}\n`);
+  const w = deals.carts?.woolworths;
+  const c = deals.carts?.coles;
+  if (w) lines.push(`Woolworths cart: ${w.items.length} items · $${w.total} ${w.free_delivery ? '✓ free delivery' : `(need $${(75 - w.total).toFixed(2)} more)`}`);
+  if (c) lines.push(`Coles cart:      ${c.items.length} items · $${c.total} ${c.free_delivery ? '✓ free delivery' : `(need $${(50 - c.total).toFixed(2)} more)`}`);
+  lines.push('');
+  if (deals.rock_bottom?.length) {
+    lines.push('**Rock-bottom right now:**');
+    for (const r of deals.rock_bottom.slice(0, 15)) {
+      lines.push(`  • ${r.name} @ $${r.best.price?.toFixed(2)} (${r.best.store}, ceiling $${r.max_price})`);
+    }
+    if (deals.rock_bottom.length > 15) lines.push(`  … +${deals.rock_bottom.length - 15} more`);
   }
   return lines.join('\n') + '\n';
 }
@@ -197,6 +275,12 @@ switch (mode) {
   case 'recipe':
   case 'recipes':
     console.log(renderRecipes(arg));
+    break;
+  case 'plan':
+    console.log(renderPlan());
+    break;
+  case 'deals':
+    console.log(renderDeals());
     break;
   case 'all':
   default:
