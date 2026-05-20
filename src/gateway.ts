@@ -244,6 +244,35 @@ export class Gateway {
     }
   }
 
+  /** Send a one-shot alert through every configured channel + the web dashboard.
+   *  Used by background scripts (grocery-buy, scanners) to surface failures
+   *  to the user wherever they happen to be — Discord, Telegram, web. */
+  public notify(message: string, targets?: string[]): { sent_to: string[] } {
+    const sent: string[] = [];
+    const list = targets && targets.length ? targets : [...this.channels.keys()];
+    for (const target of list) {
+      if (target.startsWith('discord:#')) {
+        const discord = this.channels.get('discord');
+        if (discord) {
+          discord.send(target.replace('discord:', ''), message);
+          sent.push(target);
+        }
+      } else {
+        const channel = this.channels.get(target);
+        if (channel) {
+          channel.send(`notify:${target}`, message);
+          sent.push(target);
+        }
+      }
+    }
+    this.broadcast({
+      type: 'session:message' as any,
+      data: { sessionKey: 'system', message, channel: 'system' },
+      timestamp: new Date().toISOString(),
+    });
+    return { sent_to: sent };
+  }
+
   private setupChannels(): void {
     // Web channel (always enabled)
     const webChannel = new WebChannel();
@@ -1104,6 +1133,18 @@ export class Gateway {
     });
 
     // --- REST API ---
+
+    // ── Notify (used by background scripts to alert via channels) ─
+    // POST { message: string, targets?: string[] }
+    // Targets default to all configured channels (discord, telegram, …).
+    this.app.post('/api/notify', (req: Request, res: Response) => {
+      const { message, targets } = req.body ?? {};
+      if (!message || typeof message !== 'string') {
+        res.status(400).json({ error: 'message required' });
+        return;
+      }
+      res.json(this.notify(message, Array.isArray(targets) ? targets : undefined));
+    });
 
     // ── Network monitoring + control ─────────────────────────────
     this.app.get('/api/network/status', async (_req: Request, res: Response) => {

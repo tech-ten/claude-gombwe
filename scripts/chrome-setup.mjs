@@ -99,33 +99,36 @@ async function main() {
       defaultViewport: null,
     });
 
-    const pages = await browser.pages();
-
-    // Check Woolworths
-    const wPage = pages.find(p => p.url().includes('woolworths'));
-    let wLoggedIn = false;
-    if (wPage) {
-      const wText = await wPage.evaluate(() => document.body.innerText.slice(0, 500));
-      wLoggedIn = wText.includes('My Account') || wText.includes('Hi,');
+    // Use the /cart redirect test — both retailers send unauthenticated
+    // users to a login URL. Definitive (URL-based), unlike the previous
+    // brittle "innerText.slice(0, 500).includes('Hi,')" which falsely
+    // reported "not logged in" because modern SPA headers push nav text
+    // ahead of any auth indicator.
+    async function checkLogin(domain, cartUrl) {
+      const pages = await browser.pages();
+      let page = pages.find(p => p.url().includes(domain));
+      if (!page) page = await browser.newPage();
+      try {
+        await page.goto(cartUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+      } catch { /* navigation timeout still tells us via final URL */ }
+      const finalUrl = page.url().toLowerCase();
+      const loggedOutSignals = ['/login', '/sign-in', '/signin', '/auth/', '/securelogin'];
+      const loggedIn = !loggedOutSignals.some(s => finalUrl.includes(s));
+      return { loggedIn, finalUrl: page.url() };
     }
 
-    // Check Coles
-    const cPage = pages.find(p => p.url().includes('coles'));
-    let cLoggedIn = false;
-    if (cPage) {
-      const cText = await cPage.evaluate(() => document.body.innerText.slice(0, 500));
-      cLoggedIn = cText.includes('My Account') || cText.includes('Hi ');
-    }
+    const w = await checkLogin('woolworths.com.au', 'https://www.woolworths.com.au/shop/cart');
+    const c = await checkLogin('coles.com.au',      'https://www.coles.com.au/cart');
 
-    console.log(`  Woolworths: ${wLoggedIn ? 'logged in' : 'not logged in'}`);
-    console.log(`  Coles:      ${cLoggedIn ? 'logged in' : 'not logged in'}`);
+    console.log(`  Woolworths: ${w.loggedIn ? 'logged in' : 'not logged in'}  (${w.finalUrl})`);
+    console.log(`  Coles:      ${c.loggedIn ? 'logged in' : 'not logged in'}  (${c.finalUrl})`);
 
-    if (wLoggedIn || cLoggedIn) {
+    if (w.loggedIn || c.loggedIn) {
       console.log('\n  Setup complete! Your login is saved.');
       console.log('  Next time, just run: gombwe grocery');
       console.log('  Or from Discord: /grocery-order milk, eggs, bread\n');
     } else {
-      console.log('\n  Logins not detected. Try logging in again');
+      console.log('\n  Cart pages still redirected to login — try logging in again');
       console.log('  and run this setup again.\n');
     }
 

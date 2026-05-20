@@ -138,6 +138,63 @@ async function getPage(browser, domain) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// LOGIN-WALL DETECTION + GOMBWE NOTIFY
+// ═══════════════════════════════════════════════════════════
+
+const GOMBWE_PORT_ENV = process.env.GOMBWE_PORT || '18790';
+
+/** POST to gombwe's /api/notify so a Discord/Telegram/web alert fires. Best-effort. */
+async function notifyGombwe(message) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${GOMBWE_PORT_ENV}/api/notify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    if (!res.ok) console.warn(`  notify endpoint returned ${res.status}`);
+  } catch (err) {
+    console.warn(`  (couldn't reach gombwe to notify: ${err.message})`);
+  }
+}
+
+/** Returns true if `page` looks like a login wall. Conservative — only the strong signals. */
+function looksLikeLoginWall(page) {
+  const url = page.url().toLowerCase();
+  if (url.includes('/login')) return true;
+  if (url.includes('/sign-in') || url.includes('/signin')) return true;
+  if (url.includes('/auth/')) return true;
+  if (url.includes('account.woolworths') || url.includes('account/sign-in')) return true;
+  if (url.includes('coles.com.au/login')) return true;
+  return false;
+}
+
+/** Verify we're authenticated by navigating to /cart — both retailers redirect
+ *  to login when the session is dead. If we hit the wall, fire a gombwe alert
+ *  through every configured channel (Discord/Telegram/web) and exit. */
+async function assertLoggedIn(page, store) {
+  const cartUrl = store === 'woolworths'
+    ? 'https://www.woolworths.com.au/shop/cart'
+    : 'https://www.coles.com.au/cart';
+  try {
+    await page.goto(cartUrl, { waitUntil: 'networkidle2', timeout: 12000 });
+  } catch { /* navigation timeout still tells us via final URL */ }
+
+  if (looksLikeLoginWall(page)) {
+    const msg = [
+      `⚠️  gombwe grocery: ${store} session expired`,
+      ``,
+      `The cron / skill couldn't add items because the saved Chrome profile is no longer logged in to ${store}.com.au.`,
+      `Run \`gombwe grocery-setup\` (or open the gombwe Chrome profile manually) and sign in again — cookies will refresh for ~60 days.`,
+      `URL after /cart redirect: ${page.url()}`,
+    ].join('\n');
+    console.error(`\n  LOGIN WALL detected at ${page.url()}`);
+    console.error(`  Aborting — no items added.\n`);
+    await notifyGombwe(msg);
+    process.exit(2);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 // WOOLWORTHS — FULL BUY FLOW
 // ═══════════════════════════════════════════════════════════
 
@@ -275,7 +332,186 @@ async function woolworthsClearCart(page) {
   }
 }
 
+/** Activate every available Everyday Rewards (Woolworths Rewards) booster.
+ *  Best-effort, non-blocking — any failure here is logged but does not stop
+ *  checkout. On the first runs this also dumps a small page summary so we can
+ *  fix selectors without guessing.
+ *
+ *  Entry point is the rewards hub inside the shop subdomain
+ *  (https://www.woolworths.com.au/shop/myaccount/woolworthsrewards) — same
+ *  origin as the shopping session, so cookies just work. */
+async function activateEverydayRewardsBoosters(page) {
+  console.log('  ── BOOSTERS ──');
+  const startUrl = page.url();
+  const HUB = 'https://www.woolworths.com.au/shop/myaccount/woolworthsrewards';
+
+  try {
+    await page.goto(HUB, { waitUntil: 'networkidle2', timeout: 15000 });
+  } catch (err) {
+    console.log(`  Could not load rewards hub (${err.message}) — skipping.`);
+    return { activated: 0, skipped: true };
+  }
+  await wait(2500);
+
+  if (looksLikeLoginWall(page)) {
+    console.log('  Rewards page redirected to login — Everyday Rewards session expired.');
+    console.log('  Skipping boosters (checkout will still proceed).');
+    await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 12000 }).catch(() => {});
+    return { activated: 0, skipped: true };
+  }
+
+  // Parse the on-page status tabs first:
+  //   "Available (N)"     = boosters left to activate (this run will click these)
+  //   "Ready to shop (M)" = already activated, will apply at next checkout
+  // Then click into the "Available" tab if present, so its Activate buttons are rendered.
+  const navResult = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    function findClickable(root, predicate) {
+      const all = root.querySelectorAll('a, button, [role="tab"]');
+      for (const el of all) {
+        const text = (el.textContent || '').trim();
+        if (predicate(text, el)) return el;
+      }
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) {
+          const hit = findClickable(el.shadowRoot, predicate);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    }
+    function pageText() {
+      // body innerText catches shadow-DOM-rendered text on most modern browsers.
+      // Falls through gracefully if not.
+      try { return document.body.innerText || ''; } catch { return ''; }
+    }
+    const text = pageText();
+    const availableMatch = text.match(/Available\s*\((\d+)\)/i);
+    const readyMatch     = text.match(/Ready to shop\s*\((\d+)\)/i);
+    const counts = {
+      available: availableMatch ? parseInt(availableMatch[1], 10) : null,
+      ready:     readyMatch     ? parseInt(readyMatch[1],     10) : null,
+    };
+
+    // Click "Available (N)" tab so its booster cards render. Skip if N=0
+    // (no offers, nothing to activate this run).
+    let tabClicked = false;
+    if (counts.available !== 0) {
+      const tab = findClickable(document, (t) => /^available\s*\(\d+\)$/i.test(t));
+      if (tab) {
+        tab.scrollIntoView({ block: 'center', behavior: 'instant' });
+        tab.click();
+        tabClicked = true;
+        await wait(1500);
+      }
+    }
+
+    // Fall back to looking for a top-level "Boosters" entry (older layouts).
+    let entryClicked = false;
+    if (!tabClicked && counts.available === null) {
+      const entry = findClickable(document, (t) => {
+        const low = t.toLowerCase();
+        return (low.includes('booster') || low.includes('boost'))
+          && !low.includes('boosted')
+          && !low.includes('history');
+      });
+      if (entry) {
+        entry.scrollIntoView({ block: 'center', behavior: 'instant' });
+        entry.click();
+        entryClicked = true;
+        await wait(2500);
+      }
+    }
+
+    return { counts, tabClicked, entryClicked, url_after: location.href };
+  });
+
+  const { counts } = navResult;
+  if (counts.available !== null || counts.ready !== null) {
+    console.log(`  Status: ${counts.available ?? '?'} available · ${counts.ready ?? '?'} ready to shop`);
+  }
+  console.log(`  Navigation: ${navResult.tabClicked ? 'clicked Available tab' : navResult.entryClicked ? 'clicked Boosters entry' : 'no nav needed (scanning current view)'} → ${navResult.url_after}`);
+
+  // Short-circuit: if the page told us 0 available, the cron's job is done.
+  if (counts.available === 0) {
+    console.log(`  Nothing to activate (0 available, ${counts.ready ?? '?'} already armed for next shop).`);
+    await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 12000 }).catch(() => {});
+    return { activated: 0, skipped: false, available: 0, ready: counts.ready };
+  }
+
+  // Find Activate-style buttons (light + shadow DOM). We also dump a sample of
+  // button labels we DID see, so the first failed run tells us exactly what
+  // the page actually calls these things.
+  const result = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const activateBtns = [];
+    const allBtnLabels = [];
+    function walk(root) {
+      const all = root.querySelectorAll('button, a[role="button"], [role="button"]');
+      for (const b of all) {
+        const text = (b.textContent || '').trim();
+        if (text && text.length < 50) allBtnLabels.push(text);
+        const low = text.toLowerCase();
+        // "Activate", "Activate booster", "Boost", "Add to card" — common patterns
+        const isActivate =
+          low === 'activate' ||
+          low === 'activate booster' ||
+          low.startsWith('activate ') ||
+          low === 'boost' ||
+          low === 'add to card' ||
+          low === 'collect';
+        const isAlready =
+          low.includes('activated') || low.includes('expired') ||
+          low.includes('used') || low.includes('redeemed');
+        if (isActivate && !isAlready) activateBtns.push(b);
+      }
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    }
+    walk(document);
+    let clicked = 0;
+    for (const btn of activateBtns) {
+      try {
+        btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        btn.click();
+        clicked++;
+        await wait(400);
+      } catch { /* swallow per-button errors */ }
+    }
+    // Sample first 12 unique button labels for diagnostics
+    const uniq = [...new Set(allBtnLabels)].slice(0, 12);
+    return {
+      found: activateBtns.length,
+      clicked,
+      sample_labels: uniq,
+      total_buttons_seen: allBtnLabels.length,
+    };
+  });
+
+  console.log(`  Boosters: ${result.clicked} activated (of ${result.found} candidates) — page had ${result.total_buttons_seen} clickable elements`);
+  if (result.found === 0 && result.sample_labels.length > 0) {
+    console.log(`  No "Activate" buttons matched. Sample of what we DID see on the page:`);
+    for (const label of result.sample_labels) console.log(`    • ${label}`);
+    console.log(`  Paste these to gombwe so we can widen the selector.`);
+  }
+
+  // Return to wherever we started so the rest of checkout begins cleanly.
+  await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 12000 }).catch(() => {});
+  await wait(1500);
+  return { activated: result.clicked, skipped: false };
+}
+
 async function woolworthsCheckoutAndPay(page) {
+  // Activate Everyday Rewards boosters first — points multipliers apply only
+  // to shops placed AFTER activation, so this must run before checkout.
+  // Non-blocking: any failure here is logged and we proceed regardless.
+  try {
+    await activateEverydayRewardsBoosters(page);
+  } catch (err) {
+    console.log(`  Booster activation failed (continuing): ${err.message}`);
+  }
+
   // Go to cart
   await page.goto('https://www.woolworths.com.au/shop/cart', { waitUntil: 'networkidle2', timeout: 15000 });
   await wait(3000);
@@ -777,6 +1013,7 @@ async function checkoutOnly(store) {
   const browser = await connectChrome();
   try {
     const page = await getPage(browser, store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au');
+    await assertLoggedIn(page, store);
     const checkoutFn = store === 'woolworths' ? woolworthsCheckoutAndPay : colesCheckoutAndPay;
     console.log(`\n  ── CHECKOUT ${store.toUpperCase()} ──\n`);
     const result = await checkoutFn(page);
@@ -833,6 +1070,7 @@ async function buy(store, items, skipCheckout = false) {
     }
 
     const page = await getPage(browser, store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au');
+    await assertLoggedIn(page, store);
     const searchFn = store === 'woolworths' ? woolworthsSearch : colesSearch;
     const addFn = store === 'woolworths' ? woolworthsAddToCart : colesAddToCart;
     const clearFn = store === 'woolworths' ? woolworthsClearCart : colesClearCart;
@@ -903,7 +1141,10 @@ async function buy(store, items, skipCheckout = false) {
         console.log(`\n  Decision: ${priceComparison.chosen.toUpperCase()} — saving $${priceComparison.savings.toFixed(2)}`);
       }
 
-      console.log(`\n  Confirm order? Reply "yes" to place the order, "no" to cancel.\n`);
+      console.log(`\n  Cart staged but NOT checked out. To place this order:`);
+      console.log(`    • From the skill / Discord: reply "yes" — Claude calls confirm-checkout-${store}`);
+      console.log(`    • From this terminal:        node scripts/grocery-buy.mjs --checkout-only ${store}`);
+      console.log(`    • Manually:                  open woolworths.com.au and check out\n`);
 
       // Save pending order state
       const { writeFileSync } = await import('fs');
@@ -943,12 +1184,63 @@ async function buy(store, items, skipCheckout = false) {
 // ═══════════════════════════════════════════════════════════
 
 const args = process.argv.slice(2);
-const noCheckout = args.includes('--no-checkout');
+const noCheckout       = args.includes('--no-checkout');
 const checkoutOnlyFlag = args.includes('--checkout-only');
+const dryRunFlag       = args.includes('--dry-run');
+const boostersOnlyFlag = args.includes('--boosters-only');
 const filtered = args.filter(a => !a.startsWith('--'));
 const [store, ...items] = filtered;
 
-if (checkoutOnlyFlag && store) {
+// ── Test mode A: dry-run. Connects, asserts login, runs a no-side-effect
+// search, exits. Nothing added, nothing activated, no order placed.
+async function dryRun(theStore) {
+  const browser = await connectChrome();
+  try {
+    const domain = theStore === 'coles' ? 'coles.com.au' : 'woolworths.com.au';
+    const page = await getPage(browser, domain);
+    console.log(`\n  ── DRY RUN (${theStore}) ──`);
+    console.log(`  Step 1/2: login check via /cart redirect…`);
+    await assertLoggedIn(page, theStore);          // exits 2 if logged out
+    console.log(`  ✓ Logged in`);
+    console.log(`  Step 2/2: trivial search for "bananas"…`);
+    const searchFn = theStore === 'coles' ? colesSearch : woolworthsSearch;
+    const results = await searchFn(page, 'bananas');
+    if (!results || results.length === 0) {
+      console.log(`  ⚠️  Search returned no products — could be a transient issue or a session-scope problem.`);
+    } else {
+      console.log(`  ✓ Search returned ${results.length} products. First: ${results[0].name} @ $${results[0].price?.toFixed(2) || '?'}`);
+    }
+    console.log(`  Dry run complete. No items added, no boosters activated, no checkout.\n`);
+  } finally {
+    browser.disconnect();
+  }
+}
+
+// ── Test mode B: boosters only. Activates whatever boosters are available
+// and exits. Nothing else.
+async function boostersOnly() {
+  const browser = await connectChrome();
+  try {
+    const page = await getPage(browser, 'woolworths.com.au');
+    console.log(`\n  ── BOOSTERS-ONLY (woolworths) ──`);
+    await activateEverydayRewardsBoosters(page);
+    console.log(`  Done. No items added, no checkout.\n`);
+  } finally {
+    browser.disconnect();
+  }
+}
+
+if (dryRunFlag) {
+  dryRun(store || 'woolworths').catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+} else if (boostersOnlyFlag) {
+  boostersOnly().catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+} else if (checkoutOnlyFlag && store) {
   checkoutOnly(store).catch(err => {
     console.error('Error:', err.message);
     process.exit(1);
@@ -963,6 +1255,10 @@ if (checkoutOnlyFlag && store) {
     node grocery-buy.mjs --checkout-only woolworths                    Checkout existing cart
     node grocery-buy.mjs woolworths "milk 2L" "eggs"                   Buy from Woolworths
     node grocery-buy.mjs coles "milk 2L" "eggs"                        Buy from Coles
+
+  Safe tests (no money, no order):
+    node grocery-buy.mjs --dry-run [woolworths|coles]                  Connect + login check + 1 search, exit
+    node grocery-buy.mjs --boosters-only                               Activate Woolworths Rewards boosters, exit
   `);
   process.exit(0);
 } else if (!['auto', 'woolworths', 'coles'].includes(store)) {
