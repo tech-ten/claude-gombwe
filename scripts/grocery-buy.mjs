@@ -19,209 +19,49 @@
  *   node scripts/grocery-buy.mjs auto "milk 2L" "eggs 12" "bread"   ← cheapest store
  */
 
-import puppeteer from 'puppeteer-core';
-import { existsSync, readFileSync } from 'fs';
-import { spawn } from 'child_process';
+import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { findChrome, detachedSpawnOptions, tempPath } from './platform.mjs';
+import { tempPath } from './platform.mjs';
+import {
+  // Constants
+  MIN_ORDER_WOOLWORTHS, MIN_ORDER_COLES,
+  // Utilities
+  wait,
+  // Chrome
+  connectChrome, clearBrowserCache, getPage,
+  // Auth + alert
+  notifyGombwe, looksLikeLoginWall, assertLoggedIn,
+  // Search
+  woolworthsSearch, discoverColesApi, colesSearch,
+  // Match
+  pickBestProduct,
+} from './grocery-lib.mjs';
 
-const PORT = 19222;
-const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
 const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Load config
+// Load config (buy-script specific — not in lib)
 let PREFS = {};
 try { PREFS = JSON.parse(readFileSync(PREFS_FILE, 'utf-8')); } catch {}
 const CVV = PREFS.payment?.cvv || null;
 const DELIVERY_INSTRUCTIONS = PREFS.delivery?.instructions || 'Please leave at front door / pouch. Thank you.';
-const MIN_ORDER_WOOLWORTHS = 75;
-const MIN_ORDER_COLES = 50;
 const PRICE_LIMITS = PREFS.price_limits || {};
 const PRICE_BUFFER = 1.15; // 15% buffer above listed limits
 const CLEAR_CACHE = PREFS.clear_cache_before_order !== false; // default true
 
-/**
- * Pick the best product from search results, respecting price limits.
- * Prefers the cheapest product that is under the limit (with buffer).
- * Falls back to cheapest overall if nothing is under limit.
- */
-function pickBestProduct(products, searchTerm) {
-  if (!products || products.length === 0) return null;
-
-  // Find the applicable price limit (fuzzy match on search term)
-  const termLower = searchTerm.toLowerCase();
-  let limit = null;
-  for (const [key, val] of Object.entries(PRICE_LIMITS)) {
-    if (termLower.includes(key.toLowerCase()) || key.toLowerCase().includes(termLower.split(' ')[0])) {
-      limit = val * PRICE_BUFFER; // apply buffer
-      break;
-    }
-  }
-
-  // Sort by price ascending (cheapest first), treating null/999 as expensive
-  const sorted = [...products].sort((a, b) => (a.price || 999) - (b.price || 999));
-
-  if (limit) {
-    // Prefer cheapest product under the limit
-    const underLimit = sorted.find(p => p.price && p.price <= limit);
-    if (underLimit) return underLimit;
-
-    // Everything over limit — warn and pick cheapest anyway
-    const cheapest = sorted[0];
-    console.log(`  ⚠ PRICE WARNING: "${searchTerm}" cheapest is $${cheapest.price?.toFixed(2)} (limit ~$${limit.toFixed(2)})`);
-    return cheapest;
-  }
-
-  // No limit defined — just pick cheapest
-  return sorted[0];
+/** Local wrapper passes the buy-script's prefs into the lib's pickBestProduct. */
+function pickBestProductLocal(products, searchTerm) {
+  return pickBestProduct(products, { searchTerm, priceLimits: PRICE_LIMITS, priceBuffer: PRICE_BUFFER });
 }
+
+// Chrome / Auth / Search primitives now live in scripts/grocery-lib.mjs.
+// (connectChrome, clearBrowserCache, getPage, notifyGombwe,
+//  looksLikeLoginWall, assertLoggedIn, woolworthsSearch, colesSearch
+//  are imported at the top of this file.)
 
 // ═══════════════════════════════════════════════════════════
-// CHROME
+// WOOLWORTHS — FULL BUY FLOW (search lives in grocery-lib.mjs)
 // ═══════════════════════════════════════════════════════════
-
-async function connectChrome() {
-  try {
-    return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null });
-  } catch {}
-
-  if (!existsSync(PROFILE_DIR)) {
-    console.error('No saved login. Run: gombwe grocery-setup');
-    process.exit(1);
-  }
-
-  const chromePath = findChrome();
-  if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
-
-  spawn(chromePath, [
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${PROFILE_DIR}`,
-    '--no-first-run', '--no-default-browser-check',
-    'https://www.woolworths.com.au',
-    'https://www.coles.com.au',
-  ], detachedSpawnOptions()).unref();
-
-  for (let i = 0; i < 15; i++) {
-    await wait(2000);
-    try { return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null }); } catch {}
-  }
-  console.error('Chrome failed to start.'); process.exit(1);
-}
-
-async function clearBrowserCache(browser) {
-  if (!CLEAR_CACHE) return;
-  console.log('  Clearing browser cache...');
-  try {
-    const page = (await browser.pages())[0] || await browser.newPage();
-    const client = await page.createCDPSession();
-    await client.send('Network.clearBrowserCache');
-    // NOTE: Do NOT clear cookies — that logs us out of Woolworths/Coles
-    // and breaks all authenticated API calls (cart, checkout, payment).
-    await client.detach();
-    console.log('  Cache cleared.');
-  } catch (err) {
-    console.log(`  Cache clear failed (${err.message}) — continuing anyway.`);
-  }
-}
-
-async function getPage(browser, domain) {
-  const pages = await browser.pages();
-  let page = pages.find(p => p.url().includes(domain));
-  if (!page) {
-    page = await browser.newPage();
-    await page.goto(`https://www.${domain}`, { waitUntil: 'networkidle2', timeout: 15000 });
-    await wait(3000);
-  }
-  return page;
-}
-
-// ═══════════════════════════════════════════════════════════
-// LOGIN-WALL DETECTION + GOMBWE NOTIFY
-// ═══════════════════════════════════════════════════════════
-
-const GOMBWE_PORT_ENV = process.env.GOMBWE_PORT || '18790';
-
-/** POST to gombwe's /api/notify so a Discord/Telegram/web alert fires. Best-effort. */
-async function notifyGombwe(message) {
-  try {
-    const res = await fetch(`http://127.0.0.1:${GOMBWE_PORT_ENV}/api/notify`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) console.warn(`  notify endpoint returned ${res.status}`);
-  } catch (err) {
-    console.warn(`  (couldn't reach gombwe to notify: ${err.message})`);
-  }
-}
-
-/** Returns true if `page` looks like a login wall. Conservative — only the strong signals. */
-function looksLikeLoginWall(page) {
-  const url = page.url().toLowerCase();
-  if (url.includes('/login')) return true;
-  if (url.includes('/sign-in') || url.includes('/signin')) return true;
-  if (url.includes('/auth/')) return true;
-  if (url.includes('account.woolworths') || url.includes('account/sign-in')) return true;
-  if (url.includes('coles.com.au/login')) return true;
-  return false;
-}
-
-/** Verify we're authenticated by navigating to /cart — both retailers redirect
- *  to login when the session is dead. If we hit the wall, fire a gombwe alert
- *  through every configured channel (Discord/Telegram/web) and exit. */
-async function assertLoggedIn(page, store) {
-  const cartUrl = store === 'woolworths'
-    ? 'https://www.woolworths.com.au/shop/cart'
-    : 'https://www.coles.com.au/cart';
-  try {
-    await page.goto(cartUrl, { waitUntil: 'networkidle2', timeout: 12000 });
-  } catch { /* navigation timeout still tells us via final URL */ }
-
-  if (looksLikeLoginWall(page)) {
-    const msg = [
-      `⚠️  gombwe grocery: ${store} session expired`,
-      ``,
-      `The cron / skill couldn't add items because the saved Chrome profile is no longer logged in to ${store}.com.au.`,
-      `Run \`gombwe grocery-setup\` (or open the gombwe Chrome profile manually) and sign in again — cookies will refresh for ~60 days.`,
-      `URL after /cart redirect: ${page.url()}`,
-    ].join('\n');
-    console.error(`\n  LOGIN WALL detected at ${page.url()}`);
-    console.error(`  Aborting — no items added.\n`);
-    await notifyGombwe(msg);
-    process.exit(2);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// WOOLWORTHS — FULL BUY FLOW
-// ═══════════════════════════════════════════════════════════
-
-async function woolworthsSearch(page, query) {
-  const response = await page.evaluate(async (q) => {
-    const res = await fetch(`https://www.woolworths.com.au/apis/ui/Search/products?searchTerm=${encodeURIComponent(q)}&pageSize=5`, {
-      headers: { 'Accept': 'application/json' }
-    });
-    return res.json();
-  }, query);
-
-  const products = [];
-  if (response.Products) {
-    for (const group of response.Products) {
-      for (const p of (group.Products || [group])) {
-        if (!p.Stockcode) continue;
-        products.push({
-          name: p.DisplayName || p.Name,
-          price: p.Price || p.InstorePrice || null,
-          stockcode: p.Stockcode,
-          url: `https://www.woolworths.com.au/shop/productdetails/${p.Stockcode}`,
-        });
-      }
-    }
-  }
-  return products.slice(0, 5);
-}
 
 async function woolworthsAddToCart(page, product) {
   await page.goto(product.url, { waitUntil: 'networkidle2', timeout: 15000 });
@@ -718,34 +558,8 @@ async function woolworthsCheckoutAndPay(page) {
 // COLES — FULL BUY FLOW
 // ═══════════════════════════════════════════════════════════
 
-async function colesSearch(page, query) {
-  await page.goto(`https://www.coles.com.au/search/products?q=${encodeURIComponent(query)}`, {
-    waitUntil: 'networkidle2', timeout: 20000
-  });
-  await wait(4000);
-
-  return await page.evaluate(() => {
-    const items = [];
-    const tiles = document.querySelectorAll('[data-testid="product-tile"], section');
-    for (const tile of tiles) {
-      const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
-      if (!titleEl) continue;
-      const name = titleEl.textContent.trim();
-      if (!name || name.length < 3) continue;
-
-      const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
-      let price = null;
-      if (priceEl) {
-        const match = priceEl.textContent.match(/\$(\d+\.\d{2})/);
-        if (match) price = parseFloat(match[1]);
-      }
-
-      const linkEl = tile.querySelector('a[href*="/product/"]');
-      items.push({ name, price, url: linkEl?.href || null, store: 'coles' });
-    }
-    return items;
-  });
-}
+// colesSearch lives in grocery-lib.mjs (with internal-API discovery + DOM
+// fallback) — imported at the top of this file.
 
 async function colesAddToCart(page, product) {
   const url = product.url || `https://www.coles.com.au/search/products?q=${encodeURIComponent(product.name)}`;
@@ -1033,7 +847,7 @@ async function checkoutOnly(store) {
 
 async function buy(store, items, skipCheckout = false) {
   const browser = await connectChrome();
-  await clearBrowserCache(browser);
+  await clearBrowserCache(browser, CLEAR_CACHE);
 
   let priceComparison = null;
 
@@ -1050,8 +864,8 @@ async function buy(store, items, skipCheckout = false) {
       for (const item of items) {
         const wProducts = await woolworthsSearch(wPage, item);
         const cProducts = await colesSearch(cPage, item);
-        const wBest = pickBestProduct(wProducts, item);
-        const cBest = pickBestProduct(cProducts, item);
+        const wBest = pickBestProductLocal(wProducts, item);
+        const cBest = pickBestProductLocal(cProducts, item);
         const wPrice = wBest?.price || 999;
         const cPrice = cBest?.price || 999;
         wTotal += wPrice === 999 ? 0 : wPrice;
@@ -1091,7 +905,7 @@ async function buy(store, items, skipCheckout = false) {
       const products = await searchFn(page, item);
       if (products.length === 0) { console.log('not found'); continue; }
 
-      const best = pickBestProduct(products, item);
+      const best = pickBestProductLocal(products, item);
       if (!best) { console.log('no suitable product'); continue; }
       await wait(1000);
       const success = await addFn(page, best);

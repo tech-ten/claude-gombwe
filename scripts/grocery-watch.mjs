@@ -21,265 +21,26 @@
  * (SMS/WhatsApp). This script just writes the data + prints/JSON-emits the
  * snapshot; the alerter decides who to nudge.
  */
-import puppeteer from 'puppeteer-core';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
-import { spawn } from 'child_process';
-import { findChrome, detachedSpawnOptions } from './platform.mjs';
+import {
+  wait,
+  connectChrome, getPage,
+  woolworthsSearch, discoverColesApi, colesSearch,
+  productMatches,
+  MIN_ORDER_WOOLWORTHS as MIN_WOOL,
+  MIN_ORDER_COLES as MIN_COLE,
+} from './grocery-lib.mjs';
 
-const PORT = 19222;
-const PROFILE_DIR  = join(homedir(), '.claude-gombwe', 'chrome-profile');
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
 const PRICE_LOG    = join(DATA_DIR, 'grocery-prices.jsonl');
 const DEALS_OUT    = join(DATA_DIR, 'grocery-deals-latest.json');
 
-const MIN_WOOL = 75;   // free delivery threshold
-const MIN_COLE = 50;
-
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
-
-// ── Chrome ───────────────────────────────────────────────────────────
-
-async function connectChrome() {
-  try { return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null }); } catch {}
-  if (!existsSync(PROFILE_DIR)) { console.error('No saved login. Run: gombwe grocery-setup'); process.exit(1); }
-  const chromePath = findChrome();
-  if (!chromePath) { console.error('Chrome not found.'); process.exit(1); }
-  spawn(chromePath, [
-    `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE_DIR}`,
-    '--no-first-run', '--no-default-browser-check',
-    'https://www.woolworths.com.au',
-  ], detachedSpawnOptions()).unref();
-  for (let i = 0; i < 15; i++) {
-    await wait(2000);
-    try { return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null }); } catch {}
-  }
-  console.error('Chrome failed to start.'); process.exit(1);
-}
-
-async function getPage(browser, domain) {
-  const pages = await browser.pages();
-  let page = pages.find(p => p.url().includes(domain));
-  if (!page) {
-    page = await browser.newPage();
-    await page.goto(`https://www.${domain}`, { waitUntil: 'networkidle2', timeout: 15000 });
-    await wait(2000);
-  }
-  return page;
-}
-
-// ── Product confirmation (not blind price ranges) ────────────────────
-//
-// A returned product is a real match for our watchlist item only when:
-//   - every size token (e.g. 4L, 500g, 1kg, 220g) in the watchlist name
-//     also appears in the product name (normalised),
-//   - the pack count matches (12 pack ≠ 4 pack ≠ each),
-//   - the unit type matches: a "per kg" watchlist item rejects "each"
-//     products and vice versa.
-//
-// Price is only used as a last-line floor ($0.10 minimum) — never as the
-// primary judge, because legit half-price specials and bad matches can
-// overlap on price alone.
-
-function normaliseName(s) {
-  return String(s || '').toLowerCase()
-    .replace(/[-,]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function extractTokens(itemName) {
-  const norm = normaliseName(itemName);
-  const tokens = { sizes: [], pack: null, perKg: false, each: false };
-  // Volumes / weights like 4L, 500ml, 1kg, 1.4kg, 220g, 75L
-  const sizeRe = /(\d+(?:\.\d+)?)\s?(l|ml|g|kg|cl)\b/g;
-  let m;
-  while ((m = sizeRe.exec(norm)) !== null) tokens.sizes.push(`${m[1]}${m[2]}`);
-  // Pack counts: "12 pack", "24 pack", "8 pack", "12pk", "5 pk"
-  const packRe = /(\d+)\s?(pack|pk)\b/;
-  const pm = norm.match(packRe);
-  if (pm) tokens.pack = parseInt(pm[1], 10);
-  // Unit types
-  if (norm.includes('per kg') || /\bper\s+kg\b/.test(norm)) tokens.perKg = true;
-  if (norm.includes(' each') || norm.endsWith(' each')) tokens.each = true;
-  return tokens;
-}
-
-function productMatches(watchlistName, productName, unitString) {
-  const want = extractTokens(watchlistName);
-  const got = normaliseName(productName);
-  const unit = normaliseName(unitString || '');
-
-  // Size tokens must all appear in product name
-  for (const s of want.sizes) {
-    // Accept "4l" matching "4l", "4 l", "4 litre", "4 litres"
-    const num = s.replace(/[a-z]/g, '');
-    const u = s.replace(/[\d.]/g, '');
-    const altLitres = u === 'l' ? `${num} litre` : null;
-    const altMl     = u === 'ml' ? `${num} mil` : null;
-    if (!got.includes(s)
-        && !got.includes(`${num} ${u}`)
-        && !(altLitres && got.includes(altLitres))
-        && !(altMl && got.includes(altMl))) {
-      return false;
-    }
-  }
-  // Pack count must match
-  if (want.pack !== null) {
-    const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk)\\b`);
-    if (!packRe.test(got)) return false;
-  }
-  // Unit type
-  if (want.perKg) {
-    // Product must indicate per-kg pricing somewhere (name or unit-string)
-    const looksKg = /\bper\s+kg\b/.test(got) || /\$\s?[\d.]+\s*\/\s*\d*\s*kg/.test(unit) || /per\s+kg/.test(unit);
-    if (!looksKg) return false;
-  }
-  if (want.each && !want.perKg) {
-    // Must be sold each (not per kg)
-    const looksEach = /\beach\b/.test(got) || /\beach\b/.test(unit);
-    if (!looksEach) return false;
-  }
-  return true;
-}
-
-// ── Search APIs ──────────────────────────────────────────────────────
-
-async function woolworthsBest(page, term) {
-  return page.evaluate(async (q) => {
-    try {
-      const res = await fetch(`https://www.woolworths.com.au/apis/ui/Search/products?searchTerm=${encodeURIComponent(q)}&pageSize=10`, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const products = (data?.Products || []).flatMap(p => p?.Products || []).filter(Boolean);
-      // Return ALL viable products so the caller can pick the cheapest CONFIRMED one
-      return products.map(p => ({
-        name: p?.DisplayName || p?.Name || '?',
-        price: typeof p?.Price === 'number' ? p.Price : (typeof p?.InstorePrice === 'number' ? p.InstorePrice : null),
-        cup: p?.CupString || '',                  // e.g. "$3.55 / Per 2L" — unit price string
-        stockcode: p?.Stockcode || null,
-      })).filter(x => typeof x.price === 'number');
-    } catch { return []; }
-  }, term);
-}
-
-// Coles internal endpoint, captured at startup by sniffing the SPA's own
-// search requests. Once we know the URL pattern we hit it directly via
-// page.evaluate(fetch) — same low-latency model as Woolworths.
+// Chrome plumbing + search primitives + matcher all live in grocery-lib.mjs.
+// Per-poll Coles API endpoint (captured once at startup) is held below.
 let colesApiPattern = null;
-let colesApiHeaders = null;
-
-async function discoverColesApi(page) {
-  console.log('  Discovering Coles internal search endpoint…');
-  const candidates = [];
-  const onResp = async (response) => {
-    try {
-      const url = response.url();
-      if (!url.includes('coles.com.au')) return;
-      if (response.status() !== 200) return;
-      const ct = response.headers()['content-type'] || '';
-      if (!ct.includes('json')) return;
-      const text = await response.text();
-      if (text.length < 200) return;
-      // Heuristic: a search-results JSON will contain product-shaped data —
-      // a name/price tuple plus our search term ("milk") somewhere.
-      if (/milk/i.test(text) && /price|pricing|\$/i.test(text) && /name/i.test(text)) {
-        candidates.push({ url, sample: text.slice(0, 300) });
-      }
-    } catch { /* response stream not capturable — ignore */ }
-  };
-  page.on('response', onResp);
-  try {
-    await page.goto('https://www.coles.com.au/search/products?q=milk', { waitUntil: 'networkidle2', timeout: 25000 });
-  } catch { /* navigation might time out but the responses are usually in by then */ }
-  await wait(2500);
-  page.off('response', onResp);
-
-  // Prefer URLs that look like product search endpoints (mention 'search' or 'product')
-  candidates.sort((a, b) => {
-    const score = (u) => (u.includes('search') ? 2 : 0) + (u.includes('product') ? 2 : 0) + (u.includes('graphql') ? 1 : 0);
-    return score(b.url) - score(a.url);
-  });
-
-  if (candidates.length === 0) {
-    console.log('  No Coles JSON search endpoint discovered — falling back to DOM scrape.');
-    return null;
-  }
-
-  console.log(`  Found ${candidates.length} candidate(s). Top: ${candidates[0].url.slice(0, 90)}…`);
-  // Extract the query-template by replacing "milk" with a placeholder
-  const tpl = candidates[0].url.replace(/([?&]q=)milk/i, '$1{Q}').replace(/(query=)milk/i, '$1{Q}');
-  return tpl;
-}
-
-async function colesSearchViaApi(page, term, urlTemplate) {
-  return page.evaluate(async (q, tpl) => {
-    try {
-      const url = tpl.replace('{Q}', encodeURIComponent(q));
-      const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'include' });
-      if (!res.ok) return null;
-      const data = await res.json();
-      // Coles internal shape varies; defensively extract a list with
-      // {name, price[, unit]} from common locations.
-      const extractList = (d) => {
-        const candidates = [d?.results, d?.products, d?.items,
-          d?.pageProps?.searchResults?.results,
-          d?.data?.search?.products,
-          d?.data?.searchProducts?.results,
-        ].filter(Array.isArray);
-        return candidates[0] || [];
-      };
-      const list = extractList(data);
-      return list.map(p => ({
-        name: p?.name || p?.productName || p?.title || '?',
-        price: typeof p?.pricing?.now === 'number' ? p.pricing.now
-              : typeof p?.pricing?.normal === 'number' ? p.pricing.normal
-              : typeof p?.price === 'number' ? p.price
-              : null,
-        cup: p?.pricing?.unit?.value ? `${p.pricing.unit.value} ${p.pricing.unit.unit ?? ''}`.trim()
-            : p?.unitPrice || '',
-      })).filter(x => typeof x.price === 'number');
-    } catch { return null; }
-  }, term, urlTemplate);
-}
-
-async function colesSearchViaDom(page, term) {
-  try {
-    await page.goto(`https://www.coles.com.au/search/products?q=${encodeURIComponent(term)}`, {
-      waitUntil: 'domcontentloaded', timeout: 20000,
-    });
-  } catch { return []; }
-  try {
-    await page.waitForSelector('[data-testid="product-tile"]', { timeout: 8000 });
-  } catch { /* tiles never appeared — likely a captcha or zero results */ }
-  await wait(800);
-  return page.evaluate(() => {
-    const tiles = document.querySelectorAll('[data-testid="product-tile"]');
-    const out = [];
-    for (const tile of tiles) {
-      const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
-      const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
-      const unitEl  = tile.querySelector('.price__calculation_method, [data-testid="product-pricing-unit"]');
-      if (!titleEl || !priceEl) continue;
-      const name = titleEl.textContent.trim();
-      const m = priceEl.textContent.match(/\$(\d+\.\d{2})/);
-      if (!m || !name) continue;
-      out.push({ name, price: parseFloat(m[1]), cup: unitEl?.textContent?.trim() || '' });
-    }
-    return out;
-  });
-}
-
-async function colesBest(page, term) {
-  if (colesApiPattern) {
-    const list = await colesSearchViaApi(page, term, colesApiPattern);
-    if (list && list.length) return list;
-    // API returned nothing for this query — fall back to DOM for this one item
-  }
-  return colesSearchViaDom(page, term);
-}
 
 // ── Watchlist + history I/O ──────────────────────────────────────────
 
@@ -396,9 +157,9 @@ async function pollOnce(items) {
     const wAll = [];
     const cAll = [];
     for (const t of terms) {
-      const ws = await woolworthsBest(wPage, t);
+      const ws = await woolworthsSearch(wPage, t);
       if (Array.isArray(ws)) wAll.push(...ws);
-      const cs = await colesBest(cPage, t);
+      const cs = await colesSearch(cPage, t, colesApiPattern);
       if (Array.isArray(cs)) cAll.push(...cs);
       // Stop early if we have enough candidates
       if (wAll.length > 8 && cAll.length > 8) break;
