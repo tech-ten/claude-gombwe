@@ -1938,6 +1938,29 @@ function addGroceryFromRecipe(mealName, ingredient) {
 
 // ========== EERO (NETWORK) ==========
 let eeroState = { authenticated: false, snapshot: null, config: null, actions: [], alerts: [], schedules: [] };
+
+// MikroTik-driven device list — the canonical source for the Devices subtab.
+// eeroState.snapshot.devices is kept for eero AP-level decoration (signal,
+// connection_type) but is no longer the primary data source per the
+// MikroTik-first architecture (see docs/network-architecture.md).
+let networkState = { devices: [], loaded: false };
+
+async function loadNetworkDevices() {
+  try {
+    const res = await fetch(`${API}/api/network/devices`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    networkState.devices = await res.json();
+    networkState.loaded = true;
+  } catch (err) {
+    console.warn('loadNetworkDevices failed:', err.message);
+    networkState.loaded = false;
+  }
+}
+
+async function refreshDevicesPanel() {
+  await loadNetworkDevices();
+  renderEeroDevices();   // function name kept for minimum churn; reads networkState now
+}
 let eeroSchedEditingId = null;
 let eeroSelectedDevices = new Set();
 let eeroActiveSubtab = 'overview';
@@ -1969,6 +1992,11 @@ async function loadEero() {
   }
   renderEeroAlerts();
   updateEeroNavBadge();
+  // Devices subtab is MikroTik-driven — load even when eero isn't authenticated,
+  // because gombwe is fully functional without eero (per the MikroTik-first
+  // architecture in docs/network-architecture.md).
+  await loadNetworkDevices();
+  renderEeroDevices();
 }
 
 function renderEero() {
@@ -2138,141 +2166,197 @@ function summariseEeroUsage(usage) {
 function renderEeroDevices() {
   const list = document.getElementById('eeroDeviceList');
   if (!list) return;
-  let devices = (eeroState.snapshot?.devices || []).slice();
 
+  // Build a MAC → eero-device map for AP-layer decoration (optional sidecar)
+  const eeroByMac = new Map();
+  for (const d of (eeroState.snapshot?.devices || [])) {
+    if (d.mac) eeroByMac.set(d.mac.toLowerCase(), d);
+  }
+
+  // MikroTik canonical list, decorated with eero AP info where present
+  let devices = (networkState.devices || []).slice().map(d => {
+    const eero = eeroByMac.get((d.mac || '').toLowerCase());
+    return {
+      ...d,
+      ap: eero ? {
+        connection_type: eero.connection_type,
+        signal_strength: eero.signal_strength,
+      } : null,
+    };
+  });
+
+  // Search
   if (eeroDeviceQuery) {
     const q = eeroDeviceQuery.toLowerCase();
     devices = devices.filter(d =>
-      (d.display_name || '').toLowerCase().includes(q) ||
+      (d.name || '').toLowerCase().includes(q) ||
       (d.hostname || '').toLowerCase().includes(q) ||
       (d.mac || '').toLowerCase().includes(q) ||
-      (d.ip || '').toLowerCase().includes(q),
+      (d.ip || '').toLowerCase().includes(q) ||
+      (d.owner || '').toLowerCase().includes(q),
     );
   }
 
+  // Filter (MikroTik doesn't distinguish paused vs blocked — they're the same)
   switch (eeroDeviceFilter) {
-    case 'online': devices = devices.filter(d => d.connected); break;
-    case 'offline': devices = devices.filter(d => !d.connected); break;
-    case 'paused': devices = devices.filter(d => d.paused); break;
-    case 'blocked': devices = devices.filter(d => d.blacklisted); break;
-    case 'unknown': devices = devices.filter(d => !d.display_name && !d.profile); break;
+    case 'online':  devices = devices.filter(d => d.online); break;
+    case 'offline': devices = devices.filter(d => !d.online); break;
+    case 'paused':  devices = devices.filter(d => d.blocked); break;
+    case 'blocked': devices = devices.filter(d => d.blocked); break;
+    case 'unknown': devices = devices.filter(d => !d.owner && (!d.name || d.name === d.mac)); break;
   }
 
+  // Sort
   switch (eeroDeviceSort) {
-    case 'name': devices.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || '')); break;
-    case 'profile': devices.sort((a, b) => (a.profile?.name || '').localeCompare(b.profile?.name || '')); break;
-    case 'status': devices.sort((a, b) => Number(b.connected || 0) - Number(a.connected || 0)); break;
-    default: devices.sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''));
+    case 'name':    devices.sort((a, b) => (a.name || '').localeCompare(b.name || '')); break;
+    case 'profile': devices.sort((a, b) => (a.owner || '').localeCompare(b.owner || '')); break;
+    case 'status':  devices.sort((a, b) => Number(b.online || 0) - Number(a.online || 0)); break;
+    default:        devices.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
   }
 
   if (devices.length === 0) {
-    list.innerHTML = '<div class="muted small" style="padding:16px">No devices match.</div>';
+    list.innerHTML = networkState.loaded
+      ? '<div class="muted small" style="padding:16px">No devices match.</div>'
+      : '<div class="muted small" style="padding:16px">Loading devices from MikroTik…</div>';
     document.getElementById('eeroBulkBar').classList.add('hidden');
     return;
   }
 
-  const profiles = eeroState.snapshot?.profiles || [];
-  const profOpts = ['<option value="">— no profile —</option>']
-    .concat(profiles.map(p => `<option value="${esc(p.url)}">${esc(p.name)}</option>`))
+  // Owner dropdown options — union of current owners + family members
+  const owners = new Set();
+  for (const d of (networkState.devices || [])) if (d.owner) owners.add(d.owner);
+  for (const m of (familyData.members || [])) if (m.name) owners.add(m.name);
+  const ownerOpts = ['<option value="">— no owner —</option>']
+    .concat([...owners].sort().map(o => `<option value="${esc(o)}">${esc(o)}</option>`))
     .join('');
 
   list.innerHTML = devices.map(d => {
-    const checked = eeroSelectedDevices.has(d.url) ? 'checked' : '';
-    const dot = d.connected ? 'online' : 'offline';
-    const isThisDevice = (eeroState.hostMacs || []).includes((d.mac || '').toLowerCase());
-    const pauseTag = renderPauseTag(d);
+    const checked = eeroSelectedDevices.has(d.mac) ? 'checked' : '';
+    const dot = d.online ? 'online' : 'offline';
+    const isThisDevice = !!d.self;
     const flags = [
       isThisDevice ? '<span class="eero-tag this-device" title="The host running gombwe">this device</span>' : '',
-      pauseTag,
-      d.blacklisted ? '<span class="eero-tag blocked">blocked</span>' : '',
-      d.profile?.name ? `<span class="eero-tag profile">${esc(d.profile.name)}</span>` : '',
-      d.is_guest ? '<span class="eero-tag guest">guest</span>' : '',
+      d.blocked ? '<span class="eero-tag blocked">blocked</span>' : '',
+      d.owner ? `<span class="eero-tag profile">${esc(d.owner)}</span>` : '',
+      d.kid ? '<span class="eero-tag guest">kid</span>' : '',
     ].filter(Boolean).join(' ');
+
+    // Identity bits: prefer mDNS friendly model, fall back to vendor
+    const modelOrVendor = d.model_friendly
+      ? ` · ${esc(d.model_friendly)}`
+      : (d.vendor && d.vendor !== 'Unknown' && d.vendor !== 'Randomized' ? ` · ${esc(d.vendor)}` : '');
+    const apInfo = d.ap
+      ? ` · ${esc(d.ap.connection_type || 'wireless')}${d.ap.signal_strength ? ' · ' + esc(d.ap.signal_strength) : ''}`
+      : '';
+
+    // Owner select needs the currently-selected value marked
+    const ownerSelect = ownerOpts.replace(
+      `value="${esc(d.owner || '')}"`,
+      `value="${esc(d.owner || '')}" selected`,
+    );
+
     return `
       <div class="eero-device ${dot}${isThisDevice ? ' this-device' : ''}">
-        <input type="checkbox" class="eero-device-check" data-url="${esc(d.url)}" ${checked}>
+        <input type="checkbox" class="eero-device-check" data-mac="${esc(d.mac)}" ${checked}>
         <div class="eero-device-status ${dot}" title="${dot}"></div>
         <div class="eero-device-main">
           <div class="eero-device-name">
-            <span contenteditable="true" data-act="rename" data-url="${esc(d.url)}">${esc(d.display_name || d.hostname || '(unknown)')}</span>
+            <span contenteditable="true" data-act="rename" data-mac="${esc(d.mac)}">${esc(d.name || d.hostname || '(unknown)')}</span>
             ${flags}
           </div>
           <div class="eero-device-meta muted small">
-            ${esc(d.mac || '')} · ${esc(d.ip || '')} · ${esc(d.connection_type || '')}
-            ${d.signal_strength ? ' · ' + esc(d.signal_strength) : ''}
-            ${d.last_active ? ' · last seen ' + timeAgo(d.last_active) : ''}
+            ${esc(d.mac || '')} · ${esc(d.ip || '')}${modelOrVendor}${apInfo}
+            ${d.last_seen ? ' · last seen ' + timeAgo(d.last_seen) : ''}
           </div>
         </div>
         <div class="eero-device-actions">
-          <select data-act="profile" data-url="${esc(d.url)}">
-            ${profOpts.replace(`value="${d.profile?.url || ''}"`, `value="${d.profile?.url || ''}" selected`)}
-          </select>
-          <button class="btn-sm" data-act="pause" data-url="${esc(d.url)}" data-on="${d.paused ? '1' : '0'}">${d.paused ? 'Unpause' : 'Pause'}</button>
-          <select data-act="pause-for" data-url="${esc(d.url)}" data-name="${esc(d.display_name || d.hostname || d.mac)}" title="Pause for…">
+          <select data-act="owner" data-mac="${esc(d.mac)}">${ownerSelect}</select>
+          <button class="btn-sm" data-act="pause" data-mac="${esc(d.mac)}" data-on="${d.blocked ? '1' : '0'}">${d.blocked ? 'Unpause' : 'Pause'}</button>
+          <select data-act="pause-for" data-mac="${esc(d.mac)}" data-name="${esc(d.name || d.hostname || d.mac)}" title="Pause for…">
             <option value="">Pause for…</option>
             <option value="15">15 min</option>
             <option value="60">1 hour</option>
             <option value="240">4 hours</option>
             <option value="bedtime">Until 7am</option>
           </select>
-          <button class="btn-sm" data-act="block" data-url="${esc(d.url)}" data-on="${d.blacklisted ? '1' : '0'}">${d.blacklisted ? 'Unblock' : 'Block'}</button>
+          <button class="btn-sm" data-act="block" data-mac="${esc(d.mac)}" data-on="${d.blocked ? '1' : '0'}">${d.blocked ? 'Unblock' : 'Block'}</button>
         </div>
       </div>
     `;
   }).join('');
 
+  // ── Action handlers — all hit /api/network/* (MikroTik enforcement) ──
+
   list.querySelectorAll('.eero-device-check').forEach(c => {
     c.onchange = () => {
-      if (c.checked) eeroSelectedDevices.add(c.dataset.url);
-      else eeroSelectedDevices.delete(c.dataset.url);
+      if (c.checked) eeroSelectedDevices.add(c.dataset.mac);
+      else eeroSelectedDevices.delete(c.dataset.mac);
       renderEeroBulkBar();
     };
   });
 
   list.querySelectorAll('[data-act="rename"]').forEach(span => {
     span.onblur = async () => {
-      const nickname = span.textContent.trim();
-      if (!nickname) return;
-      await fetch(`${API}/api/eero/devices/rename`, eeroPut({ deviceUrl: span.dataset.url, nickname }));
+      const name = span.textContent.trim();
+      const mac = span.dataset.mac;
+      if (!name || !mac) return;
+      try {
+        await fetch(`${API}/api/network/devices/${encodeURIComponent(mac)}/name`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        refreshDevicesPanel();
+      } catch (err) { console.warn('rename failed:', err.message); }
     };
     span.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); span.blur(); } };
   });
 
-  list.querySelectorAll('[data-act="profile"]').forEach(sel => {
-    const previousValue = sel.value;
+  list.querySelectorAll('[data-act="owner"]').forEach(sel => {
     sel.onchange = async () => {
-      const newProfileUrl = sel.value || null;
-      if (newProfileUrl) {
-        const targetProfile = (eeroState.snapshot?.profiles || []).find(p => p.url === newProfileUrl);
-        const device = (eeroState.snapshot?.devices || []).find(d => d.url === sel.dataset.url);
-        if (targetProfile && device && !confirmKidProfileAssignment(targetProfile, [device])) {
-          sel.value = previousValue;
-          return;
-        }
-      }
-      await fetch(`${API}/api/eero/devices/profile`, eeroPut({ deviceUrl: sel.dataset.url, profileUrl: newProfileUrl }));
-      eeroSync();
+      const mac = sel.dataset.mac;
+      const owner = sel.value || null;
+      try {
+        await fetch(`${API}/api/network/devices/${encodeURIComponent(mac)}/owner`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ owner }),
+        });
+        refreshDevicesPanel();
+      } catch (err) { console.warn('owner change failed:', err.message); }
     };
   });
 
+  // MikroTik has one enforcement primitive: block (optionally with expiry).
+  // The eero UI distinguished "pause" (temporary) from "block" (permanent);
+  // we map both onto the same /block toggle — instantaneous via conntrack-kill.
+  const toggleBlock = async (mac, currentlyBlocked, durationMinutes) => {
+    try {
+      if (currentlyBlocked) {
+        await fetch(`${API}/api/network/devices/${encodeURIComponent(mac)}/unblock`, { method: 'POST' });
+      } else {
+        const body = durationMinutes ? JSON.stringify({ duration_minutes: durationMinutes }) : '{}';
+        await fetch(`${API}/api/network/devices/${encodeURIComponent(mac)}/block`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+      }
+      refreshDevicesPanel();
+    } catch (err) { console.warn('block toggle failed:', err.message); }
+  };
+
   list.querySelectorAll('[data-act="pause"]').forEach(b => {
-    b.onclick = async () => {
-      await fetch(`${API}/api/eero/devices/pause`, eeroPut({ deviceUrl: b.dataset.url, paused: b.dataset.on !== '1' }));
-      eeroSync();
-    };
+    b.onclick = () => toggleBlock(b.dataset.mac, b.dataset.on === '1');
   });
 
   list.querySelectorAll('[data-act="block"]').forEach(b => {
-    b.onclick = async () => {
-      await fetch(`${API}/api/eero/devices/block`, eeroPut({ deviceUrl: b.dataset.url, blocked: b.dataset.on !== '1' }));
-      eeroSync();
-    };
+    b.onclick = () => toggleBlock(b.dataset.mac, b.dataset.on === '1');
   });
 
   list.querySelectorAll('[data-act="pause-for"]').forEach(sel => {
     sel.onchange = async () => {
       if (!sel.value) return;
-      const target = { type: 'device', url: sel.dataset.url, displayName: sel.dataset.name };
       let minutes;
       if (sel.value === 'bedtime') {
         const now = new Date();
@@ -2283,7 +2367,7 @@ function renderEeroDevices() {
       } else {
         minutes = Number(sel.value);
       }
-      await pauseTargetFor(target, minutes);
+      await toggleBlock(sel.dataset.mac, false, minutes);
       sel.value = '';
     };
   });
@@ -3449,6 +3533,9 @@ async function eeroSync() {
     eeroState.snapshot = await r.json();
     setEeroSyncState();
     renderEeroOverview();
+    // Devices subtab is MikroTik-driven — fetch its canonical list alongside
+    // each eero sync so AP-layer decoration (when present) stays fresh.
+    await loadNetworkDevices();
     renderEeroDevices();
     renderEeroProfiles();
     renderEeroSpeed();
@@ -3699,15 +3786,19 @@ document.querySelectorAll('[data-bulk]').forEach(b => {
   b.addEventListener('click', async () => {
     const op = b.dataset.bulk;
     if (op === 'clear') { eeroSelectedDevices.clear(); renderEeroDevices(); return; }
-    const urls = Array.from(eeroSelectedDevices);
-    if (urls.length === 0) return;
-    if (op === 'pause' || op === 'unpause') {
-      await fetch(`${API}/api/eero/devices/bulk-pause`, eeroPost({ deviceUrls: urls, paused: op === 'pause' }));
-    } else if (op === 'block' || op === 'unblock') {
-      await Promise.all(urls.map(u => fetch(`${API}/api/eero/devices/block`, eeroPut({ deviceUrl: u, blocked: op === 'block' }))));
+    const macs = Array.from(eeroSelectedDevices);   // selection set holds MACs now
+    if (macs.length === 0) return;
+    // Bulk pause/block/unblock all hit /api/network/devices/:mac/(un)block
+    // — no MikroTik bulk endpoint, so we fan out.
+    if (op === 'pause' || op === 'block') {
+      await Promise.all(macs.map(m =>
+        fetch(`${API}/api/network/devices/${encodeURIComponent(m)}/block`, { method: 'POST' })));
+    } else if (op === 'unpause' || op === 'unblock') {
+      await Promise.all(macs.map(m =>
+        fetch(`${API}/api/network/devices/${encodeURIComponent(m)}/unblock`, { method: 'POST' })));
     }
     eeroSelectedDevices.clear();
-    eeroSync();
+    refreshDevicesPanel();
   });
 });
 
