@@ -491,21 +491,21 @@
               <select id="eeroUsageRange">
                 <option value="7">Last 7 days</option>
                 <option value="14">Last 14 days</option>
-                <option value="30">Last 30 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="60">Last 60 days</option>
                 <option value="90">Last 90 days</option>
               </select>
-              <select id="eeroUsageCadence">
-                <option value="daily">Daily</option>
-                <option value="hourly">Hourly</option>
+              <select id="eeroUsageTarget">
+                <option value="">All household</option>
               </select>
             </div>
             <div class="card eero-card">
-              <div class="eero-card-header"><span>Download / Upload</span><span id="eeroUsageTotals" class="muted"></span></div>
-              <div class="eero-chart" id="eeroUsageChart"></div>
-            </div>
-            <div class="card eero-card">
-              <div class="eero-card-header"><span>Hourly heatmap (online devices)</span></div>
-              <div class="eero-chart" id="eeroHeatmap"></div>
+              <div class="eero-card-header">
+                <span>Daily traffic by app category</span>
+                <span id="eeroUsageTotals" class="muted"></span>
+              </div>
+              <svg id="eeroUsageChart" class="usage-chart" viewBox="0 0 800 240" preserveAspectRatio="none" aria-label="Daily traffic stacked by app category"></svg>
+              <div id="eeroUsageLegend" class="usage-legend"></div>
             </div>
           </div>
 

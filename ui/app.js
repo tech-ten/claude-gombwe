@@ -2593,33 +2593,206 @@ function renderEeroProfiles() {
   });
 }
 
-async function renderEeroUsageChart() {
-  const chartEl = document.getElementById('eeroUsageChart');
-  if (!chartEl) return;
-  const days = Number(document.getElementById('eeroUsageRange')?.value || 7);
-  const cadence = document.getElementById('eeroUsageCadence')?.value || 'daily';
-  const networkUrl = eeroState.snapshot?.networkUrl;
-  if (!networkUrl) { chartEl.innerHTML = '<div class="muted small">Sync first.</div>'; return; }
-  try {
-    const r = await fetch(`${API}/api/eero/raw`, eeroPost({
-      method: 'GET',
-      path: `${networkUrl}/data_usage?start=${new Date(Date.now() - days * 86400000).toISOString()}&end=${new Date().toISOString()}&cadence=${cadence}`,
-    }));
-    const out = await r.json();
-    const series = out?.data?.series || [];
-    chartEl.innerHTML = eeroDualSeriesChart(series);
-    const sum = summariseEeroUsage(out?.data);
-    document.getElementById('eeroUsageTotals').textContent = `${formatBytes(sum.dl)} down · ${formatBytes(sum.ul)} up`;
-  } catch (err) {
-    chartEl.innerHTML = `<div class="muted small">${esc(err.message)}</div>`;
+// Usage subtab — MikroTik-driven. Daily stacked-area chart by app category
+// from /api/network/history, with target dropdown to filter by household /
+// person / device. Ported from the trend chart in /ui/network.html.
+//
+// eero's data_usage endpoint required eero Plus and only gave network-wide
+// totals; this version gives per-category breakdown across the household,
+// per person, or per device — sourced from the daily history rollups our
+// snapshot collector + DNS log already produce.
+
+const CATEGORY_COLORS = {
+  video:        '#1F6E8C',
+  social:       '#E15A2A',
+  messaging:    '#3B5BB6',
+  gaming:       '#2E7D32',
+  music:        '#C7A24A',
+  productivity: '#506A8A',
+  shopping:     '#B8467A',
+  news:         '#8B5E3C',
+  system:       '#B5B5B5',
+  ads:          '#8E8E8E',
+  adult:        '#C13030',
+  gambling:     '#E08B2A',
+  dangerous:    '#7A1F1F',
+  unknown:      '#D6D6D6',
+};
+const CATEGORY_ORDER = [
+  'video','social','messaging','gaming','music',
+  'productivity','shopping','news','system','ads',
+  'adult','gambling','dangerous','unknown',
+];
+
+function categoryTotalsForDay(day) {
+  const out = {};
+  for (const dev of (day.devices || [])) {
+    const cats = dev.categories || {};
+    for (const k of Object.keys(cats)) out[k] = (out[k] || 0) + cats[k];
+  }
+  return out;
+}
+
+function shortBytes(n) {
+  if (!n || n < 1024) return `${Math.round(n || 0)} B`;
+  const u = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
+
+function drawUsageStackedArea(svg, days) {
+  svg.innerHTML = '';
+  if (days.length === 0) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const W = 800, H = 240, padL = 56, padR = 8, padT = 12, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = days.length;
+
+  const stacks = days.map(categoryTotalsForDay);
+  let maxTotal = 0;
+  for (const s of stacks) {
+    let t = 0;
+    for (const k of Object.keys(s)) t += s[k];
+    if (t > maxTotal) maxTotal = t;
+  }
+  if (maxTotal === 0) {
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', W / 2); text.setAttribute('y', H / 2);
+    text.setAttribute('text-anchor', 'middle'); text.setAttribute('class', 'chart-empty-text');
+    text.textContent = 'No traffic recorded in this range';
+    svg.appendChild(text);
+    return;
   }
 
-  // Heatmap from history
-  const heat = document.getElementById('eeroHeatmap');
-  const samples = (eeroHistory || []).filter(e => e.type === 'sample');
-  heat.innerHTML = samples.length === 0
-    ? '<div class="muted small">No sample history. Enable the sampler under Advanced.</div>'
-    : eeroHourlyHeatmap(samples);
+  const xAt = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = (v) => padT + plotH - (v / maxTotal) * plotH;
+
+  // Gridlines + Y labels
+  for (let g = 0; g <= 4; g++) {
+    const y = padT + (g / 4) * plotH;
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+    line.setAttribute('y1', y);    line.setAttribute('y2', y);
+    line.setAttribute('class', 'chart-gridline');
+    svg.appendChild(line);
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', padL - 6); label.setAttribute('y', y + 4);
+    label.setAttribute('text-anchor', 'end'); label.setAttribute('class', 'chart-axis-label');
+    label.textContent = shortBytes(maxTotal * (1 - g / 4));
+    svg.appendChild(label);
+  }
+
+  // Stack bands bottom-up so important categories sit on top visually
+  const bottom = new Array(n).fill(0);
+  for (let ci = CATEGORY_ORDER.length - 1; ci >= 0; ci--) {
+    const cat = CATEGORY_ORDER[ci];
+    const colour = CATEGORY_COLORS[cat] || '#CCC';
+    let hasAny = false, top = '', bot = '';
+    for (let i = 0; i < n; i++) {
+      const v = stacks[i][cat] || 0;
+      if (v > 0) hasAny = true;
+      top += `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(bottom[i] + v)} `;
+      bot = `L ${xAt(i)} ${yAt(bottom[i])} ` + bot;
+    }
+    if (!hasAny) continue;
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', top + bot + 'Z');
+    path.setAttribute('fill', colour);
+    path.setAttribute('fill-opacity', '0.85');
+    path.setAttribute('class', 'chart-band');
+    path.setAttribute('data-category', cat);
+    svg.appendChild(path);
+    for (let i = 0; i < n; i++) bottom[i] += stacks[i][cat] || 0;
+  }
+
+  // X-axis date labels (first, middle, last)
+  const labelIdx = n <= 3 ? days.map((_, i) => i) : [0, Math.floor(n / 2), n - 1];
+  for (const i of labelIdx) {
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', xAt(i)); t.setAttribute('y', H - 8);
+    t.setAttribute('text-anchor', i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle');
+    t.setAttribute('class', 'chart-axis-label');
+    const d = new Date(days[i].date + 'T00:00:00');
+    t.textContent = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    svg.appendChild(t);
+  }
+}
+
+function drawUsageLegend(container, days) {
+  const seen = new Set();
+  for (const day of days) {
+    const totals = categoryTotalsForDay(day);
+    for (const k of Object.keys(totals)) if (totals[k] > 0) seen.add(k);
+  }
+  container.innerHTML = CATEGORY_ORDER.filter(c => seen.has(c))
+    .map(c => `<span class="legend-item"><span class="legend-swatch" style="background:${CATEGORY_COLORS[c]}"></span>${esc(c)}</span>`)
+    .join('');
+}
+
+function populateUsageTargetDropdown() {
+  const sel = document.getElementById('eeroUsageTarget');
+  if (!sel) return;
+  // Preserve current selection across re-population
+  const prev = sel.value;
+  const owners = new Set();
+  const devices = [];
+  for (const d of (networkState.devices || [])) {
+    if (d.owner) owners.add(d.owner);
+    devices.push({ mac: d.mac, name: d.name || d.hostname || d.mac });
+  }
+  for (const m of (familyData.members || [])) if (m.name) owners.add(m.name);
+  let html = '<option value="">All household</option>';
+  if (owners.size) {
+    html += '<optgroup label="People">' +
+      [...owners].sort().map(o => `<option value="owner:${esc(o)}">${esc(o)}</option>`).join('') +
+      '</optgroup>';
+  }
+  if (devices.length) {
+    html += '<optgroup label="Devices">' +
+      devices.sort((a, b) => a.name.localeCompare(b.name))
+        .map(d => `<option value="mac:${esc(d.mac)}">${esc(d.name)}</option>`).join('') +
+      '</optgroup>';
+  }
+  sel.innerHTML = html;
+  if (prev) sel.value = prev;
+}
+
+async function renderEeroUsageChart() {
+  const chart = document.getElementById('eeroUsageChart');
+  const legend = document.getElementById('eeroUsageLegend');
+  const totals = document.getElementById('eeroUsageTotals');
+  if (!chart) return;
+
+  populateUsageTargetDropdown();
+
+  const days = Number(document.getElementById('eeroUsageRange')?.value || 30);
+  const target = document.getElementById('eeroUsageTarget')?.value || '';
+
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  let filter = '';
+  if (target.startsWith('owner:')) filter = `&owner=${encodeURIComponent(target.slice(6))}`;
+  else if (target.startsWith('mac:')) filter = `&mac=${encodeURIComponent(target.slice(4))}`;
+
+  chart.innerHTML = '';
+  if (legend) legend.innerHTML = '';
+  if (totals) totals.textContent = 'Loading…';
+
+  try {
+    const res = await fetch(`${API}/api/network/history?from=${from}&to=${to}${filter}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await res.json();
+    const ds = payload.days || [];
+    const totalBytes = ds.reduce((s, d) => s + (d.total_bytes || 0), 0);
+    const totalQueries = ds.reduce((s, d) => s + (d.total_queries || 0), 0);
+    if (totals) totals.textContent = `${formatBytes(totalBytes)} · ${totalQueries.toLocaleString()} DNS queries · ${ds.length} days`;
+    drawUsageStackedArea(chart, ds);
+    if (legend) drawUsageLegend(legend, ds);
+  } catch (err) {
+    if (totals) totals.textContent = `Error: ${err.message}`;
+    chart.innerHTML = `<text x="400" y="120" text-anchor="middle" class="chart-empty-text">Couldn't load history: ${esc(err.message)}</text>`;
+  }
 }
 
 function renderEeroSpeed() {
@@ -4004,7 +4177,7 @@ document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async 
 });
 
 document.getElementById('eeroUsageRange')?.addEventListener('change', renderEeroUsageChart);
-document.getElementById('eeroUsageCadence')?.addEventListener('change', renderEeroUsageChart);
+document.getElementById('eeroUsageTarget')?.addEventListener('change', renderEeroUsageChart);
 
 document.getElementById('eeroRunSpeedBtn')?.addEventListener('click', async () => {
   const status = document.getElementById('eeroSpeedStatus');
