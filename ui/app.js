@@ -2692,20 +2692,52 @@ function renderEeroAdvanced() {
   });
 }
 
-function renderEeroAudit() {
+// Audit subtab — MikroTik-driven policy/action feed.
+// Reads /api/network/policy/actions (written by the AI policy scanner +
+// manual block/unblock operations). The eero internal action log
+// (eeroState.actions) is no longer surfaced; it was a redundant
+// representation of state changes that now all go through MikroTik.
+//
+// Function name kept (renderEeroAudit) to avoid churning every call site
+// during the rationalisation — will be renamed in the final cleanup pass.
+async function renderEeroAudit() {
   const list = document.getElementById('eeroAuditList');
   if (!list) return;
-  const actions = eeroState.actions || [];
-  list.innerHTML = actions.length === 0
-    ? '<div class="muted small" style="padding:16px">No actions yet.</div>'
-    : `<table class="eero-table"><thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead><tbody>` +
-      actions.map(a => `
-        <tr>
-          <td>${esc(new Date(a.time).toLocaleString())}</td>
-          <td>${esc(a.action)}</td>
-          <td><code>${esc(JSON.stringify(a.detail || {}))}</code></td>
-        </tr>
-      `).join('') + '</tbody></table>';
+  list.innerHTML = '<div class="muted small" style="padding:16px">Loading audit…</div>';
+  let actions = [];
+  try {
+    const res = await fetch(`${API}/api/network/policy/actions`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    actions = await res.json();
+  } catch (err) {
+    list.innerHTML = `<div class="muted small" style="padding:16px">Couldn't load audit: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (!Array.isArray(actions) || actions.length === 0) {
+    list.innerHTML = '<div class="muted small" style="padding:16px">No actions yet. The policy scanner runs every 10 min; manual blocks/unblocks also land here.</div>';
+    return;
+  }
+  // Newest first
+  const sorted = actions.slice().reverse();
+  const severityClass = (s) => ({
+    high: 'sev-high', medium: 'sev-medium', low: 'sev-low',
+  })[String(s || '').toLowerCase()] || '';
+  list.innerHTML = `
+    <table class="eero-table audit-table">
+      <thead><tr><th>When</th><th>Device</th><th>Severity</th><th>Hostname</th><th>Reason</th></tr></thead>
+      <tbody>
+        ${sorted.map(a => `
+          <tr>
+            <td><span title="${esc(a.ts || '')}">${esc(timeAgo(a.ts) || '—')}</span></td>
+            <td>${esc(a.name || a.mac || '—')}</td>
+            <td><span class="audit-sev ${severityClass(a.severity)}">${esc(a.severity || '—')}</span></td>
+            <td><code>${esc(a.hostname || '—')}</code></td>
+            <td class="audit-reason">${esc(a.reason || '')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
 }
 
 // ── NextDNS (website filtering) ────────────────────────────────────────
@@ -3861,6 +3893,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
+    if (eeroActiveSubtab === 'audit') renderEeroAudit();   // refresh from /api/network/policy/actions
     if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); startDnsTestPolling(); }
     else stopDnsTestPolling();
   });

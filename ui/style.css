@@ -2004,6 +2004,28 @@ body {
 .small { font-size: 12px; }
 .hidden { display: none !important; }
 
+/* ── Network/Audit subtab — MikroTik policy/action feed ────────── */
+
+.audit-table { width: 100%; }
+.audit-table td.audit-reason {
+  max-width: 480px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: normal;
+  line-height: 1.4;
+}
+.audit-sev {
+  display: inline-block;
+  font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 2px;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  background: var(--surface);
+}
+.audit-sev.sev-low    { color: #4d6b3a; border-color: #b9d3a8; background: #effae9; }
+.audit-sev.sev-medium { color: #774f1f; border-color: #d6c2a0; background: #fbf3e2; }
+.audit-sev.sev-high   { color: #842020; border-color: #d6a0a0; background: #fce4e4; }
+
 /* ── Network/Devices subtab — drill-down detail panel ──────────── */
 
 .eero-device-main { cursor: pointer; }
