@@ -2004,6 +2004,63 @@ body {
 .small { font-size: 12px; }
 .hidden { display: none !important; }
 
+/* ── Network/Devices subtab — drill-down detail panel ──────────── */
+
+.eero-device-main { cursor: pointer; }
+.eero-device.is-expanded {
+  background: var(--parchment);
+}
+.eero-device-detail {
+  grid-column: 1 / -1;
+  padding: 14px 16px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.dd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1.2fr;
+  gap: 24px;
+}
+@media (max-width: 900px) {
+  .dd-grid { grid-template-columns: 1fr; gap: 18px; }
+}
+.dd-col { min-width: 0; }
+.dd-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+.dd-k { color: var(--text-3); }
+.dd-v { color: var(--text-1, var(--ink)); overflow: hidden; text-overflow: ellipsis; }
+.dd-v code { font-family: monospace; font-size: 11.5px; }
+.dd-title {
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3); margin-bottom: 6px;
+}
+.dd-sub { color: var(--text-3); font-size: 10.5px; }
+.dd-dests, .dd-dns {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 240px; overflow-y: auto;
+}
+.dd-dests li, .dd-dns-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  border-bottom: 1px dashed var(--border);
+}
+.dd-dests li:last-child, .dd-dns-row:last-child { border-bottom: 0; }
+.dd-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-bytes { font-family: monospace; font-size: 11.5px; color: var(--text-2); }
+.dd-dns-meta { font-family: monospace; font-size: 10.5px; color: var(--text-3); }
+.dd-dns-row.is-blocked { background: rgba(184, 92, 0, 0.06); }
+.dd-dns-row.is-blocked .dd-host { color: #b85c00; }
+
 /* ── Family-tab grocery extensions (deals / meal plan / watchlist) ─ */
 
 .recipe-cat-badge {

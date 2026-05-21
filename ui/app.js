@@ -1944,6 +1944,8 @@ let eeroState = { authenticated: false, snapshot: null, config: null, actions: [
 // connection_type) but is no longer the primary data source per the
 // MikroTik-first architecture (see docs/network-architecture.md).
 let networkState = { devices: [], loaded: false };
+// MACs of devices whose detail panel is open. Preserved across re-renders.
+const expandedDevices = new Set();
 
 async function loadNetworkDevices() {
   try {
@@ -1960,6 +1962,90 @@ async function loadNetworkDevices() {
 async function refreshDevicesPanel() {
   await loadNetworkDevices();
   renderEeroDevices();   // function name kept for minimum churn; reads networkState now
+}
+
+// ── Device drill-down (ported from /ui/network.html) ─────────────────
+//
+// Click a device row's body to expand a details panel showing: IP, MAC,
+// vendor + Apple model code (mDNS), Bonjour services, last seen, active
+// conntrack count, today's bytes (down + up), top destinations, and
+// async-loaded recent DNS history.
+
+function renderDeviceDetail(d) {
+  const model = d.model_friendly || d.model;
+  const modelLine = model
+    ? `<div class="dd-row"><span class="dd-k">Model</span><span class="dd-v">${esc(d.model_friendly && d.model && d.model_friendly !== d.model ? `${d.model_friendly} (${d.model})` : model)}</span></div>`
+    : '';
+  const mdnsLine = d.mdns_services?.length
+    ? `<div class="dd-row"><span class="dd-k">Bonjour</span><span class="dd-v">${esc(d.mdns_services.slice(0, 6).join(', '))}</span></div>`
+    : '';
+
+  const dests = d.top_destinations_today || [];
+  const destsHtml = dests.length
+    ? dests.map(t => `<li><span class="dd-host">${esc(t.host)}</span><span class="dd-bytes">${esc(formatBytes(t.bytes || 0))}</span></li>`).join('')
+    : '<li><span class="dd-host muted">No traffic recorded today</span></li>';
+
+  return `
+    <div class="eero-device-detail" data-detail-mac="${esc(d.mac)}">
+      <div class="dd-grid">
+        <div class="dd-col">
+          <div class="dd-row"><span class="dd-k">IP</span><span class="dd-v"><code>${esc(d.ip || '—')}</code></span></div>
+          <div class="dd-row"><span class="dd-k">MAC</span><span class="dd-v"><code>${esc(d.mac)}</code></span></div>
+          <div class="dd-row"><span class="dd-k">Vendor</span><span class="dd-v">${esc(d.vendor || 'Unknown')}</span></div>
+          ${modelLine}
+          ${mdnsLine}
+          <div class="dd-row"><span class="dd-k">Last seen</span><span class="dd-v">${esc(timeAgo(d.last_seen) || '—')}</span></div>
+          <div class="dd-row"><span class="dd-k">Connections</span><span class="dd-v"><code>${d.active_connections ?? 0}</code></span></div>
+          <div class="dd-row"><span class="dd-k">Today</span><span class="dd-v">${formatBytes(d.today_bytes_down || 0)} down · ${formatBytes(d.today_bytes_up || 0)} up</span></div>
+        </div>
+        <div class="dd-col">
+          <div class="dd-title">Destinations <span class="dd-sub">${dests.length ? `(${dests.length} unique today)` : ''}</span></div>
+          <ol class="dd-dests">${destsHtml}</ol>
+        </div>
+        <div class="dd-col">
+          <div class="dd-title">DNS queries <span class="dd-sub" data-dns-count></span></div>
+          <ol class="dd-dns" data-dns-list><li class="muted">Loading…</li></ol>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadDeviceDnsHistory(mac, ip) {
+  if (!ip) return;
+  const detail = document.querySelector(`[data-detail-mac="${CSS.escape(mac)}"]`);
+  if (!detail) return;
+  const listEl = detail.querySelector('[data-dns-list]');
+  const countEl = detail.querySelector('[data-dns-count]');
+  try {
+    const res = await fetch(`${API}/api/network/dns/recent?client=${encodeURIComponent(ip)}&limit=500`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      listEl.innerHTML = '<li class="muted">No DNS queries yet — try again in 30s.</li>';
+      countEl.textContent = '';
+      return;
+    }
+    const byHost = new Map();
+    for (const q of data) {
+      const e = byHost.get(q.hostname) ?? { count: 0, last_ts: '', blocked: false };
+      e.count += 1;
+      if (q.ts > e.last_ts) e.last_ts = q.ts;
+      if (q.blocked) e.blocked = true;
+      byHost.set(q.hostname, e);
+    }
+    countEl.textContent = `(${data.length} queries · ${byHost.size} unique hostnames)`;
+    listEl.innerHTML = [...byHost.entries()]
+      .sort((a, b) => b[1].last_ts.localeCompare(a[1].last_ts))
+      .map(([host, e]) => `
+        <li class="dd-dns-row ${e.blocked ? 'is-blocked' : ''}">
+          <span class="dd-host">${esc(host)}</span>
+          <span class="dd-dns-meta">${esc(timeAgo(e.last_ts) || '')} · ${e.count}×${e.blocked ? ' · blocked' : ''}</span>
+        </li>`).join('');
+  } catch (err) {
+    listEl.innerHTML = `<li class="muted">Couldn't load DNS history: ${esc(err.message)}</li>`;
+    countEl.textContent = '';
+  }
 }
 let eeroSchedEditingId = null;
 let eeroSelectedDevices = new Set();
@@ -2255,11 +2341,12 @@ function renderEeroDevices() {
       `value="${esc(d.owner || '')}" selected`,
     );
 
+    const isExpanded = expandedDevices.has(d.mac);
     return `
-      <div class="eero-device ${dot}${isThisDevice ? ' this-device' : ''}">
+      <div class="eero-device ${dot}${isThisDevice ? ' this-device' : ''}${isExpanded ? ' is-expanded' : ''}">
         <input type="checkbox" class="eero-device-check" data-mac="${esc(d.mac)}" ${checked}>
         <div class="eero-device-status ${dot}" title="${dot}"></div>
-        <div class="eero-device-main">
+        <div class="eero-device-main" data-act="toggle" data-mac="${esc(d.mac)}" title="Click for details">
           <div class="eero-device-name">
             <span contenteditable="true" data-act="rename" data-mac="${esc(d.mac)}">${esc(d.name || d.hostname || '(unknown)')}</span>
             ${flags}
@@ -2281,6 +2368,7 @@ function renderEeroDevices() {
           </select>
           <button class="btn-sm" data-act="block" data-mac="${esc(d.mac)}" data-on="${d.blocked ? '1' : '0'}">${d.blocked ? 'Unblock' : 'Block'}</button>
         </div>
+        ${isExpanded ? renderDeviceDetail(d) : ''}
       </div>
     `;
   }).join('');
@@ -2292,6 +2380,27 @@ function renderEeroDevices() {
       if (c.checked) eeroSelectedDevices.add(c.dataset.mac);
       else eeroSelectedDevices.delete(c.dataset.mac);
       renderEeroBulkBar();
+    };
+  });
+
+  // Click row body (main area) to toggle the detail panel
+  list.querySelectorAll('[data-act="toggle"]').forEach(el => {
+    el.onclick = (e) => {
+      // Don't toggle when clicking the contenteditable name span (it's an input)
+      if (e.target.closest('[data-act="rename"]')) return;
+      const mac = el.dataset.mac;
+      const d = (networkState.devices || []).find(x => x.mac === mac);
+      if (!d) return;
+      if (expandedDevices.has(mac)) {
+        expandedDevices.delete(mac);
+      } else {
+        expandedDevices.add(mac);
+      }
+      renderEeroDevices();
+      // If now expanded, async-load DNS history
+      if (expandedDevices.has(mac) && d.ip) {
+        loadDeviceDnsHistory(mac, d.ip);
+      }
     };
   });
 
