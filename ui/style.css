@@ -2004,6 +2004,85 @@ body {
 .small { font-size: 12px; }
 .hidden { display: none !important; }
 
+/* ── Network/Access Control — category management UI ──────────── */
+
+.eero-form-label {
+  font-size: 13px; font-weight: 500; color: var(--ink);
+  margin: 0 0 8px;
+}
+.ac-uncat-list { padding: 0; margin: 0; list-style: none; max-height: 320px; overflow-y: auto; }
+.ac-uncat-row {
+  display: grid;
+  grid-template-columns: 1.2fr auto 1fr;
+  gap: 12px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.ac-uncat-row:last-child { border-bottom: 0; }
+.ac-uncat-name { color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-uncat-actions { display: inline-flex; gap: 6px; align-items: center; }
+.ac-uncat-app { width: 110px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface); }
+.ac-uncat-cat { padding: 4px 6px; font-size: 12px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface); }
+
+.ac-cat-block { border-bottom: 1px solid var(--border); }
+.ac-cat-block[open] { background: rgba(0, 0, 0, 0.015); }
+.ac-cat-summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 4px; cursor: pointer; list-style: none;
+  transition: background 80ms ease;
+}
+.ac-cat-summary::-webkit-details-marker { display: none; }
+.ac-cat-summary:hover { background: rgba(0, 0, 0, 0.025); }
+.ac-cat-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+.ac-cat-name {
+  font-family: monospace; font-size: 12px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink); font-weight: 500;
+  min-width: 100px;
+}
+.ac-cat-counts {
+  font-family: monospace; font-size: 11px; letter-spacing: 0.04em;
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.ac-cat-body { padding: 8px 8px 14px 28px; }
+.ac-cat-entries { padding: 0; margin: 0; list-style: none; }
+.ac-cat-entry-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto auto;
+  gap: 10px; align-items: center;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+.ac-cat-suffix { font-family: monospace; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-entry-source {
+  font-family: monospace; font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-3);
+  padding: 1px 6px; border: 1px solid var(--border); border-radius: 2px;
+}
+.ac-entry-source.is-user {
+  color: #2b6173; border-color: #a9cfdc; background: #ecf6fa;
+}
+.ac-cat-remove {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: monospace; font-size: 14px; color: var(--text-3);
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; cursor: pointer;
+}
+.ac-cat-remove:hover { color: #b85c00; border-color: var(--border); background: var(--parchment); }
+
+.ac-cat-add {
+  display: flex; gap: 6px;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.ac-cat-add-suffix, .ac-cat-add-app {
+  flex: 1;
+  font-family: monospace; font-size: 12px;
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 2px;
+  background: var(--surface);
+}
+
 /* ── Network/Usage subtab — MikroTik trend chart ──────────────── */
 
 .usage-chart {

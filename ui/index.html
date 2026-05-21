@@ -320,49 +320,38 @@
               <div id="kidsActivity"></div>
             </div>
 
-            <!-- DNS-based filtering (NextDNS) -->
+            <!-- AI policy scanner (per-MAC enforcement for kid devices) -->
             <div class="card eero-card">
               <div class="eero-card-header">
-                <span>Website filtering (NextDNS)</span>
-                <span class="muted small" id="dnsStatus">…</span>
+                <span>AI policy scanner</span>
+                <span class="muted small">Runs every 10 min on kid-list devices · auto-blocks at severity ≥ high</span>
               </div>
-
-              <div class="eero-form-block" id="dnsActivate">
-                <div id="dnsPointStatus" class="muted small"></div>
+              <div class="eero-form-block">
+                <p class="muted small" style="margin: 0 0 8px">Watches DNS lookups from devices on the kid list, classifies via Claude, auto-blocks per-MAC when severity is high. Manual run + audit log via the Audit subtab.</p>
                 <div class="form-row">
-                  <button class="btn-primary btn-sm" id="dnsPointBtn">Point eero at NextDNS</button>
-                  <button class="btn-sm" id="dnsResetBtn">Reset to automatic</button>
-                  <a href="https://test.nextdns.io" target="_blank" rel="noopener" class="btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;padding:4px 8px">Verify (test.nextdns.io ↗)</a>
+                  <button class="btn-primary btn-sm" id="acPolicyScanBtn">Run scan now</button>
+                  <span class="muted small" id="acPolicyScanStatus"></span>
                 </div>
               </div>
+            </div>
 
-              <div class="kids-filter-section">
-                <div class="kids-filter-label">Block these apps & sites <span class="muted small">(applies to whole network)</span></div>
-                <div class="kids-filter-services" id="kidsFilterServices"></div>
+            <!-- Category management (suffix → category mapping; visibility layer for the chart) -->
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Category management</span>
+                <span class="muted small" id="acCategoriesMeta"></span>
               </div>
-
-              <div class="kids-filter-section">
-                <div class="kids-filter-label">Block by category</div>
-                <div class="kids-filter-categories" id="kidsFilterCategories"></div>
+              <div class="eero-form-block">
+                <div class="eero-form-label">Uncategorized destinations seen in your DNS log <span class="muted small">(last 7 days)</span></div>
+                <ol class="ac-uncat-list" id="acUncatList"><li class="muted small">Loading…</li></ol>
               </div>
-
-              <div class="kids-filter-section">
-                <div class="kids-filter-label">Custom block list</div>
-                <form class="form-row" id="kidsDenylistForm">
-                  <input type="text" id="kidsDenylistInput" placeholder="e.g. example.com" style="flex:1">
-                  <button class="btn-primary btn-sm" type="submit">Block</button>
-                </form>
-                <div id="kidsDenylist"></div>
+              <div class="eero-form-block">
+                <div class="eero-form-label">Categories</div>
+                <div id="acCategoryList"></div>
               </div>
-
-              <div class="kids-filter-section">
-                <div class="kids-filter-label">Allow list (overrides blocks)</div>
-                <form class="form-row" id="kidsAllowlistForm">
-                  <input type="text" id="kidsAllowlistInput" placeholder="e.g. school-portal.edu.au" style="flex:1">
-                  <button class="btn-sm" type="submit">Allow</button>
-                </form>
-                <div id="kidsAllowlist"></div>
-              </div>
+              <p class="muted small" style="margin: 6px 0 0">
+                Network-wide adlist + per-device category enforcement (block all gambling for Josh's iPad) coming in the next commit. For now: tag domains here for visibility in the Usage chart; block whole devices via Devices subtab; tick the kid flag to let the AI scanner auto-block dangerous lookups.
+              </p>
             </div>
 
             <div class="eero-two-col">

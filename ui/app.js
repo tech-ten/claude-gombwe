@@ -3212,6 +3212,196 @@ function getKidsProfile() {
   return profiles.find(p => /kid/i.test(p.name)) || profiles.find(p => p.name !== 'Unassigned') || null;
 }
 
+// ── Access Control subtab — category management + scanner trigger ──
+// Renders the MikroTik category-management UI (visibility layer) and
+// surfaces the AI policy scanner. Network-wide adlist subscriptions
+// and per-device category enforcement are coming in a follow-up commit.
+
+let acCategoriesData = null;
+let acUncatData = null;
+
+async function loadAccessControl() {
+  try {
+    const [cats, uncat] = await Promise.all([
+      fetch(`${API}/api/network/categories`).then(r => r.json()),
+      fetch(`${API}/api/network/categories/uncategorized?days=7&limit=40`).then(r => r.json()),
+    ]);
+    acCategoriesData = cats;
+    acUncatData = uncat;
+  } catch (err) {
+    console.warn('loadAccessControl failed:', err.message);
+    acCategoriesData = null; acUncatData = null;
+  }
+  renderAccessControl();
+}
+
+function acSuggestAppName(host) {
+  const parts = String(host || '').toLowerCase().split('.');
+  if (parts.length < 2) return host;
+  const trimmed = parts.filter((p, i) => !(i === 0 && p === 'www'));
+  if (trimmed.length < 2) return host;
+  const root = trimmed[trimmed.length - 2];
+  return root.charAt(0).toUpperCase() + root.slice(1);
+}
+
+function renderAccessControl() {
+  const cats = acCategoriesData;
+  const uncat = acUncatData;
+  const meta = document.getElementById('acCategoriesMeta');
+  const uncatList = document.getElementById('acUncatList');
+  const catList = document.getElementById('acCategoryList');
+  if (!catList || !uncatList) return;
+
+  if (!cats || !uncat) {
+    uncatList.innerHTML = '<li class="muted small">Couldn\'t load.</li>';
+    catList.innerHTML = '';
+    if (meta) meta.textContent = '';
+    return;
+  }
+
+  const totalEntries = Object.values(cats.categories || {}).reduce((s, c) => s + (c.entries?.length || 0), 0);
+  const userEntries = Object.values(cats.categories || {})
+    .reduce((s, c) => s + (c.entries || []).filter(e => e.source === 'user').length, 0);
+  if (meta) meta.textContent = `${totalEntries} known suffixes · ${userEntries} your overrides`;
+
+  // Uncategorized list — quick-assign affordance
+  const items = uncat.items || [];
+  if (items.length === 0) {
+    uncatList.innerHTML = '<li class="muted small">No uncategorized destinations in the last week.</li>';
+  } else {
+    uncatList.innerHTML = items.map(it => `
+      <li class="ac-uncat-row" data-hostname="${esc(it.hostname)}">
+        <span class="ac-uncat-name">${esc(it.hostname)}</span>
+        <span class="muted small">${it.count.toLocaleString()}× · last ${esc(timeAgo(it.last_seen) || '')}</span>
+        <span class="ac-uncat-actions">
+          <input type="text" class="ac-uncat-app" placeholder="App name" value="${esc(acSuggestAppName(it.hostname))}">
+          <select class="ac-uncat-cat">${(cats.order || []).map(c => `<option value="${c}"${c === 'social' ? ' selected' : ''}>${c}</option>`).join('')}</select>
+          <button type="button" class="btn-sm" data-ac-uncat-action="assign">Add</button>
+        </span>
+      </li>
+    `).join('');
+  }
+
+  // Per-category accordion
+  const ordered = [...(cats.order || [])].sort((a, b) => {
+    const ar = cats.categories[a]?.count_recent_7d ?? 0;
+    const br = cats.categories[b]?.count_recent_7d ?? 0;
+    if (ar !== br) return br - ar;
+    return a.localeCompare(b);
+  });
+  catList.innerHTML = ordered.map(cat => {
+    const c = cats.categories[cat];
+    if (!c) return '';
+    const color = CATEGORY_COLORS[cat] || '#ccc';
+    const entries = (c.entries || []).slice().sort((a, b) => a.suffix.localeCompare(b.suffix));
+    return `
+      <details class="ac-cat-block" data-cat="${esc(cat)}">
+        <summary class="ac-cat-summary">
+          <span class="ac-cat-swatch" style="background:${color}"></span>
+          <span class="ac-cat-name">${esc(cat)}</span>
+          <span class="ac-cat-counts">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · ${c.count_recent_7d.toLocaleString()} queries/wk</span>
+        </summary>
+        <div class="ac-cat-body">
+          <ol class="ac-cat-entries">
+            ${entries.map(e => `
+              <li class="ac-cat-entry-row" data-suffix="${esc(e.suffix)}">
+                <span class="ac-cat-suffix">${esc(e.suffix)}</span>
+                <span class="muted small">${esc(e.app)}</span>
+                <span class="ac-entry-source ${e.source === 'user' ? 'is-user' : ''}">${e.source}</span>
+                <button type="button" class="ac-cat-remove" data-ac-cat-action="remove" data-suffix="${esc(e.suffix)}" title="${e.source === 'user' ? 'Remove this user entry' : 'Built-in — add a user entry with the same suffix to override'}">×</button>
+              </li>`).join('')}
+          </ol>
+          <div class="ac-cat-add">
+            <input type="text" class="ac-cat-add-suffix" placeholder="example.com">
+            <input type="text" class="ac-cat-add-app"    placeholder="App name (e.g. Reddit)">
+            <button type="button" class="btn-sm" data-ac-cat-action="add" data-cat="${esc(cat)}">Add suffix</button>
+          </div>
+        </div>
+      </details>`;
+  }).join('');
+}
+
+// Click delegation for the Access Control category UI
+document.addEventListener('click', async (e) => {
+  // Uncategorized → assign
+  const assignBtn = e.target.closest('[data-ac-uncat-action="assign"]');
+  if (assignBtn) {
+    e.preventDefault();
+    const row = assignBtn.closest('.ac-uncat-row');
+    if (!row) return;
+    const hostname = row.dataset.hostname;
+    const app = row.querySelector('.ac-uncat-app')?.value.trim();
+    const category = row.querySelector('.ac-uncat-cat')?.value;
+    if (!app || !category) return;
+    try {
+      await fetch(`${API}/api/network/categories`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', suffix: hostname, app, category }),
+      });
+      showEeroToast(`Added ${hostname} → ${app} (${category})`);
+      loadAccessControl();
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  // Category → add suffix
+  const addBtn = e.target.closest('[data-ac-cat-action="add"]');
+  if (addBtn) {
+    e.preventDefault();
+    const block = addBtn.closest('.ac-cat-block');
+    if (!block) return;
+    const suffix = block.querySelector('.ac-cat-add-suffix')?.value.trim();
+    const app = block.querySelector('.ac-cat-add-app')?.value.trim();
+    const category = addBtn.dataset.cat;
+    if (!suffix || !app || !category) { alert('Need both suffix and app name'); return; }
+    try {
+      await fetch(`${API}/api/network/categories`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', suffix, app, category }),
+      });
+      showEeroToast(`Added ${suffix} → ${app} (${category})`);
+      loadAccessControl();
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  // Category → remove user entry
+  const removeBtn = e.target.closest('[data-ac-cat-action="remove"]');
+  if (removeBtn) {
+    e.preventDefault();
+    const row = removeBtn.closest('.ac-cat-entry-row');
+    const source = row?.querySelector('.ac-entry-source')?.textContent;
+    if (source !== 'user') {
+      alert('Built-in entries can\'t be removed. Add a user entry with the same suffix to override.');
+      return;
+    }
+    try {
+      await fetch(`${API}/api/network/categories`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', suffix: removeBtn.dataset.suffix }),
+      });
+      showEeroToast(`Removed ${removeBtn.dataset.suffix}`);
+      loadAccessControl();
+    } catch (err) { alert(err.message); }
+  }
+});
+
+// Run policy scan now
+document.getElementById('acPolicyScanBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('acPolicyScanBtn');
+  const status = document.getElementById('acPolicyScanStatus');
+  if (btn) { btn.disabled = true; }
+  if (status) status.textContent = 'Running…';
+  try {
+    const res = await fetch(`${API}/api/network/policy/scan`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const r = await res.json();
+    if (status) status.textContent = `Scan complete — ${r.scanned || 0} devices, ${r.flagged || 0} flagged, ${r.blocked || 0} blocked`;
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
+});
+
 function renderEeroKids() {
   const profile = getKidsProfile();
   const titleEl = document.getElementById('kidsTitle');
@@ -4198,8 +4388,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
         fetch(`${API}/api/family`).then(r => r.json()).then(f => { familyData = f; }).catch(() => {}),
       ]).then(renderEeroProfiles);
     }
-    if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); startDnsTestPolling(); }
-    else stopDnsTestPolling();
+    if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadAccessControl(); }
   });
 });
 
