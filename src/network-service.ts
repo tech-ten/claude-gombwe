@@ -378,6 +378,18 @@ export class NetworkService {
   }
 
   // ── Block / Unblock ────────────────────────────────────────────
+  /** Append a structured record to the policy-actions audit log. Used by
+   *  every block/unblock path (manual + scanner-driven) so the Audit subtab
+   *  has a complete history. */
+  private writePolicyAction(rec: Record<string, unknown>): void {
+    try {
+      const { appendFileSync } = require('node:fs');
+      appendFileSync(POLICY_ACTIONS_PATH, JSON.stringify(rec) + '\n', { mode: 0o600 });
+    } catch (err) {
+      console.warn('[network] writePolicyAction failed:', err);
+    }
+  }
+
   async block(mac: string, durationMinutes: number | null): Promise<{ rule_id: string; blocked_until: string | null; killed_flows: number }> {
     const key = mac.toUpperCase();
     // If already blocked, unblock first to avoid duplicate firewall rules.
@@ -411,6 +423,19 @@ export class NetworkService {
     writeJson(BLOCKS_PATH, this.blocks);
 
     if (expiresAt) this.scheduleUnblock(key, expiresAt.getTime() - Date.now());
+
+    // Log to audit — manual blocks now appear in the Audit subtab alongside
+    // the policy-scanner's auto-blocks.
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: key,
+      name: this.aliases[key] ?? null,
+      action: 'block',
+      severity: 'manual',
+      reason: durationMinutes ? `Manual pause for ${durationMinutes} minutes` : 'Manual block (indefinite)',
+      duration_minutes: durationMinutes,
+      killed_flows: killed,
+    });
 
     return { rule_id: ruleId, blocked_until: this.blocks[key].blocked_until, killed_flows: killed };
   }
@@ -495,6 +520,121 @@ export class NetworkService {
     } catch { return []; }
   }
 
+  /**
+   * Active alerts derived from MikroTik data. Replaces the eero-driven
+   * detectors for flapping devices etc. — consumes the snapshot JSONL the
+   * snapshot-collector writes every 60s.
+   *
+   * Currently detects:
+   *   - flapping-device: more than FLAPPING_THRESHOLD bound/not-bound
+   *     transitions in the last 24h
+   *
+   * Returns alert objects in the same shape as the legacy eero alerts so the
+   * dashboard can render them through one banner code path.
+   */
+  alerts(): Array<{
+    id: string; type: string; severity: 'info' | 'warning' | 'error';
+    title: string; detail: string; suggestion?: string;
+    firstSeen: string; lastSeen: string;
+    data?: Record<string, unknown>;
+  }> {
+    const FLAPPING_THRESHOLD = 25;   // bumped from the eero default of 10
+                                     // — phones and TVs commonly hit 15-20
+                                     // in normal use; only flag truly bad ones
+    const out: ReturnType<NetworkService['alerts']> = [];
+    out.push(...this.detectFlappingFromSnapshots(FLAPPING_THRESHOLD));
+    return out;
+  }
+
+  /** Walk the last 24h of snapshot JSONL, count bound/not-bound transitions
+   *  per MAC, return flapping alerts above the threshold. Reads today's +
+   *  yesterday's files because a 24h window straddles midnight half the day. */
+  private detectFlappingFromSnapshots(threshold: number): ReturnType<NetworkService['alerts']> {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const todayPath = todayJsonlPath();
+    const yest = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const yestPath = join(DATA_DIR, `${yest}.jsonl`);
+
+    const snapshots: Array<{ ts: string; devices: MtLease[] }> = [];
+    for (const path of [yestPath, todayPath]) {
+      if (!existsSync(path)) continue;
+      try {
+        const text = readFileSync(path, 'utf-8');
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const snap = JSON.parse(line);
+            if (!snap?.ts) continue;
+            if (new Date(snap.ts).getTime() < cutoff) continue;
+            snapshots.push({ ts: snap.ts, devices: snap.devices || [] });
+          } catch { /* malformed line, skip */ }
+        }
+      } catch { /* unreadable file, skip */ }
+    }
+    if (snapshots.length < 2) return [];
+
+    // For each MAC, walk snapshots and count state transitions.
+    // State = 'bound' is online; anything else (waiting, expired, missing) is offline.
+    interface FlapState {
+      online: number;   // not-bound → bound transitions
+      offline: number;  // bound → not-bound transitions
+      lastState: 'bound' | 'offline' | null;
+      first: string;
+      last: string;
+      name?: string;
+    }
+    const perMac = new Map<string, FlapState>();
+
+    for (const snap of snapshots) {
+      const seenThisSnap = new Set<string>();
+      for (const lease of snap.devices) {
+        const mac = (lease['mac-address'] || '').toUpperCase();
+        if (!mac) continue;
+        const state: 'bound' | 'offline' = lease.status === 'bound' ? 'bound' : 'offline';
+        seenThisSnap.add(mac);
+        const cur = perMac.get(mac) ?? { online: 0, offline: 0, lastState: null, first: snap.ts, last: snap.ts };
+        if (cur.lastState !== null && cur.lastState !== state) {
+          if (state === 'bound') cur.online += 1;
+          else cur.offline += 1;
+        }
+        cur.lastState = state;
+        cur.last = snap.ts;
+        if (snap.ts < cur.first) cur.first = snap.ts;
+        if (lease['host-name']) cur.name = lease['host-name'];
+        perMac.set(mac, cur);
+      }
+      // MACs that disappear from a snapshot (not in DHCP at all) count as offline
+      for (const [mac, cur] of perMac) {
+        if (seenThisSnap.has(mac)) continue;
+        if (cur.lastState === 'bound') {
+          cur.offline += 1;
+          cur.lastState = 'offline';
+          cur.last = snap.ts;
+        }
+      }
+    }
+
+    const alerts: ReturnType<NetworkService['alerts']> = [];
+    for (const [mac, t] of perMac) {
+      const total = t.online + t.offline;
+      if (total < threshold) continue;
+      const alias = this.aliases[mac];
+      const name = alias ?? t.name ?? mac;
+      alerts.push({
+        id: `flapping:${mac}`,
+        type: 'flapping-device',
+        severity: total >= threshold * 2 ? 'warning' : 'info',
+        title: `${name} is flapping`,
+        detail: `${total} online/offline transitions in the last 24 hours (${t.online} up, ${t.offline} down).`,
+        suggestion: 'Likely weak Wi-Fi signal or aggressive client power-saving. For TVs and phones this is often normal. For laptops/desktops, check signal strength or consider a DHCP reservation.',
+        firstSeen: t.first,
+        lastSeen: t.last,
+        data: { mac, count: total, online: t.online, offline: t.offline },
+      });
+    }
+    return alerts;
+  }
+
   async unblock(mac: string): Promise<void> {
     const key = mac.toUpperCase();
     const state = this.blocks[key];
@@ -504,6 +644,16 @@ export class NetworkService {
     writeJson(BLOCKS_PATH, this.blocks);
     const t = this.timers.get(key);
     if (t) { clearTimeout(t); this.timers.delete(key); }
+
+    // Log to audit so unblock events show in the Audit subtab.
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: key,
+      name: this.aliases[key] ?? null,
+      action: 'unblock',
+      severity: 'manual',
+      reason: 'Manual unblock',
+    });
   }
 
   private scheduleUnblock(mac: string, delayMs: number): void {

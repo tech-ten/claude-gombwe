@@ -47,7 +47,11 @@ export function detectAlerts(input: DetectInput): EeroAlert[] {
   const out: EeroAlert[] = [];
   const { snapshot, config, history, now } = input;
 
-  out.push(...detectFlappingDevices(history, snapshot, now));
+  // Flapping detection is now MikroTik-driven (see NetworkService.alerts()).
+  // Reading bound/not-bound state directly from snapshot JSONL is more
+  // accurate at the IP layer than eero's WiFi-association samples. The eero
+  // detector remains in this file but is no longer invoked.
+  //   (was: out.push(...detectFlappingDevices(history, snapshot, now)) )
   out.push(...detectNoisyNewDevices(history, config, now));
   out.push(...detectStaleSampler(history, config, now));
   out.push(...detectPersistentErrors(snapshot, history));

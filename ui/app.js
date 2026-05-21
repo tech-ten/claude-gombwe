@@ -2076,6 +2076,9 @@ async function loadEero() {
     renderEeroUsageChart();
     renderEeroSchedule();
   }
+  // MikroTik-driven alerts load alongside eero alerts. The banner merges
+  // both in renderEeroAlerts().
+  await loadNetworkAlerts();
   renderEeroAlerts();
   updateEeroNavBadge();
   // Devices subtab is MikroTik-driven — load even when eero isn't authenticated,
@@ -3685,17 +3688,39 @@ async function eeroSync() {
     try {
       const a = await fetch(`${API}/api/eero/alerts`);
       eeroState.alerts = await a.json();
-      renderEeroAlerts();
-      updateEeroNavBadge();
     } catch { /* ignore */ }
+    // Refresh MikroTik alerts after every eero sync too — keeps the
+    // merged banner consistent.
+    await loadNetworkAlerts();
+    renderEeroAlerts();
+    updateEeroNavBadge();
   } catch (err) { console.error('eero sync failed:', err); }
+}
+
+// MikroTik-driven alerts (flapping etc.) live alongside the eero-driven
+// ones during the migration. The eero list keeps system-of-eero alerts
+// (sampler stale, persistent errors, NextDNS noise); MikroTik gives us
+// the device-flapping detection that actually matters in bridged mode.
+let networkAlerts = [];
+
+async function loadNetworkAlerts() {
+  try {
+    const res = await fetch(`${API}/api/network/alerts`);
+    if (!res.ok) { networkAlerts = []; return; }
+    networkAlerts = await res.json();
+  } catch { networkAlerts = []; }
 }
 
 function renderEeroAlerts() {
   const container = document.getElementById('eeroAlerts');
   if (!container) return;
-  const all = eeroState.alerts || [];
-  const active = all.filter(a => !a.dismissed);
+  const eeroAll = eeroState.alerts || [];
+  // Merge eero alerts + MikroTik alerts. Dedup by id so the same alert
+  // can't show twice during the migration overlap. Filter out dismissed
+  // (only eero alerts have a dismiss flag; MikroTik alerts auto-clear).
+  const merged = [...eeroAll.filter(a => !a.dismissed), ...networkAlerts];
+  const seen = new Set();
+  const active = merged.filter(a => seen.has(a.id) ? false : (seen.add(a.id), true));
   if (active.length === 0) {
     container.classList.add('hidden');
     container.innerHTML = '';
@@ -3716,8 +3741,16 @@ function renderEeroAlerts() {
   `).join('');
   container.querySelectorAll('.eero-alert-dismiss').forEach(b => {
     b.onclick = async () => {
-      await fetch(`${API}/api/eero/alerts/${encodeURIComponent(b.dataset.id)}/dismiss`, eeroPost({ dismissed: true }));
-      eeroState.alerts = (eeroState.alerts || []).map(a => a.id === b.dataset.id ? { ...a, dismissed: true } : a);
+      const id = b.dataset.id;
+      // MikroTik-driven alerts don't have a server-side dismiss; just hide
+      // client-side and let them reappear next load if the condition persists.
+      const isNetworkAlert = networkAlerts.some(a => a.id === id);
+      if (isNetworkAlert) {
+        networkAlerts = networkAlerts.filter(a => a.id !== id);
+      } else {
+        await fetch(`${API}/api/eero/alerts/${encodeURIComponent(id)}/dismiss`, eeroPost({ dismissed: true }));
+        eeroState.alerts = (eeroState.alerts || []).map(a => a.id === id ? { ...a, dismissed: true } : a);
+      }
       renderEeroAlerts();
       updateEeroNavBadge();
     };
@@ -3727,7 +3760,9 @@ function renderEeroAlerts() {
 function updateEeroNavBadge() {
   const badge = document.getElementById('eeroNavBadge');
   if (!badge) return;
-  const active = (eeroState.alerts || []).filter(a => !a.dismissed);
+  const eeroActive = (eeroState.alerts || []).filter(a => !a.dismissed);
+  const seen = new Set();
+  const active = [...eeroActive, ...networkAlerts].filter(a => seen.has(a.id) ? false : (seen.add(a.id), true));
   if (active.length === 0) {
     badge.classList.add('hidden');
     badge.textContent = '';

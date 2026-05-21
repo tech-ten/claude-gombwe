@@ -1250,6 +1250,15 @@ export class Gateway {
       res.json(getNetworkService().policyActions(500));
     });
 
+    // Active alerts (MikroTik-driven). Currently: flapping-device. Returns
+    // the same shape as the legacy eero alerts so the dashboard banner can
+    // render both through one code path during the migration.
+    this.app.get('/api/network/alerts', (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(getNetworkService().alerts()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
     // POST → trigger a manual scan now (useful for testing, also UI button)
     this.app.post('/api/network/policy/scan', async (_req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
