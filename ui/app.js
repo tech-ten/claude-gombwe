@@ -2493,100 +2493,188 @@ function renderEeroBulkBar() {
   bar.classList.toggle('hidden', eeroSelectedDevices.size === 0);
 }
 
-let eeroExpandedProfiles = new Set();
+// Profiles subtab — MikroTik-driven, derived from owner attribution +
+// family.members. A "profile" is a person who owns one or more devices.
+// "Unassigned" is a synthetic profile for devices with no owner yet.
+//
+// All actions fan out to /api/network/devices/:mac/{block,unblock,owner,kid}.
+// Eero profiles (which don't enforce anything in bridged mode) are no longer
+// read or written.
+
+const expandedProfiles = new Set();
 
 function renderEeroProfiles() {
   const list = document.getElementById('eeroProfileList');
   if (!list) return;
-  const profiles = eeroState.snapshot?.profiles || [];
-  const allDevices = eeroState.snapshot?.devices || [];
 
-  if (profiles.length === 0) {
-    list.innerHTML = '<div class="muted small" style="padding:16px">No profiles. Create one above.</div>';
+  // Group devices by owner. Unassigned bucket holds those with no owner.
+  const byOwner = new Map();
+  const unassigned = [];
+  for (const d of (networkState.devices || [])) {
+    if (d.owner) {
+      if (!byOwner.has(d.owner)) byOwner.set(d.owner, []);
+      byOwner.get(d.owner).push(d);
+    } else {
+      unassigned.push(d);
+    }
+  }
+  // Include family.members with zero devices so newly-added people show up
+  for (const m of (familyData.members || [])) {
+    if (m.name && !byOwner.has(m.name)) byOwner.set(m.name, []);
+  }
+
+  const profileNames = [...byOwner.keys()].sort();
+  if (profileNames.length === 0 && unassigned.length === 0) {
+    list.innerHTML = '<div class="muted small" style="padding:16px">No profiles or devices yet. Assign an owner from the Devices subtab to create a profile.</div>';
     return;
   }
 
-  list.innerHTML = profiles.map(p => {
-    const profileDeviceUrls = new Set((p.devices || []).map(d => d.url || d));
-    const expanded = eeroExpandedProfiles.has(p.url);
+  const renderProfileCard = (name, devices) => {
+    const expanded = expandedProfiles.has(name);
+    const online = devices.filter(d => d.online).length;
+    const blocked = devices.filter(d => d.blocked).length;
+    const anyKid = devices.some(d => d.kid);
+    const totalBytes = devices.reduce((s, d) => s + (d.today_bytes_down || 0) + (d.today_bytes_up || 0), 0);
+
+    const allDevices = networkState.devices || [];
+    const subline = `${devices.length} device${devices.length !== 1 ? 's' : ''} · ${online} online${blocked ? ` · ${blocked} blocked` : ''} · ${formatBytes(totalBytes)} today${anyKid ? ' · KID' : ''}`;
+
     return `
       <div class="eero-profile-card">
         <div class="eero-profile-row">
           <div>
-            <div class="eero-profile-name">${esc(p.name)}</div>
-            <div class="muted small">${profileDeviceUrls.size} device${profileDeviceUrls.size !== 1 ? 's' : ''} · ${p.paused ? 'paused' : 'active'}</div>
+            <div class="eero-profile-name">${esc(name)}</div>
+            <div class="muted small">${subline}</div>
           </div>
           <div class="eero-profile-actions">
-            <button class="btn-sm" data-act="profile-toggle" data-url="${esc(p.url)}">${expanded ? 'Hide devices' : 'Manage devices'}</button>
-            <button class="btn-sm" data-act="profile-pause" data-url="${esc(p.url)}" data-on="${p.paused ? '1' : '0'}">${p.paused ? 'Unpause' : 'Pause'}</button>
-            <button class="btn-sm btn-danger" data-act="profile-delete" data-url="${esc(p.url)}">Delete</button>
+            <button class="btn-sm" data-act="profile-toggle" data-profile="${esc(name)}">${expanded ? 'Hide devices' : 'Manage devices'}</button>
+            <button class="btn-sm" data-act="profile-pause-all" data-profile="${esc(name)}" ${devices.length === 0 ? 'disabled' : ''}>Pause all</button>
+            <button class="btn-sm" data-act="profile-unpause-all" data-profile="${esc(name)}" ${blocked === 0 ? 'disabled' : ''}>Unpause all</button>
+            <button class="btn-sm" data-act="profile-kid-toggle" data-profile="${esc(name)}" data-on="${anyKid ? '1' : '0'}" ${devices.length === 0 ? 'disabled' : ''}>${anyKid ? 'Unmark kid' : 'Mark as kid'}</button>
           </div>
         </div>
         ${expanded ? `
           <div class="eero-profile-devices">
-            <div class="muted small">Tick devices to include in <strong>${esc(p.name)}</strong>. Save applies the change in one PUT.</div>
+            <div class="muted small">Tick devices to include in <strong>${esc(name)}</strong>. Save fans out per-device owner changes.</div>
             ${allDevices.map(d => {
-              const inProfile = profileDeviceUrls.has(d.url);
-              const otherProfile = d.profile?.url && d.profile.url !== p.url ? d.profile.name : '';
+              const inProfile = d.owner === name;
+              const otherOwner = d.owner && d.owner !== name ? d.owner : '';
               return `
                 <label class="eero-profile-device">
-                  <input type="checkbox" data-pdev="${esc(d.url)}" data-profile="${esc(p.url)}" ${inProfile ? 'checked' : ''}>
-                  <span class="eero-profile-device-name">${esc(d.display_name || d.hostname || d.mac)}</span>
-                  <span class="muted small">${esc(d.mac || '')}${otherProfile ? ` · currently in <em>${esc(otherProfile)}</em>` : ''}</span>
+                  <input type="checkbox" data-pdev="${esc(d.mac)}" data-profile="${esc(name)}" ${inProfile ? 'checked' : ''}>
+                  <span class="eero-profile-device-name">${esc(d.name || d.hostname || d.mac)}</span>
+                  <span class="muted small">${esc(d.mac || '')}${otherOwner ? ` · currently in <em>${esc(otherOwner)}</em>` : ''}</span>
                 </label>
               `;
             }).join('')}
             <div class="form-row">
-              <button class="btn-primary btn-sm" data-act="profile-save" data-url="${esc(p.url)}">Save device list</button>
-              <span class="muted small">Note: a device can only be in one profile. Adding it here removes it from any other profile.</span>
+              <button class="btn-primary btn-sm" data-act="profile-save" data-profile="${esc(name)}">Save device list</button>
+              <span class="muted small">A device has one owner. Adding it here removes it from any other profile.</span>
             </div>
           </div>
         ` : ''}
       </div>
     `;
-  }).join('');
+  };
 
+  let html = profileNames.map(n => renderProfileCard(n, byOwner.get(n))).join('');
+  if (unassigned.length) {
+    html += `
+      <div class="eero-profile-card unassigned">
+        <div class="eero-profile-row">
+          <div>
+            <div class="eero-profile-name muted">Unassigned</div>
+            <div class="muted small">${unassigned.length} device${unassigned.length !== 1 ? 's' : ''} with no owner — assign them from the Devices subtab or below</div>
+          </div>
+        </div>
+        <div class="eero-profile-devices">
+          ${unassigned.map(d => `
+            <div class="eero-profile-device">
+              <span class="eero-profile-device-name">${esc(d.name || d.hostname || d.mac)}</span>
+              <span class="muted small">${esc(d.mac)} · ${esc(d.vendor || '')}${d.kid ? ' · kid' : ''}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+  list.innerHTML = html;
+
+  // Expand / collapse
   list.querySelectorAll('[data-act="profile-toggle"]').forEach(b => {
     b.onclick = () => {
-      const url = b.dataset.url;
-      if (eeroExpandedProfiles.has(url)) eeroExpandedProfiles.delete(url);
-      else eeroExpandedProfiles.add(url);
+      const n = b.dataset.profile;
+      if (expandedProfiles.has(n)) expandedProfiles.delete(n);
+      else expandedProfiles.add(n);
       renderEeroProfiles();
     };
   });
-  list.querySelectorAll('[data-act="profile-pause"]').forEach(b => {
+
+  const refresh = async () => { await loadNetworkDevices(); renderEeroProfiles(); };
+
+  // Pause all — fan out /block per MAC in this profile
+  list.querySelectorAll('[data-act="profile-pause-all"]').forEach(b => {
     b.onclick = async () => {
-      await fetch(`${API}/api/eero/profiles/pause`, eeroPut({ profileUrl: b.dataset.url, paused: b.dataset.on !== '1' }));
-      eeroSync();
+      const macs = (byOwner.get(b.dataset.profile) || []).filter(d => !d.blocked).map(d => d.mac);
+      if (macs.length === 0) return;
+      if (!confirm(`Pause ${macs.length} device${macs.length !== 1 ? 's' : ''} owned by ${b.dataset.profile}?`)) return;
+      await Promise.all(macs.map(m => fetch(`${API}/api/network/devices/${encodeURIComponent(m)}/block`, { method: 'POST' })));
+      refresh();
     };
   });
-  list.querySelectorAll('[data-act="profile-delete"]').forEach(b => {
-    b.onclick = () => eeroAction('Delete this profile?', () =>
-      fetch(`${API}/api/eero/profiles?profileUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
+
+  // Unpause all — fan out /unblock per MAC currently blocked
+  list.querySelectorAll('[data-act="profile-unpause-all"]').forEach(b => {
+    b.onclick = async () => {
+      const macs = (byOwner.get(b.dataset.profile) || []).filter(d => d.blocked).map(d => d.mac);
+      if (macs.length === 0) return;
+      await Promise.all(macs.map(m => fetch(`${API}/api/network/devices/${encodeURIComponent(m)}/unblock`, { method: 'POST' })));
+      refresh();
+    };
   });
+
+  // Kid toggle — set/clear kid on every device in this profile
+  list.querySelectorAll('[data-act="profile-kid-toggle"]').forEach(b => {
+    b.onclick = async () => {
+      const turnOn = b.dataset.on !== '1';
+      const macs = (byOwner.get(b.dataset.profile) || []).map(d => d.mac);
+      await Promise.all(macs.map(m =>
+        fetch(`${API}/api/network/devices/${encodeURIComponent(m)}/kid`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: turnOn }),
+        })));
+      refresh();
+    };
+  });
+
+  // Save device list — per-checkbox: assign-to-this-profile if checked but
+  // current owner != name; unassign if unchecked but current owner == name
   list.querySelectorAll('[data-act="profile-save"]').forEach(b => {
     b.onclick = async () => {
-      const profileUrl = b.dataset.url;
-      const profile = profiles.find(p => p.url === profileUrl);
-      const previousUrls = new Set((profile?.devices || []).map(d => d.url || d));
-      const checks = Array.from(list.querySelectorAll(`input[data-profile="${profileUrl}"]:checked`));
-      const deviceUrls = checks.map(c => c.dataset.pdev);
-      // Only NEW additions trigger the adult-device check.
-      const newlyAdded = deviceUrls
-        .filter(u => !previousUrls.has(u))
-        .map(u => allDevices.find(d => d.url === u))
-        .filter(Boolean);
-      if (!confirmKidProfileAssignment(profile, newlyAdded)) return;
+      const profile = b.dataset.profile;
+      const checks = Array.from(list.querySelectorAll(`input[data-profile="${profile}"]`));
+      const ops = [];
+      for (const c of checks) {
+        const mac = c.dataset.pdev;
+        const d = (networkState.devices || []).find(x => x.mac === mac);
+        if (!d) continue;
+        if (c.checked && d.owner !== profile) {
+          ops.push({ mac, owner: profile });
+        } else if (!c.checked && d.owner === profile) {
+          ops.push({ mac, owner: null });
+        }
+      }
+      if (ops.length === 0) return;
       b.disabled = true; b.textContent = 'Saving…';
       try {
-        const r = await fetch(`${API}/api/eero/profiles/devices`, eeroPut({ profileUrl, deviceUrls }));
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          alert(d.error || `Failed: ${r.status}`);
-        } else {
-          showEeroToast(`Saved ${deviceUrls.length} device${deviceUrls.length !== 1 ? 's' : ''} to profile`);
-          await eeroSync();
+        for (const op of ops) {
+          await fetch(`${API}/api/network/devices/${encodeURIComponent(op.mac)}/owner`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner: op.owner }),
+          });
         }
+        showEeroToast(`Updated ${ops.length} device${ops.length !== 1 ? 's' : ''}`);
+        refresh();
       } catch (err) { alert(err.message); }
       finally { b.disabled = false; b.textContent = 'Save device list'; }
     };
@@ -4102,6 +4190,14 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
     if (eeroActiveSubtab === 'audit') renderEeroAudit();   // refresh from /api/network/policy/actions
+    if (eeroActiveSubtab === 'profiles') {
+      // Profile list = unique owners + family.members. Refresh both so
+      // newly-renamed/assigned devices and new members appear immediately.
+      Promise.all([
+        loadNetworkDevices(),
+        fetch(`${API}/api/family`).then(r => r.json()).then(f => { familyData = f; }).catch(() => {}),
+      ]).then(renderEeroProfiles);
+    }
     if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadNextDNS(); startDnsTestPolling(); }
     else stopDnsTestPolling();
   });
@@ -4152,6 +4248,9 @@ document.querySelectorAll('[data-bulk]').forEach(b => {
   });
 });
 
+// New profile = add a person to family.members. The profile shows up
+// immediately (0 devices) and you assign devices to it from the Devices
+// subtab's owner dropdown or from this subtab's "Manage devices" expand.
 document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = document.getElementById('eeroNewProfileName');
@@ -4160,15 +4259,30 @@ document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async 
   const btn = e.target.querySelector('button[type="submit"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
-    const r = await fetch(`${API}/api/eero/profiles`, eeroPost({ name }));
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      alert(d.error || `Failed: HTTP ${r.status}`);
+    // Load latest family, append member, save back. /api/family is PUT-all
+    // because the family object is small.
+    const res = await fetch(`${API}/api/family`);
+    const family = await res.json();
+    if (!Array.isArray(family.members)) family.members = [];
+    if (family.members.some(m => (m.name || '').toLowerCase() === name.toLowerCase())) {
+      alert(`A profile named "${name}" already exists.`);
       return;
     }
+    family.members.push({ name, type: 'adult' });
+    const save = await fetch(`${API}/api/family`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(family),
+    });
+    if (!save.ok) {
+      const d = await save.json().catch(() => ({}));
+      alert(d.error || `Failed: HTTP ${save.status}`);
+      return;
+    }
+    familyData = family;   // keep in-memory state in sync
     input.value = '';
     showEeroToast(`Created profile: ${name}`);
-    await eeroSync();
+    renderEeroProfiles();
   } catch (err) {
     alert(err.message);
   } finally {
