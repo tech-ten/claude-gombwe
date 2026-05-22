@@ -1985,6 +1985,26 @@ function renderDeviceDetail(d) {
     ? dests.map(t => `<li><span class="dd-host">${esc(t.host)}</span><span class="dd-bytes">${esc(formatBytes(t.bytes || 0))}</span></li>`).join('')
     : '<li><span class="dd-host muted">No traffic recorded today</span></li>';
 
+  // Blocked-categories checkbox row. Shown for every device — for adults it
+  // defaults to empty; for kid-flagged devices it auto-seeds adult+gambling+
+  // dangerous on first add. Toggling here fires a PUT and is audit-logged.
+  const POLICY_CATS = ['dangerous', 'adult', 'gambling', 'ads', 'social'];
+  const active = new Set(d.blocked_categories || []);
+  const policyRow = `
+    <div class="dd-policy">
+      <span class="dd-policy-label">Blocked categories</span>
+      <span class="dd-policy-cats">
+        ${POLICY_CATS.map(cat => `
+          <label class="dd-policy-cat" data-cat="${esc(cat)}">
+            <input type="checkbox" data-device-policy-toggle data-mac="${esc(d.mac)}" data-cat="${esc(cat)}" ${active.has(cat) ? 'checked' : ''}>
+            <span class="dd-policy-swatch" style="background:${CATEGORY_COLORS?.[cat] || '#999'}"></span>
+            <span>${cat}</span>
+          </label>`).join('')}
+      </span>
+      <span class="muted small" data-device-policy-status></span>
+    </div>
+  `;
+
   return `
     <div class="eero-device-detail" data-detail-mac="${esc(d.mac)}">
       <div class="dd-grid">
@@ -2007,9 +2027,38 @@ function renderDeviceDetail(d) {
           <ol class="dd-dns" data-dns-list><li class="muted">Loading…</li></ol>
         </div>
       </div>
+      ${policyRow}
     </div>
   `;
 }
+
+// Per-device category toggle handler — delegated, so it survives re-renders.
+document.addEventListener('change', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLInputElement) || !t.matches('[data-device-policy-toggle]')) return;
+  const mac = t.dataset.mac;
+  const detail = document.querySelector(`[data-detail-mac="${CSS.escape(mac)}"]`);
+  const status = detail?.querySelector('[data-device-policy-status]');
+  // Snapshot current ticked state from the DOM (this includes the in-flight change).
+  const ticks = detail?.querySelectorAll('[data-device-policy-toggle]:checked') || [];
+  const categories = Array.from(ticks).map(el => el.dataset.cat);
+  if (status) status.textContent = 'Saving…';
+  try {
+    const res = await fetch(`${API}/api/network/devices/${encodeURIComponent(mac)}/policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (status) status.textContent = `Saved · ${categories.length} blocked`;
+    // Reflect in our cached device row so a re-render preserves the state.
+    const dev = (networkState?.devices || []).find(x => x.mac === mac);
+    if (dev) dev.blocked_categories = categories;
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+    t.checked = !t.checked;  // revert
+  }
+});
 
 async function loadDeviceDnsHistory(mac, ip) {
   if (!ip) return;
@@ -2123,113 +2172,157 @@ function setEeroSyncState() {
   el.textContent = `Synced ${timeAgo(snap.syncedAt)} ago${errs ? ` · ${errs} errors` : ''}`;
 }
 
-function renderEeroOverview() {
-  const grid = document.getElementById('eeroStatGrid');
-  if (!grid) return;
-  const snap = eeroState.snapshot || {};
-  const devices = snap.devices || [];
-  const online = devices.filter(d => d.connected);
-  const speedtest = (snap.speedtests || [])[0];
-  const usage = summariseEeroUsage(snap.usage);
-  const account = snap.account || {};
-  const network = snap.network || {};
+// MikroTik-driven Overview (step 6 of the network rationalisation).
+// Pulls /api/network/status + devices + policy/actions in parallel and renders
+// router vitals, today's enforcement summary, top devices, per-device policy.
+// Function name kept (renderEeroOverview) so existing call sites keep working;
+// will be renamed in the final cleanup pass.
+let overviewCachedStatus = null;
+let overviewLastLoadAt = 0;
 
-  const hostMacs = (eeroState.hostMacs || []).map(m => m.toLowerCase());
-  const me = devices.find(d => hostMacs.includes((d.mac || '').toLowerCase()));
-  const meLabel = me ? (me.display_name || me.hostname || me.mac) : '—';
-  const meSub = me ? `${me.ip || ''} · ${me.connection_type || ''}` : 'host MAC not seen on the network';
+async function loadOverviewData() {
+  // Coalesce frequent calls — fetch at most every 8s.
+  if (Date.now() - overviewLastLoadAt < 8000 && overviewCachedStatus) return overviewCachedStatus;
+  try {
+    const [status, devices, actions] = await Promise.all([
+      fetch(`${API}/api/network/status`).then(r => r.ok ? r.json() : null),
+      fetch(`${API}/api/network/devices`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/api/network/policy/actions`).then(r => r.ok ? r.json() : []),
+    ]);
+    overviewCachedStatus = { status, devices, actions };
+    overviewLastLoadAt = Date.now();
+  } catch (err) {
+    console.warn('loadOverviewData failed:', err.message);
+  }
+  return overviewCachedStatus;
+}
 
-  grid.innerHTML = `
-    ${eeroStat('This device', meLabel, meSub)}
-    ${eeroStat('Account', account.name || account.email?.value || '—', account.premium_status || '')}
-    ${eeroStat('Network', network.name || '—', network.isp ? `via ${network.isp}` : '')}
-    ${eeroStat('Devices', `${online.length}/${devices.length}`, 'online / total')}
-    ${eeroStat('Wi-Fi nodes', String((snap.eeros || []).length), `${(snap.eeros || []).filter(e => e.status === 'green').length} healthy`)}
-    ${eeroStat('Last 7d down', formatBytes(usage.dl), formatBytes(usage.ul) + ' up')}
-    ${eeroStat('Last speedtest', speedtest ? `${(speedtest.down_mbps || 0).toFixed(0)} Mbps` : '—', speedtest ? `up ${(speedtest.up_mbps || 0).toFixed(0)} Mbps` : '')}
+async function renderEeroOverview() {
+  const statGrid = document.getElementById('overviewStats');
+  if (!statGrid) return;  // pane not in DOM yet
+  const data = await loadOverviewData();
+  if (!data || !data.status) {
+    statGrid.innerHTML = '<div class="muted small">MikroTik not reachable.</div>';
+    return;
+  }
+  const { status, devices, actions } = data;
+
+  // ── Top stat row ────────────────────────────────────────────
+  const r = status.router || {};
+  const bw = status.current_bandwidth || {};
+  statGrid.innerHTML = `
+    ${eeroStat('Router', r.model || '—', `${r.version || ''} · uptime ${esc(formatRouterUptime(r.uptime))}`)}
+    ${eeroStat('Devices', `${status.online_count}/${status.known_count}`, 'online / known')}
+    ${eeroStat('WAN', `${(bw.down_mbps || 0).toFixed(1)} ↓`, `${(bw.up_mbps || 0).toFixed(1)} ↑ Mbps`)}
+    ${eeroStat('Conntrack', String(status.active_conntrack || 0), 'active flows')}
+    ${eeroStat('CPU', `${r.cpu_load || 0}%`, 'router load')}
+    ${eeroStat('Active blocks', String(status.active_blocks || 0), 'manual device blocks')}
   `;
 
-  const onlineSeries = (eeroHistory || []).filter(e => e.type === 'sample').map(s => ({
-    t: new Date(s.time).getTime(),
-    v: s.data.onlineCount || 0,
-  }));
-  document.getElementById('eeroOnlineChart').innerHTML = onlineSeries.length
-    ? eeroLineChart(onlineSeries, { yLabel: 'devices' })
-    : '<div class="muted small">Run a sync — or enable the sampler under Advanced — to start collecting.</div>';
-
-  // Most-active leaderboard, computed from sample history. eero gates
-  // per-device bytes behind Plus, so we use online-presence as the proxy.
-  const topEl = document.getElementById('eeroTopConsumers');
-  const noteEl = document.getElementById('eeroActivityNote');
-  const samples = (eeroHistory || []).filter(e => e.type === 'sample' && Array.isArray(e.data?.onlineMacs));
-  if (samples.length === 0) {
-    topEl.innerHTML = '<div class="muted small">No sample history yet. Enable the sampler under <strong>Advanced</strong> to start tracking.</div>';
-    noteEl.textContent = '';
-  } else {
-    const counts = new Map();
-    for (const s of samples) for (const mac of s.data.onlineMacs) counts.set(mac, (counts.get(mac) || 0) + 1);
-    const intervalMs = (eeroState.config?.samplerIntervalMs) || 300000;
-    const ranked = devices
-      .filter(d => d.mac)
-      .map(d => ({
-        device: d,
-        hits: counts.get(d.mac) || 0,
-      }))
-      .filter(r => r.hits > 0)
-      .sort((a, b) => b.hits - a.hits)
-      .slice(0, 10);
-    if (ranked.length === 0) {
-      topEl.innerHTML = '<div class="muted small">No device presence recorded yet. Trigger a few syncs.</div>';
-    } else {
-      const max = ranked[0].hits;
-      topEl.innerHTML = ranked.map(r => {
-        const minutes = Math.round((r.hits * intervalMs) / 60000);
-        const pct = Math.round((r.hits / max) * 100);
-        const label = r.device.display_name || r.device.hostname || r.device.mac;
-        return `
-          <div class="eero-consumer">
-            <div class="eero-consumer-bar"><div class="eero-consumer-fill" style="width:${pct}%"></div></div>
-            <div class="eero-consumer-label">${esc(label)}</div>
-            <span class="muted small">${formatHumanDuration(minutes)}</span>
-          </div>
-        `;
-      }).join('');
+  // ── Today's enforcement (filter audit log to today) ─────────
+  const enforcementEl = document.getElementById('overviewEnforcement');
+  const enforcementMeta = document.getElementById('overviewEnforcementMeta');
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todaysActions = (actions || []).filter(a => {
+    const t = a.time || a.ts;
+    return t && new Date(t).getTime() >= todayStart.getTime();
+  });
+  const byCat = new Map();
+  const byMac = new Map();
+  let scannerRuns = 0;
+  for (const a of todaysActions) {
+    if (a.action === 'blocked-by-category') {
+      const cat = a.category || 'unknown';
+      byCat.set(cat, (byCat.get(cat) || 0) + 1);
+      const m = a.name || a.mac || '?';
+      byMac.set(m, (byMac.get(m) || 0) + 1);
     }
-    noteEl.innerHTML = `${samples.length} samples · <a href="https://eero.com/shop/eero-plus" target="_blank" rel="noopener">eero Plus</a> needed for byte-level usage`;
+    if (a.action === 'policy-scan-run') scannerRuns++;
+  }
+  if (enforcementMeta) enforcementMeta.textContent = `${todaysActions.length} actions today`;
+  if (byCat.size === 0) {
+    enforcementEl.innerHTML = '<div class="muted small">No category blocks fired today.</div>';
+  } else {
+    const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+    const devs = [...byMac.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    enforcementEl.innerHTML = `
+      <div class="ov-enforcement-cats">
+        ${cats.map(([cat, n]) => `
+          <div class="ov-enforcement-cat">
+            <span class="ov-swatch" style="background:${CATEGORY_COLORS?.[cat] || '#999'}"></span>
+            <span class="ov-cat-name">${esc(cat)}</span>
+            <span class="ov-cat-count">${n}</span>
+          </div>`).join('')}
+      </div>
+      <div class="ov-enforcement-by-device">
+        <div class="ov-sub-label">Most-blocked devices today</div>
+        ${devs.map(([name, n]) => `
+          <div class="ov-device-row">
+            <span class="ov-device-name">${esc(name)}</span>
+            <span class="ov-device-count">${n}</span>
+          </div>`).join('')}
+      </div>
+    `;
   }
 
-  // Hardware nodes
-  const nodes = snap.eeros || [];
-  const nodesEl = document.getElementById('eeroNodes');
-  nodesEl.innerHTML = nodes.length === 0
-    ? '<div class="muted small">No node data.</div>'
-    : nodes.map(n => `
-      <div class="eero-node">
-        <div>
-          <div>${esc(n.location || n.serial || 'eero')}</div>
-          <div class="muted small">${esc(n.model || '')} · ${esc(n.status || '')}</div>
-        </div>
-        <button class="btn-sm" data-eero-url="${esc(n.url)}" data-act="reboot-eero">Reboot</button>
-      </div>
-    `).join('');
-  nodesEl.querySelectorAll('[data-act="reboot-eero"]').forEach(b => {
-    b.onclick = () => eeroAction('Reboot this eero?', () =>
-      fetch(`${API}/api/eero/eeros/reboot`, eeroPost({ eeroUrl: b.dataset.eeroUrl })));
-  });
+  // ── Top devices today (by bytes) ────────────────────────────
+  const topEl = document.getElementById('overviewTopDevices');
+  const ranked = (devices || [])
+    .map(d => ({ d, total: (d.today_bytes_down || 0) + (d.today_bytes_up || 0) }))
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8);
+  if (ranked.length === 0) {
+    topEl.innerHTML = '<div class="muted small">No traffic recorded yet today.</div>';
+  } else {
+    const maxBytes = ranked[0].total;
+    topEl.innerHTML = ranked.map(r => {
+      const label = r.d.name || r.d.hostname || r.d.mac;
+      const pct = Math.max(2, Math.round((r.total / maxBytes) * 100));
+      return `
+        <div class="eero-consumer">
+          <div class="eero-consumer-bar"><div class="eero-consumer-fill" style="width:${pct}%"></div></div>
+          <div class="eero-consumer-label">${esc(label)}</div>
+          <span class="muted small">${formatBytes(r.total)}</span>
+        </div>`;
+    }).join('');
+  }
 
-  // Recent events
-  const eventsEl = document.getElementById('eeroEvents');
-  const events = (eeroHistory || []).filter(e => e.type !== 'sample').slice(-30).reverse();
-  document.getElementById('eeroEventCount').textContent = `${events.length} events`;
-  eventsEl.innerHTML = events.length === 0
-    ? '<div class="muted small">No events yet.</div>'
-    : events.map(e => `
-      <div class="eero-event">
-        <span class="eero-event-type ${e.type}">${e.type.replace('eero-', '').replace(/-/g, ' ')}</span>
-        <span>${esc(e.data.display_name || e.data.name || e.data.mac || JSON.stringify(e.data).slice(0, 80))}</span>
-        <span class="muted small">${timeAgo(e.time)}</span>
-      </div>
-    `).join('');
+  // ── Per-device blocked categories summary ───────────────────
+  const policyEl = document.getElementById('overviewPolicy');
+  const policyMeta = document.getElementById('overviewPolicyMeta');
+  const withPolicy = (devices || []).filter(d => (d.blocked_categories || []).length > 0);
+  if (policyMeta) policyMeta.textContent = `${withPolicy.length} of ${devices?.length || 0} devices`;
+  if (withPolicy.length === 0) {
+    policyEl.innerHTML = '<div class="muted small">No devices have category blocks. Set policy under Devices.</div>';
+  } else {
+    policyEl.innerHTML = `
+      <table class="eero-table">
+        <thead><tr><th>Device</th><th>Owner</th><th>Blocked categories</th><th>Today's attempts</th></tr></thead>
+        <tbody>
+          ${withPolicy.map(d => {
+            const cats = d.blocked_categories || [];
+            const attempts = byMac.get(d.name || d.mac) || 0;
+            return `
+              <tr>
+                <td>${esc(d.name || d.hostname || d.mac)}</td>
+                <td class="muted small">${esc(d.owner || '—')}</td>
+                <td>
+                  ${cats.map(c => `<span class="ov-cat-pill"><span class="ov-swatch" style="background:${CATEGORY_COLORS?.[c] || '#999'}"></span>${esc(c)}</span>`).join('')}
+                </td>
+                <td class="muted small">${attempts || '—'}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+}
+
+// RouterOS uptime strings come as "1w2d3h4m5s". Trim trailing zero-units for compactness.
+function formatRouterUptime(s) {
+  if (!s) return '';
+  return String(s).replace(/0[smh]/g, '').replace(/^\s+|\s+$/g, '') || s;
 }
 
 function eeroStat(label, value, sub) {
@@ -2883,78 +2976,410 @@ async function renderEeroUsageChart() {
   }
 }
 
-function renderEeroSpeed() {
-  const chartEl = document.getElementById('eeroSpeedChart');
-  const tableEl = document.getElementById('eeroSpeedTable');
-  const tests = (eeroState.snapshot?.speedtests || []).slice(0, 60).reverse();
-  if (!chartEl || !tableEl) return;
-  if (tests.length === 0) {
-    chartEl.innerHTML = '<div class="muted small">No speedtests yet. Run one above.</div>';
+// MikroTik-driven Speed subtab (step 7). Polls /api/network/interfaces.
+// Browser-side ring buffer accumulates WAN throughput samples for a live
+// sparkline — no server-side sampler needed for a first cut. The buffer
+// resets if you close the tab; that's acceptable, history isn't durable.
+const SPEED_WAN_IFACE = 'ether1';  // RouterOS convention; tweak if your WAN port differs
+const SPEED_RING_CAP = 120;        // ~10 min at 5s polling
+let speedRing = [];                // [{ t: ms, down_mbps, up_mbps }]
+let speedPollTimer = null;
+
+async function renderEeroSpeed() {
+  const statsEl = document.getElementById('speedStats');
+  const chartEl = document.getElementById('speedChart');
+  const tableEl = document.getElementById('speedTable');
+  if (!statsEl || !chartEl || !tableEl) return;
+
+  let ifaces;
+  try {
+    const res = await fetch(`${API}/api/network/interfaces`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    ifaces = await res.json();
+  } catch (err) {
+    statsEl.innerHTML = `<div class="muted small">Interfaces unavailable: ${esc(err.message)}</div>`;
+    chartEl.innerHTML = '';
     tableEl.innerHTML = '';
     return;
   }
-  const dlSeries = tests.map(t => ({ t: new Date(t.date).getTime(), v: t.down_mbps || 0 }));
-  const ulSeries = tests.map(t => ({ t: new Date(t.date).getTime(), v: t.up_mbps || 0 }));
-  chartEl.innerHTML = eeroLineChart(dlSeries, { yLabel: 'Mbps', secondary: ulSeries });
+
+  // Locate the WAN interface; tolerate naming variation by falling back to
+  // the first non-loopback running interface.
+  const wan = ifaces.find(i => i.name === SPEED_WAN_IFACE)
+            ?? ifaces.find(i => i.running === 'true' && i.type !== 'loopback');
+  const downMbps = wan ? bitsToMbps(wan['rx-bits-per-second']) : 0;
+  const upMbps   = wan ? bitsToMbps(wan['tx-bits-per-second']) : 0;
+  const totalRx = ifaces.reduce((s, i) => s + (parseInt(i['rx-byte'] || '0') || 0), 0);
+  const totalTx = ifaces.reduce((s, i) => s + (parseInt(i['tx-byte'] || '0') || 0), 0);
+  const errors = ifaces.reduce((s, i) => s + (parseInt(i['rx-error'] || '0') || 0) + (parseInt(i['tx-error'] || '0') || 0), 0);
+
+  statsEl.innerHTML = `
+    ${eeroStat('WAN down', `${downMbps.toFixed(1)} Mbps`, wan?.name || '—')}
+    ${eeroStat('WAN up', `${upMbps.toFixed(1)} Mbps`, wan?.name || '—')}
+    ${eeroStat('Total received', formatBytes(totalRx), 'all interfaces, since boot')}
+    ${eeroStat('Total sent', formatBytes(totalTx), 'all interfaces, since boot')}
+    ${eeroStat('Interfaces', String(ifaces.length), `${ifaces.filter(i => i.running === 'true').length} running`)}
+    ${eeroStat('Errors', String(errors), 'rx + tx, all interfaces')}
+  `;
+
+  // Append to ring buffer + redraw chart.
+  speedRing.push({ t: Date.now(), down_mbps: downMbps, up_mbps: upMbps });
+  if (speedRing.length > SPEED_RING_CAP) speedRing.shift();
+  const meta = document.getElementById('speedChartMeta');
+  if (meta) meta.textContent = `${speedRing.length} samples · last ${Math.round((speedRing[speedRing.length-1].t - speedRing[0].t) / 1000)}s`;
+  if (speedRing.length < 2) {
+    chartEl.innerHTML = '<div class="muted small">Collecting samples… open this tab for a minute.</div>';
+  } else {
+    chartEl.innerHTML = speedThroughputChart(speedRing);
+  }
+
+  // Interfaces table — running first, by name.
+  const sorted = ifaces.slice().sort((a, b) => {
+    const ar = a.running === 'true', br = b.running === 'true';
+    if (ar !== br) return ar ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  document.getElementById('speedTableMeta').textContent = `${sorted.length} interfaces`;
   tableEl.innerHTML = `
     <table class="eero-table">
-      <thead><tr><th>When</th><th>Down</th><th>Up</th></tr></thead>
-      <tbody>${tests.slice().reverse().map(t => `
-        <tr><td>${esc(t.date)}</td><td>${(t.down_mbps || 0).toFixed(1)} Mbps</td><td>${(t.up_mbps || 0).toFixed(1)} Mbps</td></tr>
-      `).join('')}</tbody>
+      <thead><tr><th>Name</th><th>Type</th><th>State</th><th>↓ Mbps</th><th>↑ Mbps</th><th>RX</th><th>TX</th><th>Errors</th></tr></thead>
+      <tbody>
+        ${sorted.map(i => {
+          const dl = bitsToMbps(i['rx-bits-per-second']);
+          const ul = bitsToMbps(i['tx-bits-per-second']);
+          const err = (parseInt(i['rx-error'] || '0') || 0) + (parseInt(i['tx-error'] || '0') || 0);
+          const drop = (parseInt(i['rx-drop'] || '0') || 0) + (parseInt(i['tx-drop'] || '0') || 0);
+          return `
+            <tr>
+              <td><code>${esc(i.name || '—')}</code></td>
+              <td class="muted small">${esc(i.type || '')}</td>
+              <td>${i.running === 'true' ? '<span class="speed-state up">up</span>' : '<span class="speed-state down">down</span>'}</td>
+              <td class="speed-num">${dl.toFixed(2)}</td>
+              <td class="speed-num">${ul.toFixed(2)}</td>
+              <td class="speed-num">${formatBytes(parseInt(i['rx-byte'] || '0') || 0)}</td>
+              <td class="speed-num">${formatBytes(parseInt(i['tx-byte'] || '0') || 0)}</td>
+              <td class="speed-num ${err > 0 ? 'has-errors' : ''}">${err || '—'}${drop > 0 ? ` (+${drop} drop)` : ''}</td>
+            </tr>`;
+        }).join('')}
+      </tbody>
     </table>
   `;
 }
 
-function renderEeroAdvanced() {
-  const cfg = eeroState.config || {};
-  const samp = document.getElementById('eeroSamplerEnabled');
-  if (samp) samp.checked = !!cfg.samplerEnabled;
-  const interval = document.getElementById('eeroSamplerInterval');
-  if (interval) interval.value = String(cfg.samplerIntervalMs || 300000);
-  const alert = document.getElementById('eeroAlertNewDevice');
-  if (alert) alert.checked = cfg.alertOnNewDevice !== false;
-
-  const guest = eeroState.snapshot?.network?.guest_network || {};
-  const ge = document.getElementById('eeroGuestEnabled');
-  if (ge) ge.checked = !!guest.enabled;
-  const gn = document.getElementById('eeroGuestName');
-  if (gn) gn.value = guest.name || '';
-  const gp = document.getElementById('eeroGuestPass');
-  if (gp) gp.value = guest.password || '';
-
-  const fwd = document.getElementById('eeroForwardList');
-  const forwards = eeroState.snapshot?.forwards || [];
-  fwd.innerHTML = forwards.length === 0
-    ? '<div class="muted small">No port forwards.</div>'
-    : forwards.map(f => `
-      <div class="eero-row">
-        <span>${esc(f.description || f.protocol || 'forward')}</span>
-        <span class="muted small">${esc(f.protocol || '')} ${f.public_port || ''} → ${esc(f.ip || '')}:${f.private_port || ''}</span>
-        <button class="btn-sm btn-danger" data-act="del-forward" data-url="${esc(f.url)}">Delete</button>
-      </div>
-    `).join('');
-  fwd.querySelectorAll('[data-act="del-forward"]').forEach(b => {
-    b.onclick = () => eeroAction('Delete this port forward?', () =>
-      fetch(`${API}/api/eero/forwards?forwardUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
-  });
-
-  const resv = document.getElementById('eeroReservationList');
-  const reservations = eeroState.snapshot?.reservations || [];
-  resv.innerHTML = reservations.length === 0
-    ? '<div class="muted small">No DHCP reservations.</div>'
-    : reservations.map(r => `
-      <div class="eero-row">
-        <span>${esc(r.description || r.mac || 'reservation')}</span>
-        <span class="muted small">${esc(r.mac || '')} → ${esc(r.ip || '')}</span>
-        <button class="btn-sm btn-danger" data-act="del-resv" data-url="${esc(r.url)}">Delete</button>
-      </div>
-    `).join('');
-  resv.querySelectorAll('[data-act="del-resv"]').forEach(b => {
-    b.onclick = () => eeroAction('Delete this reservation?', () =>
-      fetch(`${API}/api/eero/reservations?reservationUrl=${encodeURIComponent(b.dataset.url)}`, { method: 'DELETE' }));
-  });
+function bitsToMbps(s) {
+  const n = parseInt(s || '0') || 0;
+  return n / 1_000_000;
 }
+
+// Calibrated WAN throughput chart — Y gridlines + Mbps tick labels, X time
+// labels, inline legend. ymax snaps to a "nice" round value so the scale
+// only jumps in user-friendly steps (1, 2, 5, 10, 20, 50, 100, 200, 500, …).
+function speedThroughputChart(samples) {
+  const w = 600, h = 180;
+  const padL = 44, padR = 12, padT = 14, padB = 26;
+  const xs = samples.map(s => s.t);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const peak = Math.max(1, ...samples.map(s => Math.max(s.down_mbps, s.up_mbps)));
+  const ymax = niceRound(peak);
+  const xScale = t => padL + (xmax === xmin ? 0 : ((t - xmin) / (xmax - xmin)) * (w - padL - padR));
+  const yScale = v => h - padB - (v / ymax) * (h - padT - padB);
+
+  // 4 horizontal gridlines at 25/50/75/100% of ymax
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => ({ frac: f, val: ymax * f }));
+  const gridLines = ticks.map(t => `
+    <line x1="${padL}" x2="${w - padR}" y1="${yScale(t.val)}" y2="${yScale(t.val)}" class="speed-grid"/>
+    <text x="${padL - 6}" y="${yScale(t.val) + 4}" text-anchor="end" class="speed-tick">${formatMbpsTick(t.val)}</text>
+  `).join('');
+
+  // Time labels at start, mid, end
+  const elapsed = (xmax - xmin) / 1000;
+  const xLabelLeft = formatRelTime(-elapsed);
+  const xLabelRight = 'now';
+  const xLabelMid = formatRelTime(-elapsed / 2);
+
+  const ptStr = (series, key) => series.map(s => `${xScale(s.t)},${yScale(s[key])}`).join(' ');
+
+  return `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="speed-svg">
+      ${gridLines}
+      <polyline class="speed-line down" fill="none" points="${ptStr(samples, 'down_mbps')}"/>
+      <polyline class="speed-line up"   fill="none" points="${ptStr(samples, 'up_mbps')}"/>
+      <text x="${padL}"            y="${h - 8}" class="speed-tick">${esc(xLabelLeft)}</text>
+      <text x="${(padL + w - padR) / 2}" y="${h - 8}" text-anchor="middle" class="speed-tick">${esc(xLabelMid)}</text>
+      <text x="${w - padR}"        y="${h - 8}" text-anchor="end" class="speed-tick">${xLabelRight}</text>
+      <g class="speed-legend">
+        <rect x="${w - 150}" y="2" width="12" height="3" class="speed-line down swatch"/>
+        <text x="${w - 134}" y="6" class="speed-tick">down</text>
+        <rect x="${w - 80}"  y="2" width="12" height="3" class="speed-line up swatch"/>
+        <text x="${w - 64}"  y="6" class="speed-tick">up</text>
+      </g>
+    </svg>
+  `;
+}
+
+// Snap a peak value to the next "nice" ceiling — keeps the Y scale from
+// jittering with every new sample. Steps in human scale 1,2,5,10,20,50,…
+function niceRound(v) {
+  const tiers = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+  for (const t of tiers) if (v <= t) return t;
+  return Math.ceil(v / 1000) * 1000;
+}
+
+function formatMbpsTick(v) {
+  if (v >= 100) return `${v.toFixed(0)}`;
+  if (v >= 10)  return `${v.toFixed(0)}`;
+  return v.toFixed(1);
+}
+
+function formatRelTime(secondsAgo) {
+  const s = Math.round(secondsAgo);
+  if (s === 0) return 'now';
+  const abs = Math.abs(s);
+  if (abs < 90) return `${s}s`;
+  return `${Math.round(s / 60)}m`;
+}
+
+// Auto-poll while the Speed pane is visible. The poller is armed when the
+// user activates the subtab and disarmed when they switch away — keeps the
+// router load tiny when no one's looking.
+function startSpeedPolling() {
+  if (speedPollTimer) return;
+  renderEeroSpeed();  // immediate first paint
+  speedPollTimer = setInterval(renderEeroSpeed, 5000);
+}
+function stopSpeedPolling() {
+  if (speedPollTimer) { clearInterval(speedPollTimer); speedPollTimer = null; }
+}
+
+// MikroTik-driven Advanced (step 8). Three sections — port forwards (NAT),
+// DHCP reservations (static leases), firewall rules viewer (read-only).
+// Function name kept (renderEeroAdvanced) to avoid churning call sites.
+async function renderEeroAdvanced() {
+  await Promise.all([
+    renderAdvPortForwards(),
+    renderAdvDhcpLeases(),
+    renderAdvFirewall(),
+  ]);
+}
+
+async function renderAdvPortForwards() {
+  const listEl = document.getElementById('advPortForwards');
+  const meta = document.getElementById('advPortForwardsMeta');
+  if (!listEl) return;
+  let rules;
+  try {
+    rules = await fetch(`${API}/api/network/nat`).then(r => r.ok ? r.json() : []);
+  } catch { rules = []; }
+  // Only show dstnat rules — those are port forwards. srcnat is router-default masquerade.
+  const pf = rules.filter(r => r.action === 'dst-nat');
+  if (meta) meta.textContent = `${pf.length} forward${pf.length === 1 ? '' : 's'}`;
+  if (pf.length === 0) {
+    listEl.innerHTML = '<div class="muted small">No port forwards configured.</div>';
+  } else {
+    listEl.innerHTML = `
+      <table class="eero-table">
+        <thead><tr><th>Proto</th><th>WAN port</th><th>→ Internal</th><th>Label</th><th>Bytes</th><th></th></tr></thead>
+        <tbody>
+          ${pf.map(r => `
+            <tr>
+              <td><code>${esc((r.protocol || '').toUpperCase())}</code></td>
+              <td class="speed-num">${esc(r['dst-port'] || '—')}</td>
+              <td><code>${esc(r['to-addresses'] || '?')}:${esc(r['to-ports'] || '?')}</code></td>
+              <td class="muted small">${esc((r.comment || '').replace(/^gombwe-pf /, '')) || '—'}</td>
+              <td class="speed-num muted small">${esc(r.bytes || '0')}</td>
+              <td><button class="btn-sm" data-adv-action="del-nat" data-id="${esc(r['.id'])}">Remove</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+}
+
+async function renderAdvDhcpLeases() {
+  const listEl = document.getElementById('advDhcpLeases');
+  const meta = document.getElementById('advDhcpMeta');
+  if (!listEl) return;
+  let leases;
+  try {
+    leases = await fetch(`${API}/api/network/dhcp-leases`).then(r => r.ok ? r.json() : []);
+  } catch { leases = []; }
+  // Static leases first, then dynamic. Static = dynamic field is "false".
+  const sorted = leases.slice().sort((a, b) => {
+    const as = a.dynamic === 'false' ? 0 : 1, bs = b.dynamic === 'false' ? 0 : 1;
+    if (as !== bs) return as - bs;
+    return (a.address || '').localeCompare(b.address || '');
+  });
+  const staticCount = leases.filter(l => l.dynamic === 'false').length;
+  if (meta) meta.textContent = `${staticCount} reserved / ${leases.length} total`;
+  if (leases.length === 0) {
+    listEl.innerHTML = '<div class="muted small">No DHCP leases.</div>';
+    return;
+  }
+  listEl.innerHTML = `
+    <table class="eero-table">
+      <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Type</th><th>Comment</th><th></th></tr></thead>
+      <tbody>
+        ${sorted.map(l => {
+          const isStatic = l.dynamic === 'false';
+          return `
+            <tr>
+              <td><code>${esc(l.address || '—')}</code></td>
+              <td><code>${esc((l['mac-address'] || '').toUpperCase())}</code></td>
+              <td>${esc(l['host-name'] || '—')}</td>
+              <td><span class="speed-state ${isStatic ? 'up' : 'down'}">${isStatic ? 'reserved' : 'dynamic'}</span></td>
+              <td class="muted small">${esc(l.comment || '—')}</td>
+              <td>
+                ${isStatic
+                  ? `<button class="btn-sm" data-adv-action="del-lease" data-id="${esc(l['.id'])}">Remove</button>`
+                  : `<button class="btn-sm" data-adv-action="reserve-lease" data-id="${esc(l['.id'])}">Reserve</button>`
+                }
+              </td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function renderAdvFirewall() {
+  const listEl = document.getElementById('advFwRules');
+  const meta = document.getElementById('advFwMeta');
+  if (!listEl) return;
+  let rules;
+  try {
+    rules = await fetch(`${API}/api/network/firewall`).then(r => r.ok ? r.json() : []);
+  } catch { rules = []; }
+  const gombwe = rules.filter(r => (r.comment || '').startsWith('gombwe'));
+  if (meta) meta.textContent = `${rules.length} total · ${gombwe.length} gombwe-managed`;
+  if (rules.length === 0) {
+    listEl.innerHTML = '<div class="muted small">No firewall rules.</div>';
+    return;
+  }
+  listEl.innerHTML = `
+    <table class="eero-table">
+      <thead><tr><th>#</th><th>Chain</th><th>Action</th><th>Match</th><th>Comment</th><th>State</th><th>Bytes</th><th></th></tr></thead>
+      <tbody>
+        ${rules.map((r, idx) => {
+          const isGombwe = (r.comment || '').startsWith('gombwe');
+          const isDisabled = r.disabled === 'true';
+          const match = [
+            r['src-mac-address'] && `src-mac=${r['src-mac-address']}`,
+            r['src-address'] && `src=${r['src-address']}`,
+            r['dst-address'] && `dst=${r['dst-address']}`,
+            r['dst-port'] && `dport=${r['dst-port']}`,
+            r.protocol && `proto=${r.protocol}`,
+          ].filter(Boolean).join(' · ');
+          const actions = isGombwe ? `
+            <button class="btn-sm" data-adv-action="${isDisabled ? 'enable-fw' : 'disable-fw'}" data-id="${esc(r['.id'])}">${isDisabled ? 'Enable' : 'Disable'}</button>
+            <button class="btn-sm" data-adv-action="del-fw" data-id="${esc(r['.id'])}">Remove</button>
+          ` : '<span class="muted small">read-only</span>';
+          return `
+            <tr class="${isGombwe ? 'fw-gombwe' : ''} ${isDisabled ? 'fw-disabled' : ''}">
+              <td class="muted small">${idx}</td>
+              <td><code>${esc(r.chain || '—')}</code></td>
+              <td><code>${esc(r.action || '—')}</code></td>
+              <td class="muted small">${esc(match || '—')}</td>
+              <td class="muted small">${esc(r.comment || '—')}</td>
+              <td><span class="speed-state ${isDisabled ? 'down' : 'up'}">${isDisabled ? 'disabled' : 'active'}</span></td>
+              <td class="speed-num muted small">${esc(r.bytes || '0')}</td>
+              <td>${actions}</td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// Delegated action handler for Advanced subtab buttons.
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLElement) || !t.matches('[data-adv-action]')) return;
+  const action = t.dataset.advAction;
+  const id = t.dataset.id;
+  if (!id) return;
+
+  if (action === 'del-nat') {
+    if (!confirm('Remove this port forward?')) return;
+    try {
+      const res = await fetch(`${API}/api/network/nat/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await renderAdvPortForwards();
+    } catch (err) { alert(`Failed: ${err.message}`); }
+  } else if (action === 'del-lease') {
+    if (!confirm('Remove this reserved lease? The device falls back to a dynamic IP.')) return;
+    try {
+      const res = await fetch(`${API}/api/network/dhcp-leases/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await renderAdvDhcpLeases();
+    } catch (err) { alert(`Failed: ${err.message}`); }
+  } else if (action === 'reserve-lease') {
+    if (!confirm('Reserve this IP for this device permanently?')) return;
+    try {
+      const res = await fetch(`${API}/api/network/dhcp-leases/${encodeURIComponent(id)}/make-static`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await renderAdvDhcpLeases();
+    } catch (err) { alert(`Failed: ${err.message}`); }
+  } else if (action === 'disable-fw' || action === 'enable-fw') {
+    const disabled = action === 'disable-fw';
+    try {
+      const res = await fetch(`${API}/api/network/firewall/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disabled }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `HTTP ${res.status}`);
+      }
+      await renderAdvFirewall();
+    } catch (err) { alert(`Failed: ${err.message}`); }
+  } else if (action === 'del-fw') {
+    if (!confirm('Remove this firewall rule? This cannot be undone — the device(s) it covered will no longer be blocked at this IP.')) return;
+    try {
+      const res = await fetch(`${API}/api/network/firewall/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `HTTP ${res.status}`);
+      }
+      await renderAdvFirewall();
+    } catch (err) { alert(`Failed: ${err.message}`); }
+  }
+});
+
+// Add-port-forward form handler.
+document.getElementById('advPfAddBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('advPfStatus');
+  const body = {
+    protocol: document.getElementById('advPfProtocol')?.value || 'tcp',
+    srcPort: document.getElementById('advPfSrcPort')?.value,
+    dstAddress: document.getElementById('advPfDstAddr')?.value?.trim(),
+    dstPort: document.getElementById('advPfDstPort')?.value,
+    comment: document.getElementById('advPfComment')?.value?.trim() || '',
+  };
+  if (!body.srcPort || !body.dstAddress || !body.dstPort) {
+    if (status) status.textContent = 'All fields required.';
+    return;
+  }
+  if (status) status.textContent = 'Adding…';
+  try {
+    const res = await fetch(`${API}/api/network/nat/port-forward`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    ['advPfSrcPort', 'advPfDstAddr', 'advPfDstPort', 'advPfComment'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    if (status) status.textContent = 'Added.';
+    await renderAdvPortForwards();
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+  }
+});
 
 // Audit subtab — MikroTik-driven policy/action feed.
 // Reads /api/network/policy/actions (written by the AI policy scanner +
@@ -2984,21 +3409,37 @@ async function renderEeroAudit() {
   // Newest first
   const sorted = actions.slice().reverse();
   const severityClass = (s) => ({
-    high: 'sev-high', medium: 'sev-medium', low: 'sev-low',
+    high: 'sev-high', med: 'sev-medium', medium: 'sev-medium', low: 'sev-low', info: '',
   })[String(s || '').toLowerCase()] || '';
+  // Synthesize a reason line for entries that don't carry one (block / unblock
+  // / category-enforcement). The AI policy scanner provides its own reason.
+  const reasonFor = (a) => {
+    if (a.reason) return a.reason;
+    if (a.action === 'blocked-by-category') return `${a.category || 'category'} block · ${a.killed_flows || 0} flow(s) killed`;
+    if (a.action === 'policy-changed') return `policy → [${(a.categories_now || []).join(', ') || 'none'}]`;
+    if (a.action === 'block') return `manual block${a.expires_at ? ` until ${a.expires_at}` : ' (indefinite)'}`;
+    if (a.action === 'unblock') return 'manual unblock';
+    if (a.action === 'schedule-block-started') return `schedule "${a.schedule_name || a.schedule_id || '?'}" — window opened`;
+    if (a.action === 'schedule-block-ended')   return `schedule "${a.schedule_name || a.schedule_id || '?'}" — window closed`;
+    return a.action || '';
+  };
   list.innerHTML = `
     <table class="eero-table audit-table">
-      <thead><tr><th>When</th><th>Device</th><th>Severity</th><th>Hostname</th><th>Reason</th></tr></thead>
+      <thead><tr><th>When</th><th>Action</th><th>Device</th><th>Severity</th><th>Hostname</th><th>Detail</th></tr></thead>
       <tbody>
-        ${sorted.map(a => `
-          <tr>
-            <td><span title="${esc(a.ts || '')}">${esc(timeAgo(a.ts) || '—')}</span></td>
-            <td>${esc(a.name || a.mac || '—')}</td>
-            <td><span class="audit-sev ${severityClass(a.severity)}">${esc(a.severity || '—')}</span></td>
-            <td><code>${esc(a.hostname || '—')}</code></td>
-            <td class="audit-reason">${esc(a.reason || '')}</td>
-          </tr>
-        `).join('')}
+        ${sorted.map(a => {
+          const when = a.time || a.ts || '';
+          return `
+            <tr>
+              <td><span title="${esc(when)}">${esc(timeAgo(when) || '—')}</span></td>
+              <td><code>${esc(a.action || '—')}</code></td>
+              <td>${esc(a.name || a.mac || '—')}</td>
+              <td><span class="audit-sev ${severityClass(a.severity)}">${esc(a.severity || '—')}</span></td>
+              <td><code>${esc(a.hostname || '—')}</code></td>
+              <td class="audit-reason">${esc(reasonFor(a))}</td>
+            </tr>
+          `;
+        }).join('')}
       </tbody>
     </table>
   `;
@@ -3220,27 +3661,216 @@ function getKidsProfile() {
 let acCategoriesData = null;
 let acUncatData = null;
 
+let acAdlistData = null;
+
 async function loadAccessControl() {
   try {
-    const [cats, uncat] = await Promise.all([
+    const [cats, uncat, adlist] = await Promise.all([
       fetch(`${API}/api/network/categories`).then(r => r.json()),
       fetch(`${API}/api/network/categories/uncategorized?days=7&limit=40`).then(r => r.json()),
+      fetch(`${API}/api/network/adlist`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
     acCategoriesData = cats;
     acUncatData = uncat;
+    acAdlistData = adlist;
   } catch (err) {
     console.warn('loadAccessControl failed:', err.message);
-    acCategoriesData = null; acUncatData = null;
+    acCategoriesData = null; acUncatData = null; acAdlistData = null;
   }
   renderAccessControl();
+  renderAdlistCard();
 }
 
+function renderAdlistCard() {
+  const body = document.getElementById('acAdlistBody');
+  const meta = document.getElementById('acAdlistMeta');
+  if (!body) return;
+  const data = acAdlistData;
+  if (!data) {
+    body.innerHTML = '<div class="muted small">MikroTik adlist unavailable — needs RouterOS 7.7+.</div>';
+    if (meta) meta.textContent = '';
+    return;
+  }
+  const subs = data.subscriptions || [];
+  const sources = data.sources || [];
+  if (meta) meta.textContent = subs.length ? `${subs.length} subscribed` : 'none subscribed';
+
+  // Subscribed URLs index → for quick "is this source enabled?" check.
+  const subbedByUrl = new Map(subs.map(s => [s.url, s]));
+
+  // Group sources by category for display.
+  const byCategory = new Map();
+  for (const src of sources) {
+    if (!byCategory.has(src.category)) byCategory.set(src.category, []);
+    byCategory.get(src.category).push(src);
+  }
+  const catOrder = ['adult', 'gambling', 'dangerous', 'ads', 'social'];
+  const cats = catOrder.filter(c => byCategory.has(c));
+
+  const rows = cats.map(cat => {
+    const color = (typeof CATEGORY_COLORS !== 'undefined' && CATEGORY_COLORS[cat]) || '#999';
+    const list = byCategory.get(cat).map(src => {
+      const sub = subbedByUrl.get(src.url);
+      const isOn = !!sub;
+      return `
+        <li class="ac-adlist-row" data-source-id="${esc(src.id)}">
+          <label class="ac-adlist-toggle">
+            <input type="checkbox" data-ac-adlist-toggle data-source-id="${esc(src.id)}" data-sub-id="${esc(sub?.['.id'] || '')}" ${isOn ? 'checked' : ''}>
+            <span class="ac-adlist-label">${esc(src.label)}</span>
+          </label>
+          <span class="muted small">${src.approx_entries.toLocaleString()} entries · ${esc(src.description)}</span>
+        </li>
+      `;
+    }).join('');
+    return `
+      <div class="ac-adlist-cat">
+        <div class="ac-adlist-cat-header">
+          <span class="ac-cat-swatch" style="background:${color}"></span>
+          <span class="ac-cat-name">${esc(cat)}</span>
+        </div>
+        <ul class="ac-adlist-list">${list}</ul>
+      </div>
+    `;
+  }).join('');
+
+  // Any custom subscriptions (URL not matching a known source).
+  const customs = subs.filter(s => !s.source);
+  const customSection = customs.length ? `
+    <div class="ac-adlist-cat">
+      <div class="ac-adlist-cat-header"><span class="ac-cat-name">Custom</span></div>
+      <ul class="ac-adlist-list">
+        ${customs.map(s => `
+          <li class="ac-adlist-row ac-adlist-row--custom">
+            <span class="ac-adlist-label">${esc(s.comment || s.url)}</span>
+            <button type="button" class="btn-sm" data-ac-adlist-remove data-sub-id="${esc(s['.id'])}">Remove</button>
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+  ` : '';
+
+  body.innerHTML = rows + customSection;
+}
+
+document.addEventListener('change', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLInputElement) || !t.matches('[data-ac-adlist-toggle]')) return;
+  const sourceId = t.dataset.sourceId;
+  const subId = t.dataset.subId;
+  const status = document.getElementById('acAdlistStatus');
+  t.disabled = true;
+  if (status) status.textContent = t.checked ? 'Subscribing…' : 'Removing…';
+  try {
+    if (t.checked) {
+      const res = await fetch(`${API}/api/network/adlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } else if (subId) {
+      const res = await fetch(`${API}/api/network/adlist/${encodeURIComponent(subId)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    }
+    if (status) status.textContent = '';
+    await loadAccessControl();
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+    t.checked = !t.checked;
+  } finally {
+    t.disabled = false;
+  }
+});
+
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLElement)) return;
+  if (t.matches('[data-ac-adlist-remove]')) {
+    const subId = t.dataset.subId;
+    if (!subId) return;
+    if (!confirm('Remove this subscription?')) return;
+    try {
+      const res = await fetch(`${API}/api/network/adlist/${encodeURIComponent(subId)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadAccessControl();
+    } catch (err) {
+      alert(`Failed: ${err.message}`);
+    }
+  }
+});
+
+document.getElementById('acAdlistCustomAddBtn')?.addEventListener('click', async () => {
+  const urlEl = document.getElementById('acAdlistCustomUrl');
+  const labelEl = document.getElementById('acAdlistCustomLabel');
+  const status = document.getElementById('acAdlistStatus');
+  const btn = document.getElementById('acAdlistCustomAddBtn');
+  const url = (urlEl?.value || '').trim();
+  const label = (labelEl?.value || '').trim();
+  if (!url) { if (status) status.textContent = 'URL required.'; return; }
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Subscribing…';
+  try {
+    const res = await fetch(`${API}/api/network/adlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, comment: label || undefined }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    if (urlEl) urlEl.value = '';
+    if (labelEl) labelEl.value = '';
+    if (status) status.textContent = 'Added.';
+    await loadAccessControl();
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+document.getElementById('acAdlistRefreshBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('acAdlistRefreshBtn');
+  const status = document.getElementById('acAdlistStatus');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Asking router to refresh…';
+  try {
+    const res = await fetch(`${API}/api/network/adlist/refresh`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (status) status.textContent = 'Refresh requested.';
+    await loadAccessControl();
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+// Common 2-part public suffixes — without this list, foo.com.au would suggest
+// "Com" instead of "Foo". Not exhaustive; just the ones AU/UK/EU/Asia users
+// hit most. Mirrors a tiny slice of publicsuffix.org.
+const TWO_PART_TLDS = new Set([
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'id.au', 'asn.au',
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk',
+  'co.nz', 'net.nz', 'org.nz',
+  'com.br', 'com.mx', 'com.ar', 'com.co',
+  'com.sg', 'com.hk', 'com.tw', 'com.my', 'com.ph',
+  'co.jp', 'co.kr', 'co.in', 'co.za', 'co.il',
+]);
+
 function acSuggestAppName(host) {
-  const parts = String(host || '').toLowerCase().split('.');
+  const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
   if (parts.length < 2) return host;
   const trimmed = parts.filter((p, i) => !(i === 0 && p === 'www'));
   if (trimmed.length < 2) return host;
-  const root = trimmed[trimmed.length - 2];
+  const tail2 = trimmed.slice(-2).join('.');
+  const rootIdx = TWO_PART_TLDS.has(tail2) ? trimmed.length - 3 : trimmed.length - 2;
+  if (rootIdx < 0) return host;
+  const root = trimmed[rootIdx];
   return root.charAt(0).toUpperCase() + root.slice(1);
 }
 
@@ -3782,12 +4412,47 @@ async function applyKidsPreset(preset) {
 // ── schedule (block / unblock) ─────────────────────────────────────────
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// MikroTik-driven Schedule subtab (step 10). Schedules are stored on the
+// router as firewall rules with a `time` matcher; gombwe just orchestrates
+// the CRUD. Function names kept (renderEeroSchedule, refreshEeroSchedules,
+// etc.) to avoid churning existing call sites.
+let mtSchedules = [];
+
 async function refreshEeroSchedules() {
   try {
-    const r = await fetch(`${API}/api/eero/schedules`);
-    eeroState.schedules = await r.json();
-  } catch { eeroState.schedules = []; }
+    const r = await fetch(`${API}/api/network/schedules`);
+    mtSchedules = await r.json();
+  } catch { mtSchedules = []; }
   renderEeroSchedule();
+}
+
+const MT_DAY_ORDER = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function deviceLabel(mac) {
+  const d = (networkState?.devices || []).find(x => x.mac === mac);
+  return d ? (d.name || d.hostname || mac) : mac;
+}
+
+function describeSchedule(s) {
+  if (s.type === 'pause-until' && s.pause_until) {
+    const until = new Date(s.pause_until);
+    const mins = Math.max(0, Math.round((until - new Date()) / 60000));
+    const h = Math.floor(mins / 60), m = mins % 60;
+    const remaining = mins <= 0 ? 'lifting now' : h ? `${h}h ${m}m left` : `${m}m left`;
+    return `paused until ${until.toLocaleString()} (${remaining})`;
+  }
+  if (!s.days?.length) return `every day ${s.start_time}–${s.end_time}`;
+  const ordered = s.days.slice().sort((a, b) => MT_DAY_ORDER.indexOf(a) - MT_DAY_ORDER.indexOf(b));
+  const weekdayBlock = ['mon','tue','wed','thu','fri'];
+  const isWeekdays = ordered.length === 5 && ordered.every((d, i) => d === weekdayBlock[i]);
+  const isAllDays = ordered.length === 7;
+  const isWeekend = ordered.length === 2 && ordered[0] === 'sat' && ordered[1] === 'sun';
+  let dayPart;
+  if (isAllDays)        dayPart = 'every day';
+  else if (isWeekdays)  dayPart = 'Mon–Fri';
+  else if (isWeekend)   dayPart = 'Sat/Sun';
+  else                  dayPart = ordered.map(d => d[0].toUpperCase() + d.slice(1)).join(', ');
+  return `${dayPart} ${s.start_time}–${s.end_time}`;
 }
 
 function renderEeroSchedule() {
@@ -3795,25 +4460,23 @@ function renderEeroSchedule() {
   const list = document.getElementById('eeroScheduleList');
   const summary = document.getElementById('eeroSchedSummary');
   if (!grid || !list) return;
-  const schedules = eeroState.schedules || [];
+  const schedules = mtSchedules || [];
   const active = schedules.filter(s => s.enabled);
-  if (summary) summary.textContent = `${schedules.length} schedule${schedules.length !== 1 ? 's' : ''} (${active.length} active)`;
+  if (summary) summary.textContent = `${schedules.length} schedule${schedules.length !== 1 ? 's' : ''} (${active.length} enabled)`;
 
-  // Build a per-target map of schedules
-  const byTarget = new Map();
+  // Group by MAC for the weekly grid.
+  const byMac = new Map();
   for (const s of schedules) {
-    const key = `${s.target.type}:${s.target.url}`;
-    if (!byTarget.has(key)) byTarget.set(key, { target: s.target, schedules: [] });
-    byTarget.get(key).schedules.push(s);
+    if (!byMac.has(s.mac)) byMac.set(s.mac, { mac: s.mac, name: deviceLabel(s.mac), schedules: [] });
+    byMac.get(s.mac).schedules.push(s);
   }
-
-  if (byTarget.size === 0) {
+  if (byMac.size === 0) {
     grid.innerHTML = '<div class="muted small" style="padding:16px">No schedules yet. Click <strong>+ New schedule</strong> above.</div>';
   } else {
-    grid.innerHTML = Array.from(byTarget.values()).map(g => renderTargetCalendar(g)).join('');
+    grid.innerHTML = Array.from(byMac.values()).map(g => renderTargetCalendar(g)).join('');
   }
 
-  // Schedule list with edit/delete
+  // Flat schedule list with edit/delete/toggle.
   if (schedules.length === 0) {
     list.innerHTML = '<div class="muted small" style="padding:16px">No schedules.</div>';
   } else {
@@ -3821,7 +4484,7 @@ function renderEeroSchedule() {
       <div class="eero-sched-row">
         <div>
           <div class="eero-sched-name">${esc(s.name)} ${s.enabled ? '' : '<span class="eero-tag paused">disabled</span>'}</div>
-          <div class="muted small">${esc(s.target.displayName || s.target.url)} · ${describeSchedule(s)}</div>
+          <div class="muted small">${esc(deviceLabel(s.mac))} · ${esc(describeSchedule(s))}</div>
         </div>
         <div class="eero-sched-actions">
           <label class="eero-toggle small"><input type="checkbox" data-act="sched-toggle" data-id="${esc(s.id)}" ${s.enabled ? 'checked' : ''}><span></span></label>
@@ -3833,7 +4496,11 @@ function renderEeroSchedule() {
 
     list.querySelectorAll('[data-act="sched-toggle"]').forEach(el => {
       el.onchange = async () => {
-        await fetch(`${API}/api/eero/schedules/${encodeURIComponent(el.dataset.id)}`, eeroPut({ enabled: el.checked }));
+        await fetch(`${API}/api/network/schedules/${encodeURIComponent(el.dataset.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: el.checked }),
+        });
         refreshEeroSchedules();
       };
     });
@@ -3842,25 +4509,12 @@ function renderEeroSchedule() {
     });
     list.querySelectorAll('[data-act="sched-delete"]').forEach(el => {
       el.onclick = async () => {
-        if (!confirm('Delete this schedule?')) return;
-        await fetch(`${API}/api/eero/schedules/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
+        if (!confirm('Delete this schedule? The firewall rule will be removed immediately.')) return;
+        await fetch(`${API}/api/network/schedules/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
         refreshEeroSchedules();
       };
     });
   }
-}
-
-function describeSchedule(s) {
-  if (s.pauseUntil) {
-    const until = new Date(s.pauseUntil);
-    const mins = Math.max(0, Math.round((until - new Date()) / 60000));
-    return `paused until ${until.toLocaleString()} (${mins} min remaining)`;
-  }
-  if (!s.rules || s.rules.length === 0) return 'no rules';
-  return s.rules.map(r => {
-    const days = r.days.map(d => DOW[d]).join(', ');
-    return `${days} ${minutesToTime(r.startMinutes)}–${minutesToTime(r.endMinutes)}`;
-  }).join(' · ');
 }
 
 function minutesToTime(m) {
@@ -3873,62 +4527,59 @@ function timeToMinutes(t) {
   return h * 60 + m;
 }
 
-// Per-target weekly calendar — 7 days × 24 hours, blocks shaded.
-function renderTargetCalendar({ target, schedules }) {
+// Per-device weekly calendar — 7 days × 24 hours, blocks shaded.
+// Adapts to the MikroTik schedule shape: { mac, name, days[], start_time, end_time }.
+function renderTargetCalendar({ mac, name, schedules }) {
   const w = 700, dayW = (w - 60) / 7, h = 200, hourH = (h - 24) / 24;
   let blocks = '';
   let labels = '';
 
-  // Hour labels (left)
   for (let hr = 0; hr <= 24; hr += 6) {
     labels += `<text x="0" y="${24 + hr * hourH + 3}" class="eero-axis-label">${String(hr).padStart(2, '0')}:00</text>`;
   }
-  // Day labels (top)
   for (let d = 0; d < 7; d++) {
     labels += `<text x="${56 + d * dayW + dayW / 2}" y="14" text-anchor="middle" class="eero-axis-label">${DOW[d]}</text>`;
   }
-  // Vertical day separators
   for (let d = 0; d <= 7; d++) {
     blocks += `<line x1="${56 + d * dayW}" y1="20" x2="${56 + d * dayW}" y2="${h - 4}" class="eero-axis"/>`;
   }
-  // Horizontal hour gridlines (every 6h)
   for (let hr = 0; hr <= 24; hr += 6) {
     blocks += `<line x1="56" y1="${24 + hr * hourH}" x2="${w - 4}" y2="${24 + hr * hourH}" class="eero-axis"/>`;
   }
 
-  // Render each rule from each enabled schedule as a colored block on each applicable day.
+  // For each enabled schedule, draw a block on each active day.
+  // Wrap past midnight by drawing a second block on the next day.
+  const DAY_IDX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
   for (const s of schedules) {
     if (!s.enabled) continue;
-    if (s.pauseUntil) {
-      // Render the one-off pause as a block from now → pauseUntil, capped to the visible week.
-      const start = new Date();
-      const end = new Date(s.pauseUntil);
-      // Only draw if within the current week (Sun..Sat).
-      const startDow = start.getDay();
-      const startMin = start.getHours() * 60 + start.getMinutes();
-      const durationMin = Math.min(7 * 24 * 60, Math.round((end - start) / 60000));
-      blocks += renderBlockBars(startDow, startMin, durationMin, dayW, hourH, '#c45a5a', s.name);
+    if (s.type === 'pause-until' && s.pause_until) {
+      // Pause-until is "blocked from now until pause_until" — draw as a
+      // contiguous red bar across however many days that spans.
+      const startNow = new Date();
+      const end = new Date(s.pause_until);
+      const startDow = startNow.getDay();
+      const startMin = startNow.getHours() * 60 + startNow.getMinutes();
+      const durationMin = Math.max(0, Math.round((end - startNow) / 60000));
+      blocks += renderBlockBars(startDow, startMin, Math.min(durationMin, 7 * 24 * 60), dayW, hourH, '#c45a5a', s.name);
       continue;
     }
-    if (!s.rules) continue;
-    for (const r of s.rules) {
-      for (const d of r.days) {
-        const start = r.startMinutes;
-        let end = r.endMinutes;
-        // Same-day or crosses midnight
-        if (end > start) {
-          blocks += renderBlock(d, start, end, dayW, hourH, '#5e9bdc', s.name);
-        } else {
-          blocks += renderBlock(d, start, 1440, dayW, hourH, '#5e9bdc', s.name);
-          blocks += renderBlock((d + 1) % 7, 0, end, dayW, hourH, '#5e9bdc', s.name);
-        }
+    const startMin = timeToMinutes(s.start_time);
+    const endMin = timeToMinutes(s.end_time);
+    for (const day of (s.days || [])) {
+      const dow = DAY_IDX[day];
+      if (dow === undefined) continue;
+      if (endMin > startMin) {
+        blocks += renderBlock(dow, startMin, endMin, dayW, hourH, '#5e9bdc', s.name);
+      } else {
+        blocks += renderBlock(dow, startMin, 1440, dayW, hourH, '#5e9bdc', s.name);
+        blocks += renderBlock((dow + 1) % 7, 0, endMin, dayW, hourH, '#5e9bdc', s.name);
       }
     }
   }
 
   return `
     <div class="eero-sched-target">
-      <div class="eero-sched-target-name">${esc(target.displayName || target.url)} <span class="muted small">(${esc(target.type)})</span></div>
+      <div class="eero-sched-target-name">${esc(name || mac)} <span class="muted small">(${esc(mac)})</span></div>
       <svg viewBox="0 0 ${w} ${h}" class="eero-sched-svg">
         ${labels}
         ${blocks}
@@ -3961,6 +4612,11 @@ function renderBlockBars(startDow, startMin, durationMin, dayW, hourH, color, la
   return out;
 }
 
+// Reused for both create and edit. id=null = create. MikroTik-driven; one-off
+// (pause-until) is deferred — kept hidden so the existing HTML still works.
+const DAY_IDX_TO_NAME = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_NAME_TO_IDX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
 function openSchedModal(id) {
   eeroSchedEditingId = id;
   const modal = document.getElementById('eeroSchedModal');
@@ -3972,45 +4628,66 @@ function openSchedModal(id) {
   const oneOff = document.getElementById('eeroSchedOneOffFields');
   const startInput = document.getElementById('eeroSchedStart');
   const endInput = document.getElementById('eeroSchedEnd');
-  const untilInput = document.getElementById('eeroSchedUntil');
   const deleteBtn = document.getElementById('eeroSchedDeleteBtn');
 
-  // Build target list
-  const devices = eeroState.snapshot?.devices || [];
-  const profiles = eeroState.snapshot?.profiles || [];
-  targetSelect.innerHTML = '<optgroup label="Profiles">' +
-    profiles.map(p => `<option value="profile|${esc(p.url)}|${esc(p.name)}">${esc(p.name)}</option>`).join('') +
-    '</optgroup><optgroup label="Devices">' +
-    devices.map(d => `<option value="device|${esc(d.url)}|${esc(d.display_name || d.hostname || d.mac)}">${esc(d.display_name || d.hostname || d.mac)}</option>`).join('') +
-    '</optgroup>';
+  // Target list = devices on this LAN. We render every device by friendly
+  // name; the value is the MAC since that's what the API needs.
+  const devices = networkState?.devices || [];
+  targetSelect.innerHTML = devices.map(d => {
+    const label = d.name || d.hostname || d.mac;
+    const owner = d.owner ? ` · ${d.owner}` : '';
+    return `<option value="${esc(d.mac)}">${esc(label)}${esc(owner)} (${esc(d.mac)})</option>`;
+  }).join('');
 
-  // Reset to defaults
+  // Reset to weekday-bedtime defaults
   document.querySelectorAll('#eeroSchedDays input').forEach(c => { c.checked = ['1','2','3','4','5'].includes(c.value); });
   startInput.value = '21:00';
   endInput.value = '07:00';
   typeSelect.value = 'recurring';
+  typeSelect.disabled = false;
   recurring.classList.remove('hidden');
   oneOff.classList.add('hidden');
   deleteBtn.classList.add('hidden');
+  // Wire the type-switcher (in case it isn't yet) — toggles which fieldset shows.
+  if (!typeSelect.dataset.gombweWired) {
+    typeSelect.addEventListener('change', () => {
+      const oneOffMode = typeSelect.value === 'one-off';
+      recurring.classList.toggle('hidden', oneOffMode);
+      oneOff.classList.toggle('hidden', !oneOffMode);
+    });
+    typeSelect.dataset.gombweWired = '1';
+  }
+  // Default pause-until to 2 hours from now (most common use case: a quick grounding)
+  const untilInput2 = document.getElementById('eeroSchedUntil');
+  if (untilInput2) {
+    const t = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    untilInput2.value = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}T${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  }
 
   if (id) {
-    const s = (eeroState.schedules || []).find(x => x.id === id);
+    const s = (mtSchedules || []).find(x => x.id === id);
     if (s) {
       title.textContent = 'Edit schedule';
       nameInput.value = s.name;
-      targetSelect.value = `${s.target.type}|${s.target.url}|${s.target.displayName || ''}`;
-      if (s.pauseUntil) {
+      targetSelect.value = s.mac;
+      if (s.type === 'pause-until') {
         typeSelect.value = 'one-off';
         recurring.classList.add('hidden');
         oneOff.classList.remove('hidden');
-        const d = new Date(s.pauseUntil);
-        const pad = n => String(n).padStart(2, '0');
-        untilInput.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      } else if (s.rules?.[0]) {
-        const r = s.rules[0];
-        document.querySelectorAll('#eeroSchedDays input').forEach(c => { c.checked = r.days.includes(Number(c.value)); });
-        startInput.value = minutesToTime(r.startMinutes);
-        endInput.value = minutesToTime(r.endMinutes);
+        if (s.pause_until) {
+          const d = new Date(s.pause_until);
+          const pad = n => String(n).padStart(2, '0');
+          document.getElementById('eeroSchedUntil').value =
+            `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+      } else {
+        document.querySelectorAll('#eeroSchedDays input').forEach(c => {
+          const dayName = DAY_IDX_TO_NAME[Number(c.value)];
+          c.checked = (s.days || []).includes(dayName);
+        });
+        startInput.value = s.start_time || '21:00';
+        endInput.value = s.end_time || '07:00';
       }
       deleteBtn.classList.remove('hidden');
     }
@@ -4028,32 +4705,46 @@ function closeSchedModal() {
 
 async function saveSchedFromModal() {
   const name = document.getElementById('eeroSchedName').value.trim();
-  const targetVal = document.getElementById('eeroSchedTarget').value;
-  if (!name || !targetVal) { alert('Name and target are required'); return; }
-  const [type, url, displayName] = targetVal.split('|');
-  const target = { type, url, displayName };
+  const mac = document.getElementById('eeroSchedTarget').value;
+  if (!name || !mac) { alert('Name and device are required'); return; }
+  const schedKind = document.getElementById('eeroSchedType').value;
 
-  const schedType = document.getElementById('eeroSchedType').value;
   let body;
-  if (schedType === 'one-off') {
+  if (schedKind === 'one-off') {
     const until = document.getElementById('eeroSchedUntil').value;
-    if (!until) { alert('Pause-until time is required'); return; }
-    body = { name, target, pauseUntil: new Date(until).toISOString(), enabled: true };
+    if (!until) { alert('Pick a pause-until time'); return; }
+    // datetime-local has no timezone — interpret as local time, send ISO.
+    body = { type: 'pause-until', name, mac, pause_until: new Date(until).toISOString(), enabled: true };
   } else {
-    const days = Array.from(document.querySelectorAll('#eeroSchedDays input:checked')).map(c => Number(c.value));
+    const days = Array.from(document.querySelectorAll('#eeroSchedDays input:checked'))
+      .map(c => DAY_IDX_TO_NAME[Number(c.value)]);
     if (days.length === 0) { alert('Pick at least one day'); return; }
-    const startMinutes = timeToMinutes(document.getElementById('eeroSchedStart').value);
-    const endMinutes = timeToMinutes(document.getElementById('eeroSchedEnd').value);
-    body = { name, target, rules: [{ days, startMinutes, endMinutes }], enabled: true };
+    const start_time = document.getElementById('eeroSchedStart').value;
+    const end_time = document.getElementById('eeroSchedEnd').value;
+    if (!start_time || !end_time) { alert('Start and end times are required'); return; }
+    body = { type: 'recurring', name, mac, days, start_time, end_time, enabled: true };
   }
 
-  if (eeroSchedEditingId) {
-    await fetch(`${API}/api/eero/schedules/${encodeURIComponent(eeroSchedEditingId)}`, eeroPut(body));
-  } else {
-    await fetch(`${API}/api/eero/schedules`, eeroPost(body));
+  try {
+    let res;
+    if (eeroSchedEditingId) {
+      res = await fetch(`${API}/api/network/schedules/${encodeURIComponent(eeroSchedEditingId)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    } else {
+      res = await fetch(`${API}/api/network/schedules`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    closeSchedModal();
+    refreshEeroSchedules();
+  } catch (err) {
+    alert(`Failed: ${err.message}`);
   }
-  closeSchedModal();
-  refreshEeroSchedules();
 }
 
 async function pauseTargetFor(target, minutes) {
@@ -4389,6 +5080,13 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
       ]).then(renderEeroProfiles);
     }
     if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadAccessControl(); }
+    if (eeroActiveSubtab === 'speed') startSpeedPolling(); else stopSpeedPolling();
+    if (eeroActiveSubtab === 'overview') renderEeroOverview();
+    if (eeroActiveSubtab === 'advanced') renderEeroAdvanced();
+    if (eeroActiveSubtab === 'schedule') {
+      // Make sure we have a fresh device list for the modal target dropdown.
+      Promise.all([loadNetworkDevices?.(), refreshEeroSchedules()]).then(renderEeroSchedule);
+    }
   });
 });
 
@@ -4482,82 +5180,58 @@ document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async 
 document.getElementById('eeroUsageRange')?.addEventListener('change', renderEeroUsageChart);
 document.getElementById('eeroUsageTarget')?.addEventListener('change', renderEeroUsageChart);
 
-document.getElementById('eeroRunSpeedBtn')?.addEventListener('click', async () => {
-  const status = document.getElementById('eeroSpeedStatus');
-  status.textContent = 'Running…';
-  try {
-    await fetch(`${API}/api/eero/speedtest`, eeroPost({}));
-    status.textContent = 'Triggered. The eero will report results when the test finishes.';
-    setTimeout(() => eeroSync(), 30000);
-  } catch (err) { status.textContent = err.message; }
+// ── Raw MikroTik REST console (step 9) ────────────────────────
+document.getElementById('rawMtSendBtn')?.addEventListener('click', sendRawMt);
+document.getElementById('rawMtPath')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendRawMt();
 });
 
-document.getElementById('eeroSaveSamplerBtn')?.addEventListener('click', async () => {
-  const enabled = document.getElementById('eeroSamplerEnabled').checked;
-  const intervalMs = Number(document.getElementById('eeroSamplerInterval').value);
-  const alertOnNewDevice = document.getElementById('eeroAlertNewDevice').checked;
-  await fetch(`${API}/api/eero/config`, eeroPut({ samplerEnabled: enabled, samplerIntervalMs: intervalMs, alertOnNewDevice }));
-  loadEero();
-});
-
-document.getElementById('eeroRebootNetworkBtn')?.addEventListener('click', () => eeroAction('Reboot the entire network?', () =>
-  fetch(`${API}/api/eero/network/reboot`, eeroPost({}))));
-
-document.getElementById('eeroLogoutBtn')?.addEventListener('click', () => eeroAction('Sign out of eero?', () =>
-  fetch(`${API}/api/eero/logout`, eeroPost({}))));
-
-document.getElementById('eeroSaveGuestBtn')?.addEventListener('click', async () => {
-  await fetch(`${API}/api/eero/network/guest`, eeroPut({
-    enabled: document.getElementById('eeroGuestEnabled').checked,
-    name: document.getElementById('eeroGuestName').value.trim() || undefined,
-    password: document.getElementById('eeroGuestPass').value.trim() || undefined,
-  }));
-  eeroSync();
-});
-
-document.getElementById('eeroAddForwardBtn')?.addEventListener('click', async () => {
-  const description = prompt('Description (e.g. "Home server SSH"):'); if (!description) return;
-  const protocol = prompt('Protocol (tcp/udp/both):', 'tcp'); if (!protocol) return;
-  const public_port = Number(prompt('Public port:', '22')); if (!public_port) return;
-  const ip = prompt('Internal IP (e.g. 192.168.4.42):'); if (!ip) return;
-  const private_port = Number(prompt('Internal port:', String(public_port))); if (!private_port) return;
-  await fetch(`${API}/api/eero/forwards`, eeroPost({ body: { description, protocol, public_port, ip, private_port, enabled: true } }));
-  eeroSync();
-});
-
-document.getElementById('eeroAddReservationBtn')?.addEventListener('click', async () => {
-  const mac = prompt('Device MAC address:'); if (!mac) return;
-  const ip = prompt('IP to reserve (e.g. 192.168.4.42):'); if (!ip) return;
-  const description = prompt('Description (optional):', '');
-  await fetch(`${API}/api/eero/reservations`, eeroPost({ body: { mac, ip, description } }));
-  eeroSync();
-});
-
-// Raw API console
-document.getElementById('eeroRawSendBtn')?.addEventListener('click', async () => {
-  const method = document.getElementById('eeroRawMethod').value;
-  let path = document.getElementById('eeroRawPath').value.trim();
-  const bodyText = document.getElementById('eeroRawBody').value.trim();
-  if (!path) return;
-  // $NETWORK is a convenience — substitute the active network URL.
-  const networkUrl = eeroState.snapshot?.networkUrl;
-  if (networkUrl) path = path.replace('$NETWORK', networkUrl);
+async function sendRawMt() {
+  const method = document.getElementById('rawMtMethod').value;
+  const path = document.getElementById('rawMtPath').value.trim();
+  const bodyText = document.getElementById('rawMtBody').value.trim();
+  const out = document.getElementById('rawMtOutput');
+  const meta = document.getElementById('rawMtMeta');
+  if (!path) { out.textContent = '// path is required'; return; }
   let body;
   if (bodyText) {
-    try { body = JSON.parse(bodyText); } catch { alert('Body is not valid JSON'); return; }
+    try { body = JSON.parse(bodyText); }
+    catch { out.textContent = '// Body is not valid JSON'; return; }
   }
-  const out = document.getElementById('eeroRawOutput');
   out.textContent = '...';
+  if (meta) meta.textContent = '';
+  const started = Date.now();
   try {
-    const r = await fetch(`${API}/api/eero/raw`, eeroPost({ method, path, body }));
-    const data = await r.json();
-    out.textContent = JSON.stringify(data, null, 2);
-  } catch (err) { out.textContent = String(err.message); }
-});
+    const res = await fetch(`${API}/api/network/mt-raw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, path, body }),
+    });
+    const data = await res.json();
+    const elapsed = Date.now() - started;
+    if (!res.ok || data.ok === false) {
+      out.textContent = JSON.stringify(data, null, 2);
+      if (meta) meta.textContent = `error · ${elapsed}ms`;
+      return;
+    }
+    out.textContent = JSON.stringify(data.result, null, 2);
+    const itemCount = Array.isArray(data.result) ? `${data.result.length} items` : 'object';
+    if (meta) meta.textContent = `${method} ${path} · ${data.ms ?? elapsed}ms · ${itemCount}`;
+  } catch (err) {
+    out.textContent = String(err.message);
+    if (meta) meta.textContent = 'request failed';
+  }
+}
 
-document.querySelectorAll('[data-quick]').forEach(b => {
+document.querySelectorAll('[data-raw-mt-quick]').forEach(b => {
   b.addEventListener('click', () => {
-    document.getElementById('eeroRawPath').value = b.dataset.quick;
+    const v = b.dataset.rawMtQuick;
+    const [m, ...rest] = v.split(' ');
+    const p = rest.join(' ');
+    const ms = document.getElementById('rawMtMethod');
+    const ps = document.getElementById('rawMtPath');
+    if (ms) ms.value = m;
+    if (ps) { ps.value = p; ps.focus(); }
   });
 });
 
@@ -4579,29 +5253,43 @@ document.getElementById('eeroSchedType')?.addEventListener('change', (e) => {
 
 // Bedtime preset: applies 21:00–07:00 weekdays to the first profile, or asks
 // which profile if there are several.
+// Bedtime preset — pick a kid-flagged device (or prompt for one) and create
+// a daily 21:00-07:00 schedule for it. MikroTik-backed, no profiles needed.
 document.getElementById('eeroBedtimePresetBtn')?.addEventListener('click', async () => {
-  const profiles = eeroState.snapshot?.profiles || [];
-  if (profiles.length === 0) {
-    alert('No profiles yet. Create one in the Profiles tab first (e.g. "Kids"), then assign devices to it.');
+  const devices = networkState?.devices || [];
+  const kids = devices.filter(d => d.kid);
+  if (kids.length === 0) {
+    alert('No kid-flagged devices. Tick the kid checkbox on a device under Devices first.');
     return;
   }
   let target;
-  if (profiles.length === 1) {
-    target = { type: 'profile', url: profiles[0].url, displayName: profiles[0].name };
-  } else {
-    const choice = prompt(`Which profile?\n${profiles.map((p, i) => `${i + 1}) ${p.name}`).join('\n')}`);
+  if (kids.length === 1) target = kids[0];
+  else {
+    const choice = prompt(`Bedtime for which kid device?\n${kids.map((d, i) => `${i + 1}) ${d.name || d.hostname || d.mac}`).join('\n')}`);
     const idx = Number(choice) - 1;
-    if (isNaN(idx) || !profiles[idx]) return;
-    target = { type: 'profile', url: profiles[idx].url, displayName: profiles[idx].name };
+    if (isNaN(idx) || !kids[idx]) return;
+    target = kids[idx];
   }
-  await fetch(`${API}/api/eero/schedules`, eeroPost({
-    name: `${target.displayName} bedtime`,
-    target,
-    rules: [{ days: [0, 1, 2, 3, 4, 5, 6], startMinutes: 21 * 60, endMinutes: 7 * 60 }],
-    enabled: true,
-  }));
-  refreshEeroSchedules();
-  showEeroToast(`Bedtime schedule created for ${target.displayName}`);
+  try {
+    const res = await fetch(`${API}/api/network/schedules`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${target.name || target.mac} bedtime`,
+        mac: target.mac,
+        days: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+        start_time: '21:00',
+        end_time: '07:00',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    refreshEeroSchedules();
+    if (typeof showEeroToast === 'function') showEeroToast(`Bedtime schedule created for ${target.name || target.mac}`);
+  } catch (err) {
+    alert(`Failed: ${err.message}`);
+  }
 });
 
 // ========== INIT ==========

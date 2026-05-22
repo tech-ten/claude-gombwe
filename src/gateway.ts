@@ -1122,11 +1122,6 @@ export class Gateway {
     // Serve control panel UI
     this.app.use('/ui', express.static(join(__dirname, '..', 'ui')));
 
-    // Network dashboard (standalone page in the same ui/ dir — network.html/.js/.css)
-    this.app.get('/network', (_req: Request, res: Response) => {
-      res.sendFile(join(__dirname, '..', 'ui', 'network.html'));
-    });
-
     // Redirect root to UI
     this.app.get('/', (_req: Request, res: Response) => {
       res.redirect('/ui');
@@ -1151,6 +1146,241 @@ export class Gateway {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
       try { res.json(await getNetworkService().status()); }
       catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
+    });
+
+    // ── Advanced subtab data: NAT, DHCP leases, firewall ──────────
+    this.app.get('/api/network/nat', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await mikrotik.natRules()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // POST /api/network/nat/port-forward — adds a dstnat rule.
+    // Body: { srcPort, dstAddress, dstPort, protocol: 'tcp'|'udp', comment }
+    this.app.post('/api/network/nat/port-forward', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const { srcPort, dstAddress, dstPort, protocol, comment } = req.body || {};
+      const sp = parseInt(String(srcPort)), dp = parseInt(String(dstPort));
+      const proto = protocol === 'udp' ? 'udp' : 'tcp';
+      if (!sp || sp < 1 || sp > 65535 || !dp || dp < 1 || dp > 65535) {
+        res.status(400).json({ error: 'srcPort and dstPort must be 1-65535' }); return;
+      }
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(String(dstAddress))) {
+        res.status(400).json({ error: 'dstAddress must be IPv4 dotted-quad' }); return;
+      }
+      try {
+        const id = await mikrotik.addPortForward({ srcPort: sp, dstAddress: String(dstAddress), dstPort: dp, protocol: proto, comment: `gombwe-pf ${comment || ''}`.trim() });
+        res.json({ id });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    this.app.delete('/api/network/nat/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { await mikrotik.removeNatRule(String(req.params.id)); res.json({ ok: true }); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    this.app.get('/api/network/dhcp-leases', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await mikrotik.dhcpLeases()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // POST /api/network/dhcp-leases — body: { mac, address, comment }
+    this.app.post('/api/network/dhcp-leases', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const { mac, address, comment } = req.body || {};
+      if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(String(mac))) {
+        res.status(400).json({ error: 'mac must be AA:BB:CC:DD:EE:FF' }); return;
+      }
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(String(address))) {
+        res.status(400).json({ error: 'address must be IPv4 dotted-quad' }); return;
+      }
+      try {
+        const id = await mikrotik.addStaticLease({ mac: String(mac), address: String(address), comment: `gombwe-static ${comment || ''}`.trim() });
+        res.json({ id });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    this.app.delete('/api/network/dhcp-leases/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { await mikrotik.removeLease(String(req.params.id)); res.json({ ok: true }); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // POST /api/network/dhcp-leases/:id/make-static — promote dynamic→static.
+    this.app.post('/api/network/dhcp-leases/:id/make-static', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { await mikrotik.makeLeaseStatic(String(req.params.id)); res.json({ ok: true }); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // ── Schedules (per-MAC recurring block/unblock, MikroTik-native) ──
+    this.app.get('/api/network/schedules', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { list } = await import('./schedule-service.js');
+        res.json(list());
+      } catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // POST body: type-discriminated
+    //   recurring:    { type:'recurring', name, mac, days:[...], start_time:'HH:MM', end_time:'HH:MM' }
+    //   pause-until:  { type:'pause-until', name, mac, pause_until:'ISO datetime' }
+    this.app.post('/api/network/schedules', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const b = req.body || {};
+      const type = b.type || 'recurring';
+      if (!b.name || !b.mac) { res.status(400).json({ error: 'name and mac required' }); return; }
+      if (type === 'recurring' && (!Array.isArray(b.days) || !b.start_time || !b.end_time)) {
+        res.status(400).json({ error: 'recurring schedules require days[], start_time, end_time' }); return;
+      }
+      if (type === 'pause-until' && !b.pause_until) {
+        res.status(400).json({ error: 'pause-until schedules require pause_until' }); return;
+      }
+      try {
+        const { create } = await import('./schedule-service.js');
+        const def = await create(b);
+        res.json(def);
+      } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    this.app.put('/api/network/schedules/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { update } = await import('./schedule-service.js');
+        const def = await update(String(req.params.id), req.body || {});
+        if (!def) { res.status(404).json({ error: 'not found' }); return; }
+        res.json(def);
+      } catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    this.app.delete('/api/network/schedules/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { remove } = await import('./schedule-service.js');
+        const ok = await remove(String(req.params.id));
+        res.json({ ok });
+      } catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Webhook hit by router-side scheduler entries on each window open/close.
+    // GET (not POST) because RouterOS /tool/fetch sends GET cleanly without
+    // any JSON-quoting gymnastics in the on-event script string.
+    //   GET /api/network/schedule-fired?id=<sid>&event=start|end
+    // Filters by the schedule's weekday list — RouterOS scheduler can't
+    // natively day-of-week filter, so we ignore fires on non-active days.
+    this.app.get('/api/network/schedule-fired', async (req: Request, res: Response) => {
+      const id = String(req.query.id || '').trim();
+      const event = String(req.query.event || '').trim();
+      if (!id || !['start', 'end'].includes(event)) {
+        res.status(400).json({ error: 'id and event=start|end required' }); return;
+      }
+      try {
+        const { getById, isActiveToday } = await import('./schedule-service.js');
+        const def = getById(id);
+        if (!def) { res.json({ ok: true, ignored: 'schedule not found' }); return; }
+        if (!isActiveToday(def)) { res.json({ ok: true, ignored: 'not an active day' }); return; }
+        getNetworkService().writeAudit({
+          time: new Date().toISOString(),
+          action: event === 'start' ? 'schedule-block-started' : 'schedule-block-ended',
+          mac: def.mac,
+          schedule_id: id,
+          schedule_name: def.name,
+          severity: 'info',
+        });
+        res.json({ ok: true, logged: true });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Diagnostic — show the router-side state for a schedule.
+    this.app.get('/api/network/schedules/:id/inspect', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { inspect } = await import('./schedule-service.js');
+        res.json(await inspect(String(req.params.id)));
+      } catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Raw MikroTik REST proxy — backs the Raw API subtab. Body for
+    // POST/PUT/PATCH is forwarded as-is; method must be one of the
+    // standard verbs. Path must start with "/" so it gets prepended
+    // to the configured REST base. No write-method gates here — the
+    // user explicitly invoking this knows what they're doing.
+    this.app.post('/api/network/mt-raw', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const { method, path, body } = req.body || {};
+      const M = String(method || 'GET').toUpperCase();
+      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(M)) {
+        res.status(400).json({ error: 'method must be GET/POST/PUT/PATCH/DELETE' }); return;
+      }
+      if (!path || typeof path !== 'string' || !path.startsWith('/')) {
+        res.status(400).json({ error: 'path must start with /' }); return;
+      }
+      const started = Date.now();
+      try {
+        const result = await mikrotik.raw(M, path, body);
+        res.json({ ok: true, ms: Date.now() - started, result });
+      } catch (err) {
+        res.status(500).json({ ok: false, ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Firewall rules viewer.
+    this.app.get('/api/network/firewall', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await mikrotik.filterRules()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Toggle / remove a firewall rule. SERVER-SIDE GATE: only rules whose
+    // comment starts with "gombwe" can be touched via this API. The router
+    // itself doesn't enforce this — we do. Anything else (defaults, manual
+    // entries) requires WinBox/SSH to avoid accidental lockout.
+    this.app.post('/api/network/firewall/:id/toggle', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const rule = await mikrotik.getFilterRule(String(req.params.id));
+        if (!rule) { res.status(404).json({ error: 'rule not found' }); return; }
+        if (!(rule.comment || '').startsWith('gombwe')) {
+          res.status(403).json({ error: 'only gombwe-managed rules can be toggled via API' }); return;
+        }
+        const disabled = !!req.body?.disabled;
+        await mikrotik.setRuleDisabled(String(req.params.id), disabled);
+        res.json({ ok: true, disabled });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    this.app.delete('/api/network/firewall/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const rule = await mikrotik.getFilterRule(String(req.params.id));
+        if (!rule) { res.json({ ok: true }); return; }   // idempotent
+        if (!(rule.comment || '').startsWith('gombwe')) {
+          res.status(403).json({ error: 'only gombwe-managed rules can be removed via API' }); return;
+        }
+        await mikrotik.removeRule(String(req.params.id));
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Live interface stats — feeds the Speed subtab. Polled every few seconds
+    // by the UI. interfaceStatsLive synthesises bits-per-second from byte
+    // counter deltas; first call shows 0, subsequent calls show real rates.
+    this.app.get('/api/network/interfaces', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await mikrotik.interfaceStatsLive()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
     this.app.get('/api/network/devices', async (_req: Request, res: Response) => {
@@ -1243,6 +1473,23 @@ export class Gateway {
       this.broadcast({ type: 'network:device:update', data: { mac, kid: enabled }, timestamp: new Date().toISOString() });
     });
 
+    // ── Per-device category policy ────────────────────────────────
+    // GET → { blockedCategories, updatedAt }
+    this.app.get('/api/network/devices/:mac/policy', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      res.json(getNetworkService().getDevicePolicy(String(req.params.mac)));
+    });
+
+    // PUT body: { categories: ["adult","gambling",...] }
+    this.app.put('/api/network/devices/:mac/policy', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.params.mac).toUpperCase();
+      const categories = Array.isArray(req.body?.categories) ? req.body.categories : [];
+      getNetworkService().setDevicePolicy(mac, categories, 'manual');
+      res.json({ ok: true, mac, ...getNetworkService().getDevicePolicy(mac) });
+      this.broadcast({ type: 'network:device:update', data: { mac, policy: getNetworkService().getDevicePolicy(mac) }, timestamp: new Date().toISOString() });
+    });
+
     // ── Policy scanner ────────────────────────────────────────────
     // GET recent policy actions (audit journal)
     this.app.get('/api/network/policy/actions', (_req: Request, res: Response) => {
@@ -1259,11 +1506,148 @@ export class Gateway {
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
+    // Debug: synthesize a DNS query event so the category-enforcer can be
+    // verified end-to-end without waiting on real device traffic. Bypasses
+    // the IP→MAC lookup (you pass the MAC directly). The server still goes
+    // through the real enforce path: categoryFor → enforceCategoryBlock →
+    // firewall rule + conntrack kill + audit log.
+    //
+    // POST body: { mac, hostname }
+    this.app.post('/api/network/category-enforcer/test', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.body?.mac || '').toUpperCase();
+      const hostname = String(req.body?.hostname || '').trim();
+      if (!mac || !hostname) { res.status(400).json({ error: 'mac and hostname required' }); return; }
+      try {
+        const { categoryFor } = await import('./blocklist-cache.js');
+        const category = categoryFor(hostname);
+        if (!category) { res.json({ ok: false, reason: 'hostname has no category', hostname }); return; }
+        const policy = getNetworkService().getDevicePolicy(mac);
+        if (!policy.blockedCategories.includes(category)) {
+          res.json({ ok: false, reason: `category ${category} not in device policy`, policy: policy.blockedCategories });
+          return;
+        }
+        const result = await getNetworkService().enforceCategoryBlock(mac, hostname, category);
+        res.json({ ok: true, mac, hostname, category, ...result });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
     // POST → trigger a manual scan now (useful for testing, also UI button)
     this.app.post('/api/network/policy/scan', async (_req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
       try { res.json(await policyScanner().tick()); }
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // ── Network-wide blocklists (MikroTik /ip/dns/adlist) ─────────
+    // Curated community sources defined in blocklist-sources.ts. The UI
+    // shows them grouped by category; subscribing pushes the URL to the
+    // router which then NXDOMAINs any matched hostname.
+    this.app.get('/api/network/adlist', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { BLOCKLIST_SOURCES } = await import('./blocklist-sources.js');
+        const subscriptions = await mikrotik.listAdlists();
+        // Annotate each subscription with the matching source (if any) so the UI
+        // can show "Hagezi Gambling" rather than a raw URL.
+        const annotated = subscriptions.map(s => ({
+          ...s,
+          source: BLOCKLIST_SOURCES.find(src => src.url === s.url) || null,
+        }));
+        res.json({ subscriptions: annotated, sources: BLOCKLIST_SOURCES });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // POST body: { sourceId } to subscribe to a curated source, or
+    //             { url, comment } for a custom URL.
+    this.app.post('/api/network/adlist', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const { BLOCKLIST_SOURCES, findSource } = await import('./blocklist-sources.js');
+        const { sourceId, url, comment } = req.body || {};
+        let targetUrl: string;
+        let targetComment: string;
+        if (sourceId) {
+          const src = findSource(String(sourceId));
+          if (!src) { res.status(400).json({ error: `unknown sourceId: ${sourceId}` }); return; }
+          targetUrl = src.url;
+          targetComment = `gombwe ${src.category}:${src.id}`;
+        } else if (url) {
+          targetUrl = String(url);
+          targetComment = comment ? `gombwe custom:${comment}` : 'gombwe custom';
+        } else {
+          res.status(400).json({ error: 'sourceId or url required' });
+          return;
+        }
+        // Refuse duplicates — MikroTik would happily create two identical
+        // subscriptions, doubling fetch traffic without changing behaviour.
+        const existing = await mikrotik.listAdlists();
+        const dupe = existing.find(s => s.url === targetUrl);
+        if (dupe) { res.status(409).json({ error: 'already subscribed', id: dupe['.id'] }); return; }
+        const id = await mikrotik.addAdlist(targetUrl, targetComment);
+        res.json({ id, url: targetUrl, sources: BLOCKLIST_SOURCES });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    this.app.delete('/api/network/adlist/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        await mikrotik.removeAdlist(String(req.params.id));
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // ── Local blocklist cache (powers per-device classification) ──
+    // Status: when each source was last fetched, entry count per category.
+    this.app.get('/api/network/blocklist-cache/status', async (_req: Request, res: Response) => {
+      try {
+        const { status } = await import('./blocklist-cache.js');
+        res.json(status());
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // POST → force a refresh now. Returns counts.
+    this.app.post('/api/network/blocklist-cache/refresh', async (_req: Request, res: Response) => {
+      try {
+        const { refresh } = await import('./blocklist-cache.js');
+        res.json(await refresh());
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Diagnostic — what category does the cache classify this hostname as?
+    // GET /api/network/blocklist-cache/lookup?host=example.com
+    this.app.get('/api/network/blocklist-cache/lookup', async (req: Request, res: Response) => {
+      const host = String(req.query.host || '').trim();
+      if (!host) { res.status(400).json({ error: 'host query param required' }); return; }
+      try {
+        const { categoryFor } = await import('./blocklist-cache.js');
+        res.json({ hostname: host, category: categoryFor(host) });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // POST /api/network/adlist/refresh — force MikroTik to re-fetch all subscriptions now.
+    this.app.post('/api/network/adlist/refresh', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        await mikrotik.refreshAdlists();
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      }
     });
 
     // ── History (long-term browsing rollups) ──────────────────────
@@ -2494,6 +2878,26 @@ The ingredients should be grocery item names with quantities scaled for ${family
         dnsReceiver().start();
       } catch (err) {
         console.warn(`[gombwe] dns-receiver failed to start:`, err);
+      }
+
+      // Bootstrap the local blocklist cache — fast load from disk if present,
+      // background refresh if stale. Powers per-device category classification
+      // (5b.2) and gives us a free domain→category index for the Usage chart.
+      try {
+        const { bootstrap: bootstrapBlocklistCache } = await import('./blocklist-cache.js');
+        bootstrapBlocklistCache();
+      } catch (err) {
+        console.warn(`[gombwe] blocklist cache bootstrap failed:`, err);
+      }
+
+      // Start the per-device category enforcer. Subscribes to the DNS log
+      // stream and, on any matched (mac × blocked-category) query, adds
+      // dst-IP drop rules + kills conntrack. Audit-logs every attempt.
+      try {
+        const { startCategoryEnforcer } = await import('./category-enforcer.js');
+        startCategoryEnforcer();
+      } catch (err) {
+        console.warn(`[gombwe] category enforcer failed to start:`, err);
       }
 
       // Start the passive mDNS listener (UDP/5353). Devices on the LAN broadcast

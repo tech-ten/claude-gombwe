@@ -299,6 +299,7 @@ DEFAULT_ENTRIES.sort((a, b) => b.suffix.length - a.suffix.length);
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { categoryFor } from './blocklist-cache.js';
 
 const CATEGORIES_PATH = join(homedir(), '.claude-gombwe', 'network-categories.json');
 
@@ -349,12 +350,16 @@ function writeUserEntries(entries: AppEntry[]): void {
 interface LookupResult {
   app: string | null;
   category: AppCategory;
-  source?: 'user' | 'default';
+  source?: 'user' | 'default' | 'blocklist';
 }
 
 const UNKNOWN: LookupResult = Object.freeze({ app: null, category: 'unknown' });
 
-/** Look up an app / category for a hostname. User overrides win, then defaults. */
+/** Look up an app / category for a hostname. User overrides win, then defaults,
+ *  then a fallback to the community blocklist cache (5b.2.4). The fallback
+ *  shrinks the "unknown" bucket from "almost everything" to "only domains
+ *  that aren't in any community list" — typically internal services,
+ *  IoT phone-home, brand-new CDNs. */
 export function categorize(hostname: string | undefined | null): LookupResult {
   if (!hostname) return UNKNOWN;
   const h = hostname.toLowerCase().replace(/\.$/, '');
@@ -370,8 +375,22 @@ export function categorize(hostname: string | undefined | null): LookupResult {
       return { app: e.app, category: e.category, source: 'default' };
     }
   }
+  // Fallback: ask the local blocklist cache (2M+ entries from Hagezi/OISD/etc).
+  // Returns null until the cache has loaded — first cold start sees UNKNOWN.
+  // The cache only emits the 5 categories we ship in blocklist-sources, which
+  // are all members of AppCategory — narrowing is safe.
+  const cat = categoryFor(h);
+  if (cat && KNOWN_CATEGORIES.has(cat)) {
+    return { app: null, category: cat as AppCategory, source: 'blocklist' };
+  }
   return UNKNOWN;
 }
+
+const KNOWN_CATEGORIES: Set<string> = new Set([
+  'social', 'video', 'messaging', 'gaming', 'music',
+  'productivity', 'system', 'news', 'shopping',
+  'adult', 'gambling', 'dangerous', 'ads',
+]);
 
 /** All entries, defaults + user overrides, annotated with source. */
 export function getAllEntries(): Array<AppEntry & { source: 'user' | 'default' }> {

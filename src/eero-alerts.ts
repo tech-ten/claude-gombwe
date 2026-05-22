@@ -36,8 +36,6 @@ interface DetectInput {
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 
-// Threshold: more than this many on/off transitions in 24h is flapping.
-const FLAPPING_THRESHOLD = 10;
 // More than this many new-device events in 24h means alertOnNewDevice is too noisy.
 const NOISY_NEW_DEVICE_24H = 20;
 // Sampler considered stale at 3× the configured interval.
@@ -57,43 +55,6 @@ export function detectAlerts(input: DetectInput): EeroAlert[] {
   out.push(...detectPersistentErrors(snapshot, history));
 
   return out;
-}
-
-function detectFlappingDevices(history: SampleEvent[], snapshot: EeroSnapshot | null, now: number): EeroAlert[] {
-  const cutoff = now - DAY;
-  const transitions = new Map<string, { online: number; offline: number; first: string; last: string; name?: string }>();
-  for (const e of history) {
-    if (e.type !== 'device-online' && e.type !== 'device-offline') continue;
-    if (new Date(e.time).getTime() < cutoff) continue;
-    const mac = e.data?.mac;
-    if (!mac) continue;
-    const entry = transitions.get(mac) || { online: 0, offline: 0, first: e.time, last: e.time, name: e.data?.name };
-    if (e.type === 'device-online') entry.online += 1; else entry.offline += 1;
-    if (e.time < entry.first) entry.first = e.time;
-    if (e.time > entry.last) entry.last = e.time;
-    if (e.data?.name) entry.name = e.data.name;
-    transitions.set(mac, entry);
-  }
-
-  const alerts: EeroAlert[] = [];
-  for (const [mac, t] of transitions) {
-    const total = t.online + t.offline;
-    if (total < FLAPPING_THRESHOLD) continue;
-    const device = (snapshot?.devices || []).find((d: any) => d.mac === mac);
-    const name = device?.display_name || device?.hostname || t.name || mac;
-    alerts.push({
-      id: `flapping:${mac}`,
-      type: 'flapping-device',
-      severity: total >= FLAPPING_THRESHOLD * 2 ? 'warning' : 'info',
-      title: `${name} is flapping`,
-      detail: `${total} online/offline transitions in the last 24 hours (${t.online} up, ${t.offline} down).`,
-      suggestion: 'Possible weak signal, failing radio, or aggressive client power-saving. Consider a DHCP reservation and checking which eero node it associates with.',
-      data: { mac, count: total, online: t.online, offline: t.offline },
-      firstSeen: t.first,
-      lastSeen: t.last,
-    });
-  }
-  return alerts;
 }
 
 function detectNoisyNewDevices(history: SampleEvent[], config: EeroConfig, now: number): EeroAlert[] {

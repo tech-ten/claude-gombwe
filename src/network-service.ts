@@ -10,7 +10,7 @@
  * No EventEmitter or WebSocket wiring here — that lives in the gateway. This
  * file is the data layer.
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
 import { createRequire } from 'node:module';
@@ -27,7 +27,14 @@ const ALIASES_PATH = join(homedir(), '.claude-gombwe', 'network-aliases.json');
 const OWNERS_PATH = join(homedir(), '.claude-gombwe', 'network-owners.json');
 const BLOCKS_PATH = join(homedir(), '.claude-gombwe', 'network-blocks.json');
 const KIDLIST_PATH = join(homedir(), '.claude-gombwe', 'network-kid-list.json');
+const DEVICE_POLICY_PATH = join(homedir(), '.claude-gombwe', 'network-device-policy.json');
 const POLICY_ACTIONS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-actions.jsonl');
+
+// Per-device blocked-category map. Default for adults: none.
+// Default applied automatically when a device is added to the kid list:
+//   adult + gambling + dangerous. Tweakable per device after that.
+const KID_DEFAULT_CATEGORIES = ['adult', 'gambling', 'dangerous'];
+type DevicePolicyMap = Record<string, { blockedCategories: string[]; updatedAt: string }>;
 
 export interface DeviceSummary {
   mac: string;
@@ -52,6 +59,7 @@ export interface DeviceSummary {
   blocked: boolean;
   block_expires: string | null;
   top_destinations_today: Array<{ host: string; bytes: number; connections: number }>;
+  blocked_categories: string[];     // per-device category enforcement (5b.2)
 }
 
 export interface NetworkStatus {
@@ -59,6 +67,8 @@ export interface NetworkStatus {
   online_count: number;
   known_count: number;
   current_bandwidth: { down_mbps: number; up_mbps: number };
+  active_conntrack: number;
+  active_blocks: number;
   data_collector: { running: boolean; first_snapshot: string | null; snapshot_count: number };
 }
 
@@ -133,6 +143,7 @@ export class NetworkService {
   private owners: OwnerMap = readJsonOrEmpty(OWNERS_PATH, {});
   private blocks: BlockState = readJsonOrEmpty(BLOCKS_PATH, {});
   private kidList: KidList = readJsonOrEmpty(KIDLIST_PATH, { macs: [] });
+  private devicePolicy: DevicePolicyMap = readJsonOrEmpty(DEVICE_POLICY_PATH, {});
   // Per-kid auto-block rules added by the policy scanner: mac → hostname → ruleId(s)
   private kidAutoBlocks: Map<string, Map<string, string[]>> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
@@ -152,10 +163,11 @@ export class NetworkService {
 
   // ── Status ─────────────────────────────────────────────────────
   async status(): Promise<NetworkStatus> {
-    const [resource, leases, ifaces] = await Promise.all([
+    const [resource, leases, ifaces, conns] = await Promise.all([
       mikrotik.systemResource(),
       mikrotik.dhcpLeases(),
-      mikrotik.interfaceStats(),
+      mikrotik.interfaceStatsLive(),
+      mikrotik.connections().catch(() => [] as MtConnection[]),
     ]);
 
     const onlineMacs = new Set(leases.filter(l => l.status === 'bound').map(l => l['mac-address']?.toUpperCase()).filter(Boolean));
@@ -178,6 +190,9 @@ export class NetworkService {
       online_count: onlineMacs.size,
       known_count: knownMacs.size,
       current_bandwidth: { down_mbps: +downMbps.toFixed(2), up_mbps: +upMbps.toFixed(2) },
+      active_conntrack: conns.length,
+      // Manual device blocks currently in effect (excludes per-MAC category drops).
+      active_blocks: Object.keys(this.blocks).length,
       data_collector: {
         running: snapshots.length > 0 && (Date.now() - new Date(snapshots[snapshots.length - 1].ts).getTime() < 5 * 60_000),
         first_snapshot: snapshots[0]?.ts ?? null,
@@ -335,6 +350,7 @@ export class NetworkService {
         blocked: !!blockState,
         block_expires: blockState?.blocked_until ?? null,
         top_destinations_today: topDests,
+        blocked_categories: this.devicePolicy[mac]?.blockedCategories ?? [],
       };
     });
 
@@ -375,15 +391,125 @@ export class NetworkService {
     if (on) set.add(key); else set.delete(key);
     this.kidList.macs = [...set];
     writeJson(KIDLIST_PATH, this.kidList);
+    // First time a device joins the kid list, seed its category policy with the
+    // safe defaults. Subsequent kid-flag toggles don't touch policy — once you've
+    // edited it, it stays edited.
+    if (on && !this.devicePolicy[key]) {
+      this.setDevicePolicy(key, KID_DEFAULT_CATEGORIES, 'kid-default');
+    }
+  }
+
+  // ── Per-device category policy ────────────────────────────────
+  getDevicePolicy(mac: string): { blockedCategories: string[]; updatedAt: string | null } {
+    const key = mac.toUpperCase();
+    const p = this.devicePolicy[key];
+    if (!p) return { blockedCategories: [], updatedAt: null };
+    return { blockedCategories: [...p.blockedCategories], updatedAt: p.updatedAt };
+  }
+
+  setDevicePolicy(mac: string, categories: string[], reason: string = 'manual'): void {
+    const key = mac.toUpperCase();
+    const cleaned = Array.from(new Set(categories.map(c => String(c).toLowerCase()).filter(Boolean))).sort();
+    const previous = this.devicePolicy[key]?.blockedCategories || [];
+    this.devicePolicy[key] = { blockedCategories: cleaned, updatedAt: new Date().toISOString() };
+    writeJson(DEVICE_POLICY_PATH, this.devicePolicy);
+    // Audit-log the change so the Audit subtab + future "why was this blocked?"
+    // forensics have a paper trail.
+    this.writePolicyAction({
+      time: new Date().toISOString(),
+      action: 'policy-changed',
+      mac: key,
+      name: this.aliases[key] ?? key,
+      categories_now: cleaned,
+      categories_before: previous,
+      reason,
+      severity: 'info',
+    });
+  }
+
+  /** Convenience for the enforcement path — is this category blocked for this device? */
+  isCategoryBlockedFor(mac: string, category: string): boolean {
+    const key = mac.toUpperCase();
+    return this.devicePolicy[key]?.blockedCategories.includes(category.toLowerCase()) ?? false;
+  }
+
+  /**
+   * Per-device category enforcement primitive used by category-enforcer.
+   * Resolves the hostname, adds dst-IP drop rules tagged to this MAC,
+   * kills active conntrack flows, and audit-logs the attempt.
+   *
+   * Sibling to autoBlockHostnameForKid but NOT gated on kid-list membership —
+   * any device with the category in its policy gets enforced.
+   *
+   * If knownIp is provided (from the DNS answer in the log), we skip the
+   * stdlib resolve and use it directly — much faster.
+   */
+  async enforceCategoryBlock(
+    mac: string, hostname: string, category: string, knownIp?: string,
+  ): Promise<{ ips: string[]; rule_ids: string[]; killed: number }> {
+    const key = mac.toUpperCase();
+
+    let allIps: string[] = [];
+    if (knownIp) {
+      allIps = [knownIp];
+    } else {
+      const dns = await import('node:dns');
+      const ips: string[] = await new Promise(r => dns.resolve4(hostname, (err, a) => r(err ? [] : a)));
+      const ips6: string[] = await new Promise(r => dns.resolve6(hostname, (err, a) => r(err ? [] : a)));
+      allIps = [...ips, ...ips6];
+    }
+
+    const ruleIds: string[] = [];
+    for (const ip of allIps) {
+      try {
+        const id = await mikrotik.addDstBlockForMac(
+          key, ip,
+          `gombwe-cat ${category} mac=${this.aliases[key] ?? key} host=${hostname}`,
+        );
+        ruleIds.push(id);
+      } catch (err) {
+        console.warn(`[network] addDstBlockForMac (category) failed for ${key}→${ip}:`, err);
+      }
+    }
+
+    let killed = 0;
+    try {
+      const leases = await mikrotik.dhcpLeases();
+      const lease = leases.find(l => l['mac-address']?.toUpperCase() === key && l.status === 'bound');
+      if (lease?.address) {
+        // Targeted kills only — leave the kid's other apps alone.
+        for (const ip of allIps) killed += await mikrotik.killConnectionsBetween(lease.address, ip);
+      }
+    } catch { /* best-effort */ }
+
+    this.writePolicyAction({
+      time: new Date().toISOString(),
+      action: 'blocked-by-category',
+      mac: key,
+      name: this.aliases[key] ?? key,
+      hostname,
+      category,
+      ips: allIps,
+      rule_ids: ruleIds,
+      killed_flows: killed,
+      severity: category === 'dangerous' ? 'high' : 'med',
+    });
+
+    return { ips: allIps, rule_ids: ruleIds, killed };
   }
 
   // ── Block / Unblock ────────────────────────────────────────────
   /** Append a structured record to the policy-actions audit log. Used by
    *  every block/unblock path (manual + scanner-driven) so the Audit subtab
    *  has a complete history. */
+  /** Public wrapper so external modules (schedule webhook etc.) can append
+   *  to the same audit feed the policy-scanner and category-enforcer use. */
+  writeAudit(rec: Record<string, unknown>): void {
+    this.writePolicyAction(rec);
+  }
+
   private writePolicyAction(rec: Record<string, unknown>): void {
     try {
-      const { appendFileSync } = require('node:fs');
       appendFileSync(POLICY_ACTIONS_PATH, JSON.stringify(rec) + '\n', { mode: 0o600 });
     } catch (err) {
       console.warn('[network] writePolicyAction failed:', err);

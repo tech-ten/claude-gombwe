@@ -263,32 +263,31 @@
           <!-- Alerts banner — visible across all panes when any are active -->
           <div class="eero-alerts hidden" id="eeroAlerts"></div>
 
-          <!-- Overview -->
+          <!-- Overview (MikroTik vitals, replaces eero-snapshot rollups) -->
           <div class="eero-pane active" data-eero-pane="overview">
-            <div class="eero-stat-grid" id="eeroStatGrid"></div>
-            <div class="card eero-card">
-              <div class="eero-card-header"><span>Devices online over time</span></div>
-              <div class="eero-chart" id="eeroOnlineChart"></div>
-            </div>
+            <div class="eero-stat-grid" id="overviewStats"></div>
             <div class="eero-two-col">
               <div class="card eero-card">
                 <div class="eero-card-header">
-                  <span>Most active devices (last 7d)</span>
-                  <span class="muted" id="eeroActivityNote"></span>
+                  <span>Today's enforcement</span>
+                  <span class="muted small" id="overviewEnforcementMeta"></span>
                 </div>
-                <div id="eeroTopConsumers"></div>
+                <div id="overviewEnforcement"></div>
               </div>
               <div class="card eero-card">
-                <div class="eero-card-header"><span>eero hardware</span></div>
-                <div id="eeroNodes"></div>
+                <div class="eero-card-header">
+                  <span>Top devices today</span>
+                  <span class="muted small">by bytes</span>
+                </div>
+                <div id="overviewTopDevices"></div>
               </div>
             </div>
             <div class="card eero-card">
               <div class="eero-card-header">
-                <span>Recent events</span>
-                <span class="muted" id="eeroEventCount"></span>
+                <span>Per-device blocked categories</span>
+                <span class="muted small" id="overviewPolicyMeta"></span>
               </div>
-              <div id="eeroEvents"></div>
+              <div id="overviewPolicy"></div>
             </div>
           </div>
 
@@ -335,12 +334,36 @@
               </div>
             </div>
 
+            <!-- Network-wide blocklists (MikroTik adlist, RouterOS 7.7+) -->
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Network-wide blocklists</span>
+                <span class="muted small" id="acAdlistMeta"></span>
+              </div>
+              <p class="muted small" style="margin: 0 0 10px">Community-maintained domain lists fetched by the router and NXDOMAIN'd network-wide. Applies to every device on the LAN — for per-device control use Devices.</p>
+              <div id="acAdlistBody"><div class="muted small">Loading…</div></div>
+              <div class="eero-form-block" style="margin-top: 12px">
+                <div class="eero-form-label">Add a custom list URL</div>
+                <div class="form-row">
+                  <input type="url" id="acAdlistCustomUrl" placeholder="https://example.com/hosts.txt" style="flex: 1 1 280px; min-width: 0">
+                  <input type="text" id="acAdlistCustomLabel" placeholder="Label (optional)" style="flex: 0 0 160px">
+                  <button class="btn-secondary btn-sm" id="acAdlistCustomAddBtn">Add</button>
+                </div>
+                <p class="muted small" style="margin: 6px 0 0">Any hosts-file or AdBlock-syntax URL the router can fetch. Goes live as soon as you click Add.</p>
+              </div>
+              <div class="form-row" style="margin-top: 10px">
+                <button class="btn-secondary btn-sm" id="acAdlistRefreshBtn">Refresh from router</button>
+                <span class="muted small" id="acAdlistStatus"></span>
+              </div>
+            </div>
+
             <!-- Category management (suffix → category mapping; visibility layer for the chart) -->
             <div class="card eero-card">
               <div class="eero-card-header">
                 <span>Category management</span>
                 <span class="muted small" id="acCategoriesMeta"></span>
               </div>
+              <p class="muted small" style="margin: 0 0 10px">For Usage-chart classification only — tagging a domain here does <strong>not</strong> block it. To actually block, use the Network-wide blocklists card above (or block whole devices via Devices).</p>
               <div class="eero-form-block">
                 <div class="eero-form-label">Uncategorized destinations seen in your DNS log <span class="muted small">(last 7 days)</span></div>
                 <ol class="ac-uncat-list" id="acUncatList"><li class="muted small">Loading…</li></ol>
@@ -350,7 +373,7 @@
                 <div id="acCategoryList"></div>
               </div>
               <p class="muted small" style="margin: 6px 0 0">
-                Network-wide adlist + per-device category enforcement (block all gambling for Josh's iPad) coming in the next commit. For now: tag domains here for visibility in the Usage chart; block whole devices via Devices subtab; tick the kid flag to let the AI scanner auto-block dangerous lookups.
+                Per-device category enforcement (block all gambling for Josh's iPad only) is on the next pass. For now: network-wide blocking lives in the card above; tag domains here for visibility in the Usage chart; block whole devices via Devices subtab.
               </p>
             </div>
 
@@ -498,102 +521,101 @@
             </div>
           </div>
 
-          <!-- Speed -->
+          <!-- Speed (MikroTik interface stats — replaces eero speedtest) -->
           <div class="eero-pane" data-eero-pane="speed">
-            <div class="eero-section-bar">
-              <button class="btn-primary btn-sm" id="eeroRunSpeedBtn">Run speedtest now</button>
-              <span class="muted" id="eeroSpeedStatus"></span>
-            </div>
-            <div class="card eero-card">
-              <div class="eero-card-header"><span>Speedtest history</span></div>
-              <div class="eero-chart" id="eeroSpeedChart"></div>
-            </div>
-            <div class="card eero-card eero-speed-table" id="eeroSpeedTable"></div>
-          </div>
-
-          <!-- Advanced (network controls) -->
-          <div class="eero-pane" data-eero-pane="advanced">
-            <div class="eero-two-col">
-              <div class="card eero-card">
-                <div class="eero-card-header"><span>Sampler</span></div>
-                <div class="eero-form-block">
-                  <label><input type="checkbox" id="eeroSamplerEnabled"> Auto-sample in background</label>
-                  <label>Interval
-                    <select id="eeroSamplerInterval">
-                      <option value="60000">1 min</option>
-                      <option value="300000" selected>5 min</option>
-                      <option value="900000">15 min</option>
-                      <option value="3600000">1 hour</option>
-                    </select>
-                  </label>
-                  <label><input type="checkbox" id="eeroAlertNewDevice"> Alert on new device</label>
-                  <button class="btn-primary btn-sm" id="eeroSaveSamplerBtn">Save</button>
-                </div>
-              </div>
-
-              <div class="card eero-card">
-                <div class="eero-card-header"><span>Network</span></div>
-                <div class="eero-form-block">
-                  <button class="btn-sm" id="eeroRebootNetworkBtn">Reboot network</button>
-                  <button class="btn-sm" id="eeroLogoutBtn">Sign out</button>
-                </div>
-              </div>
-            </div>
-
+            <div class="eero-stat-grid" id="speedStats"></div>
             <div class="card eero-card">
               <div class="eero-card-header">
-                <span>Guest network</span>
-                <label class="eero-toggle"><input type="checkbox" id="eeroGuestEnabled"><span></span></label>
+                <span>WAN throughput (live)</span>
+                <span class="muted small" id="speedChartMeta">Building history…</span>
               </div>
-              <div class="eero-form-block">
-                <input type="text" id="eeroGuestName" placeholder="Guest SSID">
-                <input type="text" id="eeroGuestPass" placeholder="Guest password">
-                <button class="btn-primary btn-sm" id="eeroSaveGuestBtn">Save guest network</button>
-              </div>
+              <div class="eero-chart" id="speedChart"></div>
             </div>
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Interfaces</span>
+                <span class="muted small" id="speedTableMeta"></span>
+              </div>
+              <div id="speedTable"></div>
+            </div>
+          </div>
 
+          <!-- Advanced (MikroTik NAT, DHCP, firewall — step 8) -->
+          <div class="eero-pane" data-eero-pane="advanced">
+            <!-- Port forwards -->
             <div class="card eero-card">
               <div class="eero-card-header">
                 <span>Port forwards</span>
-                <button class="btn-ghost btn-sm" id="eeroAddForwardBtn">Add</button>
+                <span class="muted small" id="advPortForwardsMeta"></span>
               </div>
-              <div id="eeroForwardList"></div>
+              <div id="advPortForwards"><div class="muted small">Loading…</div></div>
+              <div class="eero-form-block" style="margin-top: 10px">
+                <div class="eero-form-label">Add a forward — incoming WAN <code>src&nbsp;port</code> → internal <code>device:port</code></div>
+                <div class="form-row">
+                  <select id="advPfProtocol" style="width: 88px"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+                  <input type="number" id="advPfSrcPort" placeholder="WAN port (e.g. 8443)" min="1" max="65535" style="width: 160px">
+                  <input type="text"   id="advPfDstAddr" placeholder="Internal IP (e.g. 192.168.88.10)" style="width: 180px">
+                  <input type="number" id="advPfDstPort" placeholder="Internal port" min="1" max="65535" style="width: 130px">
+                  <input type="text"   id="advPfComment" placeholder="Label" style="flex:1 1 140px; min-width:0">
+                  <button class="btn-secondary btn-sm" id="advPfAddBtn">Add</button>
+                </div>
+                <span class="muted small" id="advPfStatus"></span>
+              </div>
             </div>
 
+            <!-- DHCP reservations -->
             <div class="card eero-card">
               <div class="eero-card-header">
                 <span>DHCP reservations</span>
-                <button class="btn-ghost btn-sm" id="eeroAddReservationBtn">Add</button>
+                <span class="muted small" id="advDhcpMeta"></span>
               </div>
-              <div id="eeroReservationList"></div>
+              <p class="muted small" style="margin: 0 0 10px">Pin a device to a fixed IP so port forwards and per-device rules stay stable across reboots.</p>
+              <div id="advDhcpLeases"><div class="muted small">Loading…</div></div>
+            </div>
+
+            <!-- Firewall rules viewer (read-only) -->
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Firewall rules</span>
+                <span class="muted small" id="advFwMeta"></span>
+              </div>
+              <p class="muted small" style="margin: 0 0 10px">Read-only viewer. Rules with <code>gombwe-*</code> in the comment are managed by this app — others are MikroTik defaults or manual entries.</p>
+              <div id="advFwRules"><div class="muted small">Loading…</div></div>
             </div>
           </div>
 
-          <!-- Raw API -->
+          <!-- Raw API (MikroTik REST console, step 9) -->
           <div class="eero-pane" data-eero-pane="raw">
             <div class="card eero-card">
               <div class="eero-card-header">
-                <span>Raw eero API</span>
-                <span class="muted">Hit any endpoint the eero app uses. Total power, no limits.</span>
+                <span>Raw MikroTik REST</span>
+                <span class="muted">Hit any /rest path on the router. Useful for debugging.</span>
               </div>
               <div class="eero-form-block">
                 <div class="form-row">
-                  <select id="eeroRawMethod">
-                    <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+                  <select id="rawMtMethod">
+                    <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
                   </select>
-                  <input type="text" id="eeroRawPath" placeholder="/2.2/networks/123/devices" style="flex:1">
+                  <input type="text" id="rawMtPath" placeholder="/interface  or  /ip/firewall/filter  or  /system/resource" style="flex:1">
+                  <button class="btn-primary btn-sm" id="rawMtSendBtn">Send</button>
                 </div>
-                <textarea id="eeroRawBody" rows="4" placeholder='Body (JSON, optional)'></textarea>
-                <div class="form-row">
-                  <button class="btn-primary btn-sm" id="eeroRawSendBtn">Send</button>
-                  <span class="eero-quick-list">
-                    <button class="btn-ghost btn-sm" data-quick="/2.2/account">/account</button>
-                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/devices">$NETWORK/devices</button>
-                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/profiles">$NETWORK/profiles</button>
-                    <button class="btn-ghost btn-sm" data-quick="$NETWORK/insights?period=week">$NETWORK/insights</button>
-                  </span>
+                <textarea id="rawMtBody" rows="4" placeholder='JSON body (used for POST/PUT/PATCH). Example: {"comment":"test"}'></textarea>
+                <div class="form-row" style="flex-wrap: wrap; gap: 4px">
+                  <span class="muted small" style="width:100%; margin: 4px 0 2px">Quick paths:</span>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /system/resource">/system/resource</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /interface">/interface</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/dhcp-server/lease">/dhcp-server/lease</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/firewall/filter">/firewall/filter</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/firewall/nat">/firewall/nat</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/firewall/connection">/firewall/connection</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/dns/adlist">/dns/adlist</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/dns/cache">/dns/cache</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/route">/ip/route</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /ip/arp">/ip/arp</button>
+                  <button class="btn-ghost btn-sm" data-raw-mt-quick="GET /log">/log</button>
                 </div>
-                <pre class="eero-raw-output" id="eeroRawOutput">// response shows here</pre>
+                <div class="muted small" style="margin-top: 8px" id="rawMtMeta"></div>
+                <pre class="eero-raw-output" id="rawMtOutput">// response shows here</pre>
               </div>
             </div>
           </div>
