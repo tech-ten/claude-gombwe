@@ -1933,8 +1933,10 @@ export class Gateway {
 
     // Status
     this.app.get('/api/status', (_req: Request, res: Response) => {
+      const mem = process.memoryUsage();
       res.json({
         name: this.config.identity.name,
+        pid: process.pid,
         uptime: process.uptime(),
         tasks: {
           running: this.agent.getRunningCount(),
@@ -1944,6 +1946,11 @@ export class Gateway {
         skills: this.skills.listSkills().length,
         cronJobs: this.scheduler.listJobs().length,
         wsClients: this.wsClients.size,
+        memory: {
+          rss: mem.rss,
+          heapUsed: mem.heapUsed,
+        },
+        node: process.version,
       });
     });
 

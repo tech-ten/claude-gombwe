@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { createInterface } from 'node:readline';
 import { loadConfig, saveConfig, getConfigDir } from './config.js';
 import { Gateway } from './gateway.js';
 import { createProxyServer } from './proxy.js';
 import { SERVICES, connectService, disconnectService, listConnectedServices } from './setup.js';
+import { runRepl } from './repl.js';
+import { getDaemonState, writeLock, clearLock, isAlive } from './daemon-lock.js';
 
 const program = new Command();
 
@@ -16,13 +17,39 @@ program
 
 program
   .command('start')
-  .description('Start gombwe — interactive terminal + dashboard + channels')
+  .description('Start gombwe — spawns daemon if not running, then opens REPL')
   .option('-p, --port <port>', 'Port to listen on')
   .option('--headless', 'Run without interactive prompt (daemon mode)')
   .action(async (opts) => {
     const config = loadConfig();
-    if (opts.port) config.port = parseInt(opts.port, 10);
+    const requestedPort = opts.port ? parseInt(opts.port, 10) : config.port;
+    config.port = requestedPort;
 
+    const state = await getDaemonState();
+
+    if (state.state === 'running') {
+      if (opts.port && state.lock.port !== requestedPort) {
+        console.error(`gombwe is already running on port ${state.lock.port}, not ${requestedPort}.`);
+        console.error(`Run 'gombwe stop' first, or 'gombwe attach' to open a REPL on the running port.`);
+        process.exit(1);
+      }
+      if (opts.headless) {
+        console.error(`gombwe is already running (PID ${state.lock.pid}, port ${state.lock.port}).`);
+        console.error(`Use 'gombwe stop' first, or 'gombwe attach' to open a REPL.`);
+        process.exit(1);
+      }
+      console.log(`Attaching to running gombwe (PID ${state.lock.pid}, port ${state.lock.port}).\n`);
+      await runRepl(state.lock.port);
+      return;
+    }
+
+    if (state.state === 'wedged') {
+      console.error(`gombwe process ${state.lock.pid} is alive but not responding on port ${state.lock.port}.`);
+      console.error(`Run 'gombwe stop --force' to clean it up, then try again.`);
+      process.exit(1);
+    }
+
+    // not-running or stale-lock — spawn fresh daemon
     console.log(`
   ┌─────────────────────────────────────────┐
   │                                         │
@@ -37,104 +64,84 @@ program
 
     const gateway = new Gateway(config);
     await gateway.start();
+    writeLock(config.port);
 
-    if (opts.headless) {
-      // Daemon mode — just keep running
-      process.on('SIGINT', async () => {
-        await gateway.stop();
-        process.exit(0);
-      });
-      process.on('SIGTERM', async () => {
-        await gateway.stop();
-        process.exit(0);
-      });
+    const shutdown = async () => {
+      await gateway.stop();
+      clearLock();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+    if (opts.headless) return;
+
+    // REPL exit no longer stops the gateway — daemon outlives the terminal.
+    await runRepl(config.port);
+  });
+
+program
+  .command('stop')
+  .description('Stop the running gombwe daemon')
+  .option('-f, --force', 'SIGKILL if SIGTERM does not work within 5s')
+  .action(async (opts) => {
+    const state = await getDaemonState();
+
+    if (state.state === 'not-running') {
+      console.log('gombwe is not running.');
+      return;
+    }
+    if (state.state === 'stale-lock') {
+      console.log('Stale lock cleaned up — no daemon was running.');
       return;
     }
 
-    // Interactive REPL — type and chat right here
-    const sessionKey = `cli:${Date.now()}`;
-    const WebSocket = (await import('ws')).default;
-    const ws = new WebSocket(`ws://127.0.0.1:${config.port}`);
+    const { pid } = state.lock;
 
-    // Listen for responses via WebSocket
-    ws.on('message', (raw: Buffer) => {
-      try {
-        const event = JSON.parse(raw.toString());
+    if (state.state === 'wedged' && !opts.force) {
+      console.error(`PID ${pid} is wedged. Re-run with --force to SIGKILL.`);
+      process.exit(1);
+    }
 
-        if (event.type === 'task:output') {
-          const text = event.data.text;
-          if (text.startsWith('[gombwe]')) {
-            console.log(`\n  \x1b[2m${text}\x1b[0m`);
-          } else if (!text.startsWith('[stderr]')) {
-            process.stdout.write(`\n${text}`);
-          }
-        }
+    try { process.kill(pid, 'SIGTERM'); }
+    catch {
+      clearLock();
+      console.log(`PID ${pid} was already gone. Lock cleaned up.`);
+      return;
+    }
 
-        if (event.type === 'task:completed') {
-          console.log('\n');
-          rl.prompt();
-        }
-
-        if (event.type === 'task:failed') {
-          console.log(`\n  \x1b[31mTask failed: ${event.data.error}\x1b[0m\n`);
-          rl.prompt();
-        }
-
-        if (event.type === 'session:message') {
-          const d = event.data;
-          if (d.sessionKey === sessionKey) {
-            // Our own chat response
-            console.log(`\n${d.message}\n`);
-            rl.prompt();
-          } else if (d.channel && d.channel !== 'web') {
-            // Message from another channel (Discord, Telegram, etc.)
-            const label = d.channel === 'discord' ? '\x1b[34m[discord]\x1b[0m'
-              : d.channel === 'telegram' ? '\x1b[36m[telegram]\x1b[0m'
-              : `\x1b[33m[${d.channel}]\x1b[0m`;
-            console.log(`\n  ${label} ${d.message.slice(0, 200)}${d.message.length > 200 ? '...' : ''}\n`);
-            rl.prompt();
-          }
-        }
-      } catch {}
-    });
-
-    // Wait for WebSocket to connect
-    await new Promise<void>((resolve) => {
-      ws.on('open', resolve);
-    });
-
-    console.log('  Type a message to chat. Type /help for commands.');
-    console.log('  Type /task <prompt> for autonomous tasks.');
-    console.log('  Press Ctrl+C to quit.\n');
-
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: '\x1b[35mgombwe>\x1b[0m ',
-    });
-
-    rl.prompt();
-
-    rl.on('line', (line: string) => {
-      const text = line.trim();
-      if (!text) { rl.prompt(); return; }
-
-      if (text === '/quit' || text === '/exit') {
-        ws.close();
-        gateway.stop().then(() => process.exit(0));
+    for (let i = 0; i < 25; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      if (!isAlive(pid)) {
+        clearLock();
+        console.log(`Stopped (PID ${pid}).`);
         return;
       }
+    }
 
-      // Send via WebSocket
-      ws.send(JSON.stringify({ type: 'chat', text, sessionKey }));
-    });
+    if (opts.force) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+      clearLock();
+      console.log(`Force-killed PID ${pid}.`);
+      return;
+    }
 
-    rl.on('close', async () => {
-      console.log('\n[gombwe] Shutting down...');
-      ws.close();
-      await gateway.stop();
-      process.exit(0);
-    });
+    console.error(`PID ${pid} did not exit within 5s. Re-run with --force.`);
+    process.exit(1);
+  });
+
+program
+  .command('attach')
+  .description('Open a REPL against the running gombwe daemon')
+  .action(async () => {
+    const state = await getDaemonState();
+    if (state.state !== 'running') {
+      console.error(`No running gombwe to attach to (state: ${state.state}).`);
+      console.error(`Run 'gombwe start' first.`);
+      process.exit(1);
+    }
+    console.log(`Attaching to gombwe (PID ${state.lock.pid}, port ${state.lock.port}).\n`);
+    await runRepl(state.lock.port);
   });
 
 program
