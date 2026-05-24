@@ -171,7 +171,7 @@ async function pollOnce(items) {
     // catches obvious data errors (negative price, scraping artefact, etc.)
     const confirmed = (p) =>
       typeof p.price === 'number' && p.price >= 0.10
-      && productMatches(item.name, p.name, p.cup);
+      && productMatches(item.name, p.name, p.cup, { requires: item.requires });
 
     const wValid = wAll.filter(confirmed).sort((a, b) => a.price - b.price);
     const cValid = cAll.filter(confirmed).sort((a, b) => a.price - b.price);
