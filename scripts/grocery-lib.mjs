@@ -180,6 +180,7 @@ export async function woolworthsSearch(page, query, limit = 10) {
           price:        typeof p.Price === 'number' ? p.Price
                        : typeof p.InstorePrice === 'number' ? p.InstorePrice
                        : null,
+          product_id:   String(p.Stockcode),
           stockcode:    p.Stockcode,
           url:          `https://www.woolworths.com.au/shop/productdetails/${p.Stockcode}`,
           cup:          p.CupString || '',
@@ -287,12 +288,22 @@ export async function colesSearch(page, query, apiPattern = null) {
           return lists[0] || [];
         };
         const items = extractList(data);
+        const extractId = (p) => {
+          // Try direct fields first; fall back to URL slug parsing.
+          if (p?.id) return String(p.id);
+          if (p?.productId) return String(p.productId);
+          if (p?.code) return String(p.code);
+          const url = p?.url || p?.canonicalUrl || '';
+          const m = url.match(/-(\d{4,})(?:[/?#].*)?$/);
+          return m ? m[1] : null;
+        };
         return items.map((p, idx) => ({
           name:  p?.name || p?.productName || p?.title || '',
           price: typeof p?.pricing?.now === 'number' ? p.pricing.now
                 : typeof p?.pricing?.normal === 'number' ? p.pricing.normal
                 : typeof p?.price === 'number' ? p.price
                 : null,
+          product_id: extractId(p),
           url:   p?.url || p?.canonicalUrl || null,
           cup:   p?.pricing?.unit?.value ? `${p.pricing.unit.value} ${p.pricing.unit.unit ?? ''}`.trim()
                 : p?.unitPrice || '',
@@ -373,6 +384,9 @@ export async function colesSearch(page, query, apiPattern = null) {
       }
 
       const linkEl    = tile.querySelector('a[href*="/product/"]');
+      const hrefStr   = linkEl?.getAttribute('href') || '';
+      const idMatch   = hrefStr.match(/-(\d{4,})(?:[/?#].*)?$/);
+      const productId = idMatch ? idMatch[1] : null;
       const wasEl     = tile.querySelector('.price__was, [data-testid="product-pricing-was"]');
       const saveEl    = tile.querySelector('.badge-label, .price__save, [data-testid="product-pricing-save"]');
       const specialEl = tile.querySelector(
@@ -395,6 +409,7 @@ export async function colesSearch(page, query, apiPattern = null) {
       out.push({
         name: cleanName,
         price: parseFloat(priceMatch[1]),
+        product_id: productId,
         url: linkEl ? new URL(linkEl.getAttribute('href'), 'https://www.coles.com.au').href : null,
         cup: unitEl?.textContent?.trim() || '',
         // Identity

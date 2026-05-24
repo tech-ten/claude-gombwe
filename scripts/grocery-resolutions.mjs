@@ -50,17 +50,18 @@ export function saveResolutions(data) {
   writeFileSync(RESOLUTIONS_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
-/** Stable product identifier from a scraper candidate. Returns null when
- *  the candidate has no extractable ID (rare; means we can't cache it). */
+/** Stable product identifier from a scraper candidate. Both scraper
+ *  paths now set `product_id` as an explicit first-class field; this
+ *  helper keeps a URL-parse fallback for older records or any future
+ *  caller that constructs candidates without going through grocery-lib. */
 export function productKey(candidate, store) {
   if (!candidate) return null;
+  if (candidate.product_id) return String(candidate.product_id);
   const s = store.toLowerCase();
   if (s === 'woolworths' || s === 'woolies') {
     return candidate.stockcode != null ? String(candidate.stockcode) : null;
   }
   if (s === 'coles') {
-    // Coles URLs: .../product/coles-simply-salted-butter-500g-1234567
-    // Trailing numeric id after the last hyphen.
     const m = candidate.url?.match(/-(\d{4,})(?:[/?#].*)?$/);
     return m ? m[1] : (candidate.url || null);
   }
