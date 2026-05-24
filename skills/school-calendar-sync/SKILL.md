@@ -1,7 +1,7 @@
 ---
 name: school-calendar-sync
-description: Read iCloud Mail for ALL future school events, write actionable items to gombwe family.json AND Apple Calendar Family — alarms only for events within 14 days
-version: 1.2.0
+description: Read iCloud Mail for ALL future school events, write actionable items to gombwe family.json AND Apple Calendar Family — alarms only for events within 14 days. Portal-stub notifications (Compass/Sentral "view news item" emails with no dates in the body) get added as same-day "check portal" prompts instead of being skipped.
+version: 1.3.0
 user-invocable: true
 ---
 
@@ -75,6 +75,58 @@ Strict filter — only things requiring **explicit parental action**:
 
 When in doubt: if the parent doesn't need to DO something by a date, skip it.
 
+## Portal-stub notifications (Compass / Sentral / Audiri / Operoo)
+
+A common pattern: the email body is just `A news item titled "<X>" has been
+posted. View news item` — no date, no action detail, no deadline. The
+real content is behind a portal login.
+
+**Don't skip these.** They almost always represent a real ask (consent form,
+order cutoff, payment, parent-attendance event) — they just don't surface
+the date in email. Skipping them means the household misses things.
+
+### What to do with a stub
+
+For each portal-stub email that arrived in the last 48 hours and hasn't
+already been added:
+
+1. **Add a same-day calendar event** on the *next morning* at 8:00 AM
+   (or same-day 8:00 AM if the email arrived before 8 AM) titled:
+   `Check Compass: <news title>` (substitute Sentral / portal name)
+2. **Description**: include the sender name, original subject line, and
+   the portal URL (e.g., `valkstoneps-vic.compass.education`).
+3. **Alarm**: single alarm at the event time (8:00 AM same morning) —
+   this is an order-cutoff-style nudge.
+4. **family.json entry**: `type: "portal-stub"`, `source_subject` set,
+   `time: "08:00"`. Distinct type so dashboard can render differently.
+
+### Stub supersession
+
+When a later run extracts a *real* date for the same news item (either
+because the user pasted detail back, or a follow-up email had body text):
+
+1. Delete the stub event from Calendar.app (match by `Check Compass:
+   <news title>` substring).
+2. Replace with the proper dated event under normal alarm rules.
+3. Remove the stub entry from `family.json` events; insert the real one.
+
+### Stub fallback for older stubs
+
+If a stub email is older than 7 days and still hasn't been superseded,
+do **not** keep re-adding morning-of prompts — that becomes noise.
+Instead, roll all unresolved stubs into a single weekly "Compass catch-up"
+event the following Monday at 8:00 AM (one event per portal, listing
+all unresolved stub titles in the description). User checks the portal
+once and clears them all.
+
+### One-off informational stubs
+
+Some news items truly are FYI (e.g., "Lice!" notice, "Newsletter Issue
+8", "Industrial Action update"). These are still added as stubs initially
+because we can't tell from the subject alone — but if the user (or a
+later run with body context) confirms it was FYI-only, mark the
+family.json entry with `resolved: "fyi"` so future runs don't re-prompt.
+
 ## Output 1: gombwe family.json
 
 Append to `~/.claude-gombwe/data/family.json` `events[]` array. **Back
@@ -89,12 +141,17 @@ Event schema:
   "title": "Short human description",
   "school": "Name of the school as it appears in the email",
   "child": "",
-  "type": "deadline | attendance | volunteer | order-cutoff",
+  "type": "deadline | attendance | volunteer | order-cutoff | portal-stub",
   "source": "mail",
   "source_subject": "Original email subject",
-  "added_at": "ISO timestamp when added"
+  "added_at": "ISO timestamp when added",
+  "resolved": null
 }
 ```
+
+`resolved` is null by default. Set to `"superseded"` when a stub is
+replaced by a real dated event, or `"fyi"` when confirmed informational
+(see Portal-stub notifications).
 
 (School field is the school name the agent identified at runtime —
 NOT hardcoded. Leave child empty unless the email explicitly says
@@ -138,6 +195,8 @@ For events within 14 days, by event type:
 - **Parent-attendance events** (assembly, interview): alarm 1h before
 - **Volunteer asks** (excursion helpers): alarm 24h before
 - **Whole-day events** (pupil-free, term dates): alarm 9am day-of
+- **Portal stubs** (`type: portal-stub`): single alarm at event time
+  (8:00 AM same morning) — see Portal-stub notifications section
 
 **Idempotency** — before creating an event in Calendar.app, check if one
 already exists for that date with the same title (or a duplicate-detection
@@ -175,9 +234,11 @@ After writing, report to the user:
 2. **What was added** — table: date · title · school · also-in-Apple-Cal?
 3. **What was skipped** — count of routine emails seen, with one
    example of each category skipped
-4. **What couldn't be extracted** — items behind Compass / Sentral
-   portals where email only has a "view portal" link. For these,
-   suggest: *"Log into the portal and paste the dates, I'll add them"*
+4. **Portal stubs added as "Check Compass" prompts** — list each, with
+   the date the morning-of nudge was scheduled. If any stubs were rolled
+   into a weekly catch-up (older than 7 days), note that too.
+5. **Stubs superseded this run** — list any previously-stub events that
+   got replaced with proper dated events because new info came in.
 
 ## Don't
 
