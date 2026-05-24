@@ -25,7 +25,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } fr
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import {
-  wait,
+  wait, jitter,
   connectChrome, getPage,
   woolworthsSearch, discoverColesApi, colesSearch,
   productMatches,
@@ -170,8 +170,12 @@ async function pollOnce(items, { forceReclassify = false } = {}) {
       if (Array.isArray(cs)) { cAll.push(...cs); observations.observe('coles', t, cs); }
       // Stop early if we have enough candidates
       if (wAll.length > 8 && cAll.length > 8) break;
-      await wait(150);
+      // Jittered delay between search terms — defeats mechanical-pattern
+      // bot detection that flags consistent inter-request timing.
+      await jitter(200, 700);
     }
+    // Jittered delay between watchlist items — same idea, longer scale.
+    await jitter(800, 2500);
 
     // Cheap regex pre-filter: drop obvious junk (wrong size/pack, processed
     // variants the watchlist didn't ask for, no name overlap, etc.) so the
