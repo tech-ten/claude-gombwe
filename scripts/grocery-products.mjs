@@ -42,6 +42,7 @@ const TRACKED_FIELDS = [
   // promos
   'was_price', 'is_on_special', 'save_amount',
   'promotion', 'promotion_text',
+  'is_multibuy', 'multibuy_text',
   // identity / classification
   'brand', 'variety', 'size', 'package_size', 'unit_of_size', 'barcode',
   'department', 'category', 'sap_dept', 'sap_aisle', 'merchandise_hier',
@@ -49,6 +50,7 @@ const TRACKED_FIELDS = [
   'image_url', 'description',
   // availability / restrictions
   'in_stock', 'is_available', 'age_restricted', 'restrictions',
+  'purchase_limit_text',
   // search-result context
   'search_position', 'is_sponsored', 'ad_id', 'ad_type',
   // ratings

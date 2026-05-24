@@ -348,37 +348,79 @@ export async function colesSearch(page, query, apiPattern = null) {
     const out = [];
     let position = 0;
     for (const tile of tiles) {
-      const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
-      const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
+      const titleEl = tile.querySelector('[data-testid="product-title"], h2.product__title, h2, h3');
+      const priceEl = tile.querySelector('[data-testid="product-pricing"], .price__value');
       const unitEl  = tile.querySelector('.price__calculation_method, [data-testid="product-pricing-unit"]');
       if (!titleEl || !priceEl) continue;
-      const name = titleEl.textContent.trim();
-      if (!name || name.length < 3) continue;
-      const m = priceEl.textContent.match(/\$(\d+\.\d{2})/);
-      if (!m) continue;
+      const fullTitle = titleEl.textContent.trim();
+      if (!fullTitle || fullTitle.length < 3) continue;
+      // Cleaner: aria-label is "Price $25.00" or "Price $1.50" — avoids
+      // partial DOM text leaks like "$25.00 Save $3.00".
+      const ariaPrice = priceEl.getAttribute('aria-label')?.match(/\$([\d.]+)/);
+      const textPrice = priceEl.textContent.match(/\$(\d+\.\d{2})/);
+      const priceMatch = ariaPrice || textPrice;
+      if (!priceMatch) continue;
       position++;
+
+      // Coles titles use " | " as a name/size separator:
+      //   "Finish Quantum Dishwashing Tablets Lemon | 60 Pack"
+      // Split so the package_size becomes queryable on its own.
+      let cleanName = fullTitle, packageSize = null;
+      const sepIdx = fullTitle.lastIndexOf(' | ');
+      if (sepIdx > 0) {
+        cleanName  = fullTitle.slice(0, sepIdx).trim();
+        packageSize = fullTitle.slice(sepIdx + 3).trim();
+      }
+
       const linkEl    = tile.querySelector('a[href*="/product/"]');
       const wasEl     = tile.querySelector('.price__was, [data-testid="product-pricing-was"]');
-      const saveEl    = tile.querySelector('.price__save, [data-testid="product-pricing-save"], .badge');
-      const badgeEl   = tile.querySelector('.product-badge, [data-testid="product-badge"]');
-      const imgEl     = tile.querySelector('img');
+      const saveEl    = tile.querySelector('.badge-label, .price__save, [data-testid="product-pricing-save"]');
+      const specialEl = tile.querySelector(
+        '[data-testid="simple-fixed-price-specials"], [data-testid*="special"], [data-testid*="promotion"], .product__badge'
+      );
+      const multibuyEl = tile.querySelector('[data-testid*="multibuy"], [class*="multibuy"], [data-testid*="multi-buy"]');
+      const imgEl     = tile.querySelector('img[data-testid="product-image"], img');
       const sponsoredEl = tile.querySelector('[data-testid*="sponsored"], [class*="sponsored"], [class*="Sponsored"]');
+      const restrictionEl = tile.querySelector('[data-testid*="restriction"], [data-testid*="age-"], [class*="age-restriction"]');
+      const unavailableEl = tile.querySelector('[data-testid*="unavailable"], [class*="unavailable"], [data-testid*="out-of-stock"]');
+      const limitEl   = tile.querySelector('[data-testid*="purchase-limit"], [class*="purchase-limit"]');
+      const ratingEl  = tile.querySelector('[data-testid*="rating"], [class*="rating"]');
+      const reviewEl  = tile.querySelector('[data-testid*="review-count"], [class*="review-count"]');
+
       const wasMatch  = wasEl?.textContent?.match(/\$(\d+(?:\.\d+)?)/);
       const saveMatch = saveEl?.textContent?.match(/\$(\d+(?:\.\d+)?)/);
+      const ratingMatch = ratingEl?.getAttribute('aria-label')?.match(/(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*5/i);
+      const reviewMatch = reviewEl?.textContent?.match(/(\d+)/);
+
       out.push({
-        name,
-        price: parseFloat(m[1]),
-        url: linkEl?.href || null,
+        name: cleanName,
+        price: parseFloat(priceMatch[1]),
+        url: linkEl ? new URL(linkEl.getAttribute('href'), 'https://www.coles.com.au').href : null,
         cup: unitEl?.textContent?.trim() || '',
-        was_price:    wasMatch ? parseFloat(wasMatch[1]) : null,
-        save_amount:  saveMatch ? parseFloat(saveMatch[1]) : null,
-        is_on_special:!!(wasEl || saveEl),
-        promotion_text: badgeEl?.textContent?.trim() || null,
-        image_url:    imgEl?.src || null,
-        in_stock:     true,  // DOM tiles only render for in-stock items
+        // Identity
+        package_size: packageSize,
+        // Promo
+        was_price:     wasMatch ? parseFloat(wasMatch[1]) : null,
+        save_amount:   saveMatch ? parseFloat(saveMatch[1]) : null,
+        is_on_special: !!(wasEl || saveEl || specialEl),
+        promotion_text: (specialEl?.textContent || '').replace(/\s+/g, ' ').trim() || null,
+        is_multibuy:   !!multibuyEl,
+        multibuy_text: multibuyEl?.textContent?.trim() || null,
+        // Media
+        image_url: imgEl?.src || null,
+        // Availability / restrictions
+        in_stock: !unavailableEl,
+        is_available: !unavailableEl,
+        age_restricted: !!restrictionEl,
+        restrictions: restrictionEl?.textContent?.trim() || (limitEl?.textContent?.trim() ?? null),
+        purchase_limit_text: limitEl?.textContent?.trim() || null,
+        // Search context
         search_position: position,
         is_sponsored: !!sponsoredEl,
-        _source:      'dom-fallback',
+        // Ratings (DOM rarely exposes — try anyway)
+        rating:       ratingMatch ? parseFloat(ratingMatch[1]) : null,
+        rating_count: reviewMatch ? parseInt(reviewMatch[1], 10) : null,
+        _source: 'dom-fallback',
       });
     }
     return out;
