@@ -356,8 +356,13 @@ export function extractTokens(itemName) {
 /** Confirm a returned product is a real match for our watchlist/search
  *  entry. Attribute match, NOT price band. Returns the rejection reason
  *  for diagnostic use (calibrator); the boolean wrapper below is what
- *  most callers want. */
-export function productMatchesDetailed(watchlistName, productName, unitString = '') {
+ *  most callers want.
+ *
+ *  opts.requires: array of substrings the candidate name MUST contain
+ *  (case-insensitive). Use when the watchlist needs to distinguish
+ *  between near-relatives — e.g. requires: ["fillets"] keeps "Chicken
+ *  Thigh Cutlets" out of "Chicken Thigh Fillets per kg" results. */
+export function productMatchesDetailed(watchlistName, productName, unitString = '', opts = {}) {
   const want = extractTokens(watchlistName);
   const got = normaliseName(productName);
   const unit = normaliseName(unitString);
@@ -424,11 +429,22 @@ export function productMatchesDetailed(watchlistName, productName, unitString = 
       return { ok: false, reason: 'not-sold-each' };
     }
   }
+
+  // Per-item requires gate — list of substrings the candidate name MUST
+  // contain. Applied last so cheaper gates (overlap, processed) reject
+  // first when they apply.
+  if (Array.isArray(opts.requires) && opts.requires.length > 0) {
+    const missing = opts.requires.find(req => !got.includes(normaliseName(req)));
+    if (missing) {
+      return { ok: false, reason: `requires-missing ("${missing}" not in candidate)` };
+    }
+  }
+
   return { ok: true, reason: null };
 }
 
-export function productMatches(watchlistName, productName, unitString = '') {
-  return productMatchesDetailed(watchlistName, productName, unitString).ok;
+export function productMatches(watchlistName, productName, unitString = '', opts = {}) {
+  return productMatchesDetailed(watchlistName, productName, unitString, opts).ok;
 }
 
 /** Pick the best product from a search-result list.

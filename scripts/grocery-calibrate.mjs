@@ -54,7 +54,7 @@ function loadWatchlist() {
 
 function probeOneStore(item, candidates) {
   const enriched = candidates.map(p => {
-    const d = productMatchesDetailed(item.name, p.name, p.cup || '');
+    const d = productMatchesDetailed(item.name, p.name, p.cup || '', { requires: item.requires });
     return { name: p.name, price: p.price, cup: p.cup || '', accepted: d.ok, reason: d.reason };
   });
   const accepted = enriched.filter(c => c.accepted)
