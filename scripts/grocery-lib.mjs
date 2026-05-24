@@ -37,6 +37,11 @@ export const MIN_ORDER_COLES       = 50;
 
 export const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
+/** Sleep for a random duration in [min, max] ms — used between scraper
+ *  requests to make request patterns less mechanical / fingerprintable. */
+export const jitter = (min = 200, max = 800) =>
+  new Promise(r => setTimeout(r, min + Math.floor(Math.random() * (max - min + 1))));
+
 // ── Chrome plumbing ──────────────────────────────────────────────────
 
 export async function connectChrome() {
@@ -224,12 +229,25 @@ export async function woolworthsSearch(page, query, limit = 10) {
   return products.slice(0, limit);
 }
 
-/** Discover Coles's internal SPA search endpoint by sniffing the response
- *  stream during one search. Returns a URL template with `{Q}` placeholder
- *  for the query, or null if discovery doesn't find anything (caller falls
- *  back to DOM scrape). */
+/** Discover Coles's internal SPA search endpoint. Tries the cached pattern
+ *  first (fast, no network noise); falls back to sniffing the response stream
+ *  during one search if no cached pattern validates. Returns a URL template
+ *  with `{Q}` placeholder for the query, or null if discovery fails entirely
+ *  (caller falls back to DOM scrape). */
 export async function discoverColesApi(page) {
-  console.log('  Discovering Coles internal search endpoint…');
+  // Lazy import keeps grocery-lib loadable without the cache module
+  // present (e.g. older deploys, test fixtures).
+  const { tryCachedApiPattern, recordSuccessfulPattern } = await import('./grocery-api-cache.mjs');
+
+  // 1. Cheap path — try previously-validated patterns first.
+  // Saves ~25s and avoids the noisy load-search-page-and-sniff signature.
+  const cached = await tryCachedApiPattern(page);
+  if (cached) {
+    console.log(`  Coles via cached API pattern: ${cached.slice(0, 80)}${cached.length > 80 ? '…' : ''}`);
+    return cached;
+  }
+
+  console.log('  Discovering Coles internal search endpoint (network sniff)…');
   const candidates = [];
   const onResp = async (response) => {
     try {
@@ -263,7 +281,8 @@ export async function discoverColesApi(page) {
   }
 
   const tpl = candidates[0].url.replace(/([?&]q=)milk/i, '$1{Q}').replace(/(query=)milk/i, '$1{Q}');
-  console.log(`  Coles via internal API: ${tpl.slice(0, 100)}${tpl.length > 100 ? '…' : ''}`);
+  console.log(`  Coles via internal API (newly discovered): ${tpl.slice(0, 80)}${tpl.length > 80 ? '…' : ''}`);
+  recordSuccessfulPattern(tpl);
   return tpl;
 }
 
