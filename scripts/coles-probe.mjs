@@ -33,7 +33,13 @@ const PROBES = [
 
 async function main() {
   console.log('Connecting to logged-in Chrome…');
-  const { browser, page } = await connectChrome();
+  const browser = await connectChrome();
+  // Reuse an existing tab if available (probably a coles.com.au one is open
+  // from grocery-buy / grocery-watch). Falls back to a new tab.
+  const pages = await browser.pages();
+  const page = pages.find(p => p.url()?.includes('coles.com.au'))
+            ?? pages.find(p => !p.url()?.startsWith('chrome'))
+            ?? await browser.newPage();
 
   console.log('Discovering Coles internal API…');
   const apiPattern = await discoverColesApi(page);
