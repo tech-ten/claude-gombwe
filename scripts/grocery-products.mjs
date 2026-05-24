@@ -33,6 +33,42 @@ const DATA_DIR    = join(homedir(), '.claude-gombwe', 'data');
 const CATALOG     = join(DATA_DIR, 'grocery-products.json');
 const PRICE_LOG   = join(DATA_DIR, 'grocery-product-prices.jsonl');
 
+// Fields to copy from scraper candidate → observation record + catalog.
+// Anything the scrapers return that isn't in this list also gets
+// preserved via `_raw` on the observation. Add to this list when the
+// scraper grows new structured fields we want first-class queryability for.
+const TRACKED_FIELDS = [
+  'name', 'url', 'price', 'cup',
+  // promos
+  'was_price', 'is_on_special', 'save_amount',
+  'promotion', 'promotion_text',
+  // identity / classification
+  'brand', 'variety', 'size', 'package_size', 'unit_of_size', 'barcode',
+  'department', 'category', 'sap_dept', 'sap_aisle', 'merchandise_hier',
+  // media / description
+  'image_url', 'description',
+  // availability / restrictions
+  'in_stock', 'is_available', 'age_restricted', 'restrictions',
+  // search-result context
+  'search_position', 'is_sponsored', 'ad_id', 'ad_type',
+  // ratings
+  'rating', 'rating_count',
+  // diet / additional attributes (Woolies-shaped array)
+  'additional_attributes',
+  // DOM-fallback flag
+  '_source',
+  // Full forensic blob from scraper (raw API/DOM object)
+  '_raw',
+];
+
+function mergeFields(target, source) {
+  for (const f of TRACKED_FIELDS) {
+    if (source[f] !== undefined && source[f] !== null && source[f] !== '') {
+      target[f] = source[f];
+    }
+  }
+}
+
 function loadCatalog() {
   if (!existsSync(CATALOG)) {
     return { updated_at: null, stats: { total: 0, coles: 0, woolies: 0 }, products: {} };
@@ -89,23 +125,19 @@ export function newObservationCollector(ts = new Date().toISOString()) {
           if (searchTerm && !existing.search_terms.includes(searchTerm)) {
             existing.search_terms.push(searchTerm);
           }
-          // Prefer the most-recent name/price (last write wins within run —
-          // shouldn't differ within a single run but covers edge cases).
-          if (c.name) existing.name = c.name;
-          if (typeof c.price === 'number') existing.price = c.price;
-          if (c.cup) existing.cup = c.cup;
-          if (c.url) existing.url = c.url;
+          // Last-write-wins for everything else within a run. Same
+          // product appearing under multiple search queries shouldn't
+          // differ, but if it does we keep the most recent.
+          mergeFields(existing, c);
         } else {
-          byKey.set(key, {
+          const fresh = {
             ts,
             store,
             product_id: pid,
-            name: c.name || null,
-            url: c.url || null,
-            price: typeof c.price === 'number' ? c.price : null,
-            cup: c.cup || null,
             search_terms: searchTerm ? [searchTerm] : [],
-          });
+          };
+          mergeFields(fresh, c);
+          byKey.set(key, fresh);
         }
       }
     },
@@ -126,28 +158,50 @@ export function newObservationCollector(ts = new Date().toISOString()) {
         if (existing) {
           existing.last_seen = obs.ts;
           existing.observation_count = (existing.observation_count || 0) + 1;
-          existing.latest_name = obs.name;
-          existing.latest_url = obs.url;
-          existing.latest_price = obs.price;
-          existing.latest_cup = obs.cup;
+          // Copy every tracked field with a "latest_" prefix into the
+          // catalog so the snapshot is queryable without scanning the
+          // time-series log. Skip the _raw blob — kept only in the
+          // append-only JSONL so the catalog stays compact.
+          for (const f of TRACKED_FIELDS) {
+            if (f.startsWith('_')) continue;
+            if (obs[f] !== undefined && obs[f] !== null) {
+              existing[`latest_${f}`] = obs[f];
+            }
+          }
+          // Track every distinct price we've ever seen for this product
+          // — gives an instant view of price churn without scanning the
+          // full JSONL (which still has the per-observation timestamps).
+          if (typeof obs.price === 'number') {
+            existing.price_history = existing.price_history || [];
+            const last = existing.price_history[existing.price_history.length - 1];
+            if (!last || last.price !== obs.price) {
+              existing.price_history.push({ ts: obs.ts, price: obs.price, cup: obs.cup });
+            }
+          }
           for (const t of obs.search_terms) {
             if (!existing.surfaced_by_searches.includes(t)) {
               existing.surfaced_by_searches.push(t);
             }
           }
         } else {
-          catalog.products[key] = {
+          const fresh = {
             store: obs.store,
             product_id: obs.product_id,
             first_seen: obs.ts,
             last_seen: obs.ts,
             observation_count: 1,
-            latest_name: obs.name,
-            latest_url: obs.url,
-            latest_price: obs.price,
-            latest_cup: obs.cup,
             surfaced_by_searches: [...obs.search_terms],
+            price_history: typeof obs.price === 'number'
+              ? [{ ts: obs.ts, price: obs.price, cup: obs.cup }]
+              : [],
           };
+          for (const f of TRACKED_FIELDS) {
+            if (f.startsWith('_')) continue;
+            if (obs[f] !== undefined && obs[f] !== null) {
+              fresh[`latest_${f}`] = obs[f];
+            }
+          }
+          catalog.products[key] = fresh;
         }
       }
       saveCatalog(catalog);
