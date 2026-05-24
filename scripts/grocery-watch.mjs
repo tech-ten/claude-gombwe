@@ -34,6 +34,7 @@ import {
 } from './grocery-lib.mjs';
 import { isCalibrationStale, runCalibration } from './grocery-calibrate.mjs';
 import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-resolutions.mjs';
+import { newObservationCollector } from './grocery-products.mjs';
 
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
@@ -148,6 +149,9 @@ async function pollOnce(items, { forceReclassify = false } = {}) {
 
   const ts = new Date().toISOString();
   const records = [];
+  // Captures every candidate from every search across the whole run
+  // (not just the picked one) into the product time series.
+  const observations = newObservationCollector(ts);
 
   for (const item of items) {
     const terms = item.search_terms?.length ? item.search_terms : [item.name];
@@ -161,9 +165,9 @@ async function pollOnce(items, { forceReclassify = false } = {}) {
     const cAll = [];
     for (const t of terms) {
       const ws = await woolworthsSearch(wPage, t);
-      if (Array.isArray(ws)) wAll.push(...ws);
+      if (Array.isArray(ws)) { wAll.push(...ws); observations.observe('woolworths', t, ws); }
       const cs = await colesSearch(cPage, t, colesApiPattern);
-      if (Array.isArray(cs)) cAll.push(...cs);
+      if (Array.isArray(cs)) { cAll.push(...cs); observations.observe('coles', t, cs); }
       // Stop early if we have enough candidates
       if (wAll.length > 8 && cAll.length > 8) break;
       await wait(150);
@@ -218,6 +222,11 @@ async function pollOnce(items, { forceReclassify = false } = {}) {
     const wDisplay = fmtPick(wBest, wAll, wPick.source);
     const cDisplay = fmtPick(cBest, cAll, cPick.source);
     process.stdout.write(`  ${item.name.padEnd(45).slice(0, 45)}  W: ${wDisplay.padStart(22)}  C: ${cDisplay.padStart(22)}\n`);
+  }
+
+  const obsStats = observations.flush();
+  if (obsStats.observations > 0) {
+    console.log(`\n  Captured ${obsStats.observations} product observations (catalog: ${obsStats.catalog_size} products total).`);
   }
 
   browser.disconnect();
