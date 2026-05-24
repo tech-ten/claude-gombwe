@@ -27,6 +27,7 @@ import {
   colesSearch, woolworthsSearch,
   productMatchesDetailed, significantWords, normaliseName,
 } from './grocery-lib.mjs';
+import { classifyMatch } from './grocery-classifier.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -52,7 +53,7 @@ function loadWatchlist() {
   return JSON.parse(readFileSync(WATCHLIST, 'utf8')).items || [];
 }
 
-function probeOneStore(item, candidates) {
+async function probeOneStore(item, candidates, storeLabel) {
   const enriched = candidates.map(p => {
     const d = productMatchesDetailed(item.name, p.name, p.cup || '', { requires: item.requires });
     return { name: p.name, price: p.price, cup: p.cup || '', accepted: d.ok, reason: d.reason };
@@ -61,24 +62,40 @@ function probeOneStore(item, candidates) {
     .sort((a, b) => a.price - b.price);
   const rejected = enriched.filter(c => !c.accepted)
     .sort((a, b) => a.price - b.price);
-  const kept = accepted[0] || null;
+  const cheapestAccepted = accepted[0] || null;
+
+  // Run Haiku classifier to pick the actual best match from the regex
+  // shortlist. The "kept" item in the calibration report is now Haiku's
+  // pick — same as what the watch run will record.
+  const classified = await classifyMatch(item, accepted, storeLabel);
+  const kept = classified.picked;
 
   const flags = [];
   if (kept && typeof item.expected_promo === 'number'
       && kept.price < item.expected_promo * SUSPECT_PRICE_FRACTION) {
     flags.push(`suspect-low-price ($${kept.price} < ${SUSPECT_PRICE_FRACTION * 100}% of expected_promo $${item.expected_promo})`);
   }
-  // False-negative heuristic: nothing accepted, but the cheapest rejected
-  // candidate contains ALL distinctive watchlist words. Strong signal that
-  // the matcher is too strict for this item.
-  if (!kept && rejected.length > 0) {
+  // When Haiku picks something other than the cheapest regex-accepted,
+  // flag for visibility — the user should see when the LLM "overrides"
+  // the cheapest-wins default.
+  if (kept && cheapestAccepted && kept.name !== cheapestAccepted.name) {
+    flags.push(`haiku-override (cheapest accepted was "${cheapestAccepted.name}" @ $${cheapestAccepted.price}, picked "${kept.name}" @ $${kept.price})`);
+  }
+  // Haiku said no candidate is acceptable, but regex accepted some —
+  // worth surfacing to see what was on the shortlist.
+  if (!kept && accepted.length > 0) {
+    flags.push(`haiku-rejected-all (${accepted.length} regex-accepted candidate(s) but classifier said none match)`);
+  }
+  // False-negative heuristic on regex (not Haiku): nothing accepted by
+  // regex but a rejected candidate has all distinctive watchlist words.
+  if (!cheapestAccepted && rejected.length > 0) {
     const want = significantWords(item.name);
     if (want.length > 0) {
       for (const r of rejected.slice(0, TOP_N_CANDIDATES)) {
         const gotWords = new Set(normaliseName(r.name).split(/\s+/));
         const overlap = want.filter(w => gotWords.has(w));
         if (overlap.length === want.length) {
-          flags.push(`false-negative-likely (rejected "${r.name}" has all watchlist words: ${want.join(', ')})`);
+          flags.push(`regex-false-negative-likely (rejected "${r.name}" has all watchlist words: ${want.join(', ')})`);
           break;
         }
       }
@@ -89,6 +106,8 @@ function probeOneStore(item, candidates) {
     candidates_seen: candidates.length,
     candidates_accepted: accepted.length,
     kept,
+    classifier_source: classified.source,
+    cheapest_accepted: cheapestAccepted,
     top_rejected: rejected.slice(0, TOP_N_CANDIDATES),
     flags,
   };
@@ -143,8 +162,10 @@ export async function runCalibration({ itemsFilter = null } = {}) {
   for (const item of items) {
     process.stdout.write(`  ${item.name}... `);
     const { wAll, cAll } = await searchBothStores(item, wPage, cPage, apiPattern);
-    const coles = probeOneStore(item, cAll);
-    const woolies = probeOneStore(item, wAll);
+    const [coles, woolies] = await Promise.all([
+      probeOneStore(item, cAll, 'coles'),
+      probeOneStore(item, wAll, 'woolworths'),
+    ]);
     const allFlags = [...coles.flags.map(f => `coles: ${f}`),
                       ...woolies.flags.map(f => `woolies: ${f}`)];
     report.items.push({
