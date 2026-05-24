@@ -32,6 +32,7 @@ import {
   MIN_ORDER_WOOLWORTHS as MIN_WOOL,
   MIN_ORDER_COLES as MIN_COLE,
 } from './grocery-lib.mjs';
+import { isCalibrationStale, runCalibration } from './grocery-calibrate.mjs';
 
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
@@ -240,13 +241,28 @@ function printSummary(report) {
 // ── Main ─────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-const dealsOnly = args.includes('--deals');
-const asJson    = args.includes('--json');
+const dealsOnly         = args.includes('--deals');
+const asJson            = args.includes('--json');
+const skipCalibration   = args.includes('--skip-calibration');
+const forceCalibration  = args.includes('--force-calibration');
 
 async function main() {
   const watchlist = loadWatchlist();
   const items = watchlist.items || [];
   if (!items.length) { console.error('Watchlist is empty.'); process.exit(1); }
+
+  // Run the calibrator first when stale. Calibration is a no-op for the
+  // deals-only path (no fresh scraping happening). Skip when explicitly
+  // suppressed (e.g. running grocery-watch from a tight test loop).
+  if (!dealsOnly && !skipCalibration && (forceCalibration || isCalibrationStale(48))) {
+    console.log('  Calibration is stale — running calibrator first…\n');
+    try {
+      await runCalibration();
+    } catch (err) {
+      console.warn(`  ⚠ Calibration failed (continuing with watch): ${err.message}`);
+    }
+    console.log('');
+  }
 
   let records;
   if (dealsOnly) {

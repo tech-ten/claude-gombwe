@@ -317,7 +317,7 @@ const NAME_STOPWORDS = new Set([
   'capsule','capsules','caps','count','ct','approx',
 ]);
 
-function significantWords(s) {
+export function significantWords(s) {
   return normaliseName(s).split(/\s+/).filter(w =>
     w.length >= 3
     && !NAME_STOPWORDS.has(w)
@@ -342,20 +342,23 @@ export function extractTokens(itemName) {
 }
 
 /** Confirm a returned product is a real match for our watchlist/search
- *  entry. Attribute match, NOT price band. */
-export function productMatches(watchlistName, productName, unitString = '') {
+ *  entry. Attribute match, NOT price band. Returns the rejection reason
+ *  for diagnostic use (calibrator); the boolean wrapper below is what
+ *  most callers want. */
+export function productMatchesDetailed(watchlistName, productName, unitString = '') {
   const want = extractTokens(watchlistName);
   const got = normaliseName(productName);
   const unit = normaliseName(unitString);
 
-  // Without this gate the attribute checks alone are too permissive —
-  // a watchlist item with no recognisable size/pack tokens accepts
-  // anything. (Observed: "Oxyshred" pre-workout matched against
-  // "Finish Quantum Ultimate 38 tabs".)
+  // Name-overlap gate — at least one distinctive watchlist word must
+  // appear in the candidate. (Observed: "Oxyshred" pre-workout matched
+  // against "Finish Quantum Ultimate 38 tabs" before this gate existed.)
   const wantWords = significantWords(watchlistName);
   if (wantWords.length > 0) {
     const gotWords = new Set(got.split(/\s+/));
-    if (!wantWords.some(w => gotWords.has(w))) return false;
+    if (!wantWords.some(w => gotWords.has(w))) {
+      return { ok: false, reason: `no-name-overlap (need any of: ${wantWords.slice(0, 3).join(', ')})` };
+    }
   }
 
   for (const s of want.sizes) {
@@ -365,31 +368,39 @@ export function productMatches(watchlistName, productName, unitString = '') {
     if (!got.includes(s)
         && !got.includes(`${num} ${u}`)
         && !(altLitres && got.includes(altLitres))) {
-      return false;
+      return { ok: false, reason: `size-mismatch (need ${s})` };
     }
   }
   if (want.pack !== null) {
     const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk|tabs?|tablets?|capsules?|caps)\\b`);
-    if (!packRe.test(got)) return false;
+    if (!packRe.test(got)) {
+      return { ok: false, reason: `pack-mismatch (need ${want.pack}-pack)` };
+    }
   }
   if (want.perKg) {
-    // The unit-string "$X / 1kg" is a per-kg COMPARISON price, not proof
-    // the product is sold per kg — an 80g lunch-meat pack also shows a
-    // per-kg comparison. Reject candidates whose name states a smaller
-    // g/ml pack size, and require the name itself to mention kg.
-    const hasSmallPack = /\b\d+(?:\.\d+)?\s?(g|ml)\b/.test(got);
-    if (hasSmallPack) return false;
-    // "kg\b" alone — covers both "per kg" / "1kg" / "1.1kg" / "approx. 1.1kg".
-    // No leading \b because "\b" requires a non-word boundary, and the
-    // transition from digit "1" to letter "k" inside "1.1kg" isn't one.
-    const looksKg = /kg\b/.test(got);
-    if (!looksKg) return false;
+    // Unit-string "$X / 1kg" is a per-kg COMPARISON price, not proof the
+    // product is sold per kg — an 80g pack also shows it. Reject names
+    // that state a smaller g/ml pack and require the name to mention kg.
+    if (/\b\d+(?:\.\d+)?\s?(g|ml)\b/.test(got)) {
+      return { ok: false, reason: 'has-small-pack (g/ml in name, need per kg)' };
+    }
+    // "kg\b" — covers "per kg" / "1kg" / "1.1kg" / "approx. 1.1kg".
+    // No leading \b: the digit→letter transition in "1.1kg" isn't a
+    // non-word boundary.
+    if (!/kg\b/.test(got)) {
+      return { ok: false, reason: 'not-per-kg (name has no kg)' };
+    }
   }
   if (want.each && !want.perKg) {
-    const looksEach = /\beach\b/.test(got) || /\beach\b/.test(unit);
-    if (!looksEach) return false;
+    if (!/\beach\b/.test(got) && !/\beach\b/.test(unit)) {
+      return { ok: false, reason: 'not-sold-each' };
+    }
   }
-  return true;
+  return { ok: true, reason: null };
+}
+
+export function productMatches(watchlistName, productName, unitString = '') {
+  return productMatchesDetailed(watchlistName, productName, unitString).ok;
 }
 
 /** Pick the best product from a search-result list.
