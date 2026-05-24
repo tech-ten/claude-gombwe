@@ -497,6 +497,10 @@ export const PROCESSED_MARKERS = new Set([
   'burger','burgers','meatballs','rissoles','frozen','ready','meal',
   'tenders','goujons','strips','battered','coated','flavoured','flavored',
   'smoked','glazed','rolled','stuffed',
+  // Deli / lunch meat markers — catches "Don Chicken Breast Thinly Sliced"
+  // matched against raw "Chicken Breast per kg" watchlists.
+  'thinly','sliced','deli','cuts','shaved','luncheon','ham',
+  'pastrami','salami','prosciutto','chorizo','jerky',
 ]);
 
 export function significantWords(s) {
