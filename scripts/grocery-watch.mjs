@@ -33,6 +33,7 @@ import {
   MIN_ORDER_COLES as MIN_COLE,
 } from './grocery-lib.mjs';
 import { isCalibrationStale, runCalibration } from './grocery-calibrate.mjs';
+import { classifyMatch } from './grocery-classifier.mjs';
 
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
@@ -167,16 +168,28 @@ async function pollOnce(items) {
       await wait(150);
     }
 
-    // Confirm products by attribute (size/pack/unit). Soft floor of $0.10
-    // catches obvious data errors (negative price, scraping artefact, etc.)
+    // Cheap regex pre-filter: drop obvious junk (wrong size/pack, processed
+    // variants the watchlist didn't ask for, no name overlap, etc.) so the
+    // LLM classifier sees a tight shortlist. Soft $0.10 floor catches
+    // negative-price scraping artefacts.
     const confirmed = (p) =>
       typeof p.price === 'number' && p.price >= 0.10
       && productMatches(item.name, p.name, p.cup, { requires: item.requires });
 
     const wValid = wAll.filter(confirmed).sort((a, b) => a.price - b.price);
     const cValid = cAll.filter(confirmed).sort((a, b) => a.price - b.price);
-    const wBest = wValid[0] || null;
-    const cBest = cValid[0] || null;
+
+    // Haiku picks the actual match from the regex-accepted shortlist.
+    // Both stores classified in parallel to halve the added latency.
+    // classifyMatch short-circuits when shortlist has 0 or 1 candidates,
+    // and falls back to cheapest-accepted on any Haiku error so the run
+    // never silently breaks.
+    const [wPick, cPick] = await Promise.all([
+      classifyMatch(item, wValid, 'woolworths'),
+      classifyMatch(item, cValid, 'coles'),
+    ]);
+    const wBest = wPick.picked;
+    const cBest = cPick.picked;
 
     // Capture rejects for forensics — cheapest reject per store so we can
     // see WHY confirmation failed (helps the user iterate search_terms).
@@ -191,15 +204,19 @@ async function pollOnce(items) {
       coles_name:       cBest?.name  ?? null,
       candidates_seen:  { woolworths: wAll.length, coles: cAll.length },
       candidates_valid: { woolworths: wValid.length, coles: cValid.length },
+      classifier:       { woolworths: wPick.source, coles: cPick.source },
       ...(wReject ? { _rejected_w: { name: wReject.name, price: wReject.price } } : {}),
       ...(cReject ? { _rejected_c: { name: cReject.name, price: cReject.price } } : {}),
     };
     appendPrice(rec);
     records.push({ item, current: { woolworths: wBest, coles: cBest } });
 
-    const wDisplay = wBest ? `$${wBest.price.toFixed(2)}` : (wAll.length ? `?(${wAll.length})` : '-');
-    const cDisplay = cBest ? `$${cBest.price.toFixed(2)}` : (cAll.length ? `?(${cAll.length})` : '-');
-    process.stdout.write(`  ${item.name.padEnd(45).slice(0, 45)}  W: ${wDisplay.padStart(8)}  C: ${cDisplay.padStart(8)}\n`);
+    const fmtPick = (best, all, src) => best
+      ? `$${best.price.toFixed(2)} (${src})`
+      : (all.length ? `none (${src}, ${all.length} seen)` : '-');
+    const wDisplay = fmtPick(wBest, wAll, wPick.source);
+    const cDisplay = fmtPick(cBest, cAll, cPick.source);
+    process.stdout.write(`  ${item.name.padEnd(45).slice(0, 45)}  W: ${wDisplay.padStart(22)}  C: ${cDisplay.padStart(22)}\n`);
   }
 
   browser.disconnect();
