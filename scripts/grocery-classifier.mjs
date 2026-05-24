@@ -36,9 +36,11 @@ const STRICT_QUALIFIERS = new Set([
   'professional','classic','ultimate','advanced','fresh','pure',
   'natural','organic','select','simply','gold','pro','active',
   'lemon','apple','orange','mint','eucalyptus','lavender','rose',
-  'crunchy','smooth','crispy','crisp','wholegrain','whole',
+  'crunchy','smooth','crispy','crisp','wholegrain','whole','multigrain',
   'unsalted','salted','light','full','low','reduced','extra',
   'plain','spicy','sweet','sour','garlic','herb',
+  'heavy','duty','strong','thick','thin','jumbo','mini','large','small',
+  'free','range','grassfed','wild',
 ]);
 
 function runHaiku(prompt) {
