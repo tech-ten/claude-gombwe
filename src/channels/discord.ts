@@ -105,6 +105,15 @@ export class DiscordChannel implements ChannelAdapter {
       channelId = this.namedChannels.values().next().value;
     }
 
+    // Cron-triggered tasks have sessionKey like "cron:daily" — no real
+    // Discord channel maps to that, but the briefing still needs a home.
+    // Fall through to the first available channel (same behaviour as
+    // notify:*). Without this, scheduled briefings silently drop instead
+    // of posting.
+    if (!channelId && sessionKey.startsWith('cron:')) {
+      channelId = this.namedChannels.values().next().value;
+    }
+
     if (!channelId) {
       console.warn(`[discord] No channel for: ${sessionKey}`);
       return;
