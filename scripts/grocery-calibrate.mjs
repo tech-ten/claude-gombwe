@@ -28,6 +28,7 @@ import {
   productMatchesDetailed, significantWords, normaliseName,
 } from './grocery-lib.mjs';
 import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-resolutions.mjs';
+import { newObservationCollector } from './grocery-products.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -117,16 +118,22 @@ async function probeOneStore(item, candidates, storeLabel, opts = {}) {
   };
 }
 
-async function searchBothStores(item, wPage, cPage, apiPattern) {
+async function searchBothStores(item, wPage, cPage, apiPattern, observations = null) {
   const wAll = [], cAll = [];
   for (const term of item.search_terms || [item.name]) {
     try {
       const ws = await woolworthsSearch(wPage, term);
-      if (Array.isArray(ws)) wAll.push(...ws);
+      if (Array.isArray(ws)) {
+        wAll.push(...ws);
+        observations?.observe('woolworths', term, ws);
+      }
     } catch (err) { /* search may transiently fail — keep going */ }
     try {
       const cs = await colesSearch(cPage, term, apiPattern);
-      if (Array.isArray(cs)) cAll.push(...cs);
+      if (Array.isArray(cs)) {
+        cAll.push(...cs);
+        observations?.observe('coles', term, cs);
+      }
     } catch (err) { /* same */ }
     if (wAll.length > 8 && cAll.length > 8) break;
   }
@@ -163,10 +170,11 @@ export async function runCalibration({ itemsFilter = null, forceReclassify = fal
 
   const report = { calibrated_at: new Date().toISOString(), items: [] };
   const resolutionCache = loadResolutions();
+  const observations = newObservationCollector(report.calibrated_at);
 
   for (const item of items) {
     process.stdout.write(`  ${item.name}... `);
-    const { wAll, cAll } = await searchBothStores(item, wPage, cPage, apiPattern);
+    const { wAll, cAll } = await searchBothStores(item, wPage, cPage, apiPattern, observations);
     const [coles, woolies] = await Promise.all([
       probeOneStore(item, cAll, 'coles',      { forceReclassify, cache: resolutionCache }),
       probeOneStore(item, wAll, 'woolworths', { forceReclassify, cache: resolutionCache }),
@@ -190,6 +198,8 @@ export async function runCalibration({ itemsFilter = null, forceReclassify = fal
   writeFileSync(join(DATA_DIR, tsFile), JSON.stringify(report, null, 2));
   writeFileSync(LATEST, JSON.stringify(report, null, 2));
 
+  const obsStats = observations.flush();
+
   // stdout summary — what the user actually wants to see
   const flagged = report.items.filter(it => it.flags.length > 0);
   const noData = report.items.filter(it => !it.coles.kept && !it.woolies.kept && it.flags.length === 0);
@@ -198,6 +208,9 @@ export async function runCalibration({ itemsFilter = null, forceReclassify = fal
   console.log(`  matched OK:   ${report.items.length - flagged.length - noData.length}`);
   console.log(`  flagged:      ${flagged.length}`);
   console.log(`  no-data:      ${noData.length}`);
+  if (obsStats.observations > 0) {
+    console.log(`  products captured: ${obsStats.observations}  (catalog total: ${obsStats.catalog_size})`);
+  }
 
   if (flagged.length > 0) {
     console.log(`\n── flagged items needing review ──`);
