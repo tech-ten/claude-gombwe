@@ -1,9 +1,17 @@
 ---
 name: school-calendar-sync
-description: Read iCloud Mail for this-week school events, write actionable items to gombwe family.json AND Apple Calendar Family calendar with reminders
+description: Read iCloud Mail for this-week school events, write actionable items to gombwe family.json AND Apple Calendar Family calendar with reminders (deadlines have real consequences)
 version: 1.1.0
 user-invocable: true
 ---
+
+> **Note on alarms:** school events DO get alarms (per
+> `Alarm rules` below). This is the one place in the calendar
+> stack where alarms are warranted — missing a payment deadline
+> or skipping a parent-helper signup has actual cost. The sibling
+> skill `meal-calendar-sync` deliberately has NO alarms; meals are
+> visibility-only because pinging the household every dinner feels
+> dictatorial and hurts adoption.
 
 # School Calendar Sync
 

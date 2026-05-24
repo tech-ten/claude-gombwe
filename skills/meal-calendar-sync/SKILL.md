@@ -1,7 +1,7 @@
 ---
 name: meal-calendar-sync
-description: Push the gombwe 7-day dinner plan into Apple Calendar Family with cook-time reminders so the household sees what's for dinner
-version: 1.0.0
+description: Push the gombwe 7-day dinner plan into Apple Calendar Family so the household sees what's for dinner — no alarms, calendar visibility only
+version: 1.1.0
 user-invocable: true
 ---
 
@@ -12,16 +12,17 @@ Read the current weekly meal plan from `~/.claude-gombwe/data/family.json`
 each meal as an event in Apple Calendar.app's **Family** calendar so it
 appears on every shared device (wife's phone, kids' iPads).
 
-Each event gets a reminder ahead of the meal time so whoever's cooking
-isn't blindsided.
+**No alarms.** Calendar visibility is enough — household members glance
+at their day in Calendar and see what's for dinner. Alarms feel
+dictatorial, especially when trying to elicit adoption.
 
 ## Why
 
 The gombwe dashboard shows the plan, but the household doesn't live in
 the dashboard. They live in Calendar. Pushing meals into Calendar.app's
 shared Family calendar means everyone in the household sees "Dinner:
-butter chicken at 6:30 pm" on their lock screen with an alarm that
-fires when prep should start.
+butter chicken at 6:30 pm" when they look at their day. No notifications
+fire. No nags.
 
 ## Source of truth
 
@@ -46,11 +47,9 @@ Iterate the next 7 days from today. For each day, for each slot
   - **Summary**: `{Slot}: {meal name}` (e.g., `Dinner: Butter chicken`)
   - **Start time**: see "Default times" below — but use household-specific
     times if present in `family.json` under `meal_times`
-  - **Duration**: 30 min (events on calendars don't need to match cook
-    time exactly; this just gives the entry a footprint)
-  - **Description**: ingredients summary + "prep starts {N} min before"
-    if cook-time is in the recipe; otherwise blank
-  - **Alarm**: prep reminder, see "Alarm rules"
+  - **Duration**: 30 min (just gives the entry a visual footprint)
+  - **Description**: ingredients summary
+  - **No alarm** — calendar visibility only
   - **Calendar**: Family
 
 ## Default times (per-household — read from family.json if set)
@@ -58,26 +57,11 @@ Iterate the next 7 days from today. For each day, for each slot
 If `family.json` has `meal_times: { breakfast: "07:00", lunch: "12:30",
 dinner: "18:30" }` use those. Otherwise default:
 
-| Slot | Time | Default prep alarm |
-|---|---|---|
-| Breakfast | 07:00 | 15 min before |
-| Lunch | 12:30 | 20 min before |
-| Dinner | 18:30 | 45 min before |
-
-## Alarm rules
-
-Wife and kids see the alarm on their iOS devices via the shared Family
-calendar. Use the prep-time default above, OR if the recipe has an
-explicit `cook_time_min` field in `family.json` `recipes`, fire alarm
-that many minutes before the meal start time.
-
-```applescript
-tell newEvent
-  make new sound alarm at end with properties {trigger interval: -45}
-end tell
-```
-
-(`trigger interval` is in minutes, negative = before event start.)
+| Slot | Time |
+|---|---|
+| Breakfast | 07:00 |
+| Lunch | 12:30 |
+| Dinner | 18:30 |
 
 ## Idempotency
 
@@ -92,8 +76,7 @@ an existing event in Family calendar where:
 
 If found and the meal name matches what's in family.json → skip (already
 there). If found but meal name differs (plan changed) → update the
-existing event's summary + description, keep the alarm in place. If not
-found → create new.
+existing event's summary + description. If not found → create new.
 
 AppleScript pattern for find-or-update:
 
