@@ -52,7 +52,13 @@ body {
   color: var(--text);
   background: var(--bg);
   height: 100vh;
+  /* 100dvh = "dynamic viewport height" — adjusts as iOS Safari URL bar
+     shows/hides. Without it, topbar is rendered behind the URL bar and
+     becomes unreachable on phone. Browsers that don't support dvh fall
+     back to the 100vh above. */
+  height: 100dvh;
   overflow: hidden;
+  padding-top: env(safe-area-inset-top, 0);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -2434,8 +2440,35 @@ body {
 
 /* ── Mobile: <768px ─────────────────────────────────────────────── */
 @media (max-width: 767px) {
-  /* Topbar tightens: no search, smaller brand, less padding */
-  .topbar { padding: 0 12px; gap: 10px; height: 52px; }
+  /* Body uses dynamic viewport height so iOS Safari's URL bar doesn't
+     push the topbar out of view. Removes the padding-top hack we tried. */
+  body {
+    height: 100dvh;
+    padding-top: 0;
+  }
+
+  /* Pin the topbar so it's ALWAYS visible regardless of what any tab
+     does internally (chat going "full screen", composer focus, etc).
+     Higher z-index than the drawer-backdrop (19) and sidebar (20) so
+     the hamburger stays tappable even when the drawer is open. */
+  .topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    padding: 0 12px;
+    gap: 10px;
+    height: 52px;
+    /* Respect notch / Dynamic Island on iPhone */
+    padding-top: env(safe-area-inset-top, 0);
+    height: calc(52px + env(safe-area-inset-top, 0));
+  }
+  /* #app needs to start BELOW the (now fixed) topbar */
+  #app {
+    padding-top: calc(52px + env(safe-area-inset-top, 0));
+    height: 100dvh;
+  }
   .topbar-left { min-width: 0; gap: 8px; }
   .topbar-brand { font-size: 20px; }
   .topbar-center { display: none; }
@@ -2467,8 +2500,9 @@ body {
   .sidebar.drawer-open .nav-item span:last-child { display: inline; }
   .sidebar.drawer-open .nav-dot { width: 5px; height: 5px; }
 
-  /* App container goes block so the (now-fixed) sidebar doesn't reserve space */
-  #app { display: block; height: calc(100vh - 52px); }
+  /* App container goes block so the (now-fixed) sidebar doesn't reserve
+     space. Height set above to account for fixed topbar + safe-area. */
+  #app { display: block; }
   .content { width: 100%; height: 100%; }
   .tab-content.active { display: flex; flex-direction: column; }
 
