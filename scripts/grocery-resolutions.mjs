@@ -127,6 +127,16 @@ export async function resolveBestMatch(item, candidates, store, opts = {}) {
       ...(result.raw ? { haiku_raw: result.raw } : {}),
     };
     if (ownsCache) saveResolutions(data);
+  } else if (forceReclassify && cached) {
+    // Haiku explicitly rejected every candidate this time — the
+    // previously-cached pick is wrong and should be invalidated.
+    // Without this, a force-reclassify that says "none" leaves the
+    // stale resolution in place forever.
+    delete data.resolutions[cacheKey][store];
+    if (Object.keys(data.resolutions[cacheKey]).length === 0) {
+      delete data.resolutions[cacheKey];
+    }
+    if (ownsCache) saveResolutions(data);
   }
   return result;
 }
