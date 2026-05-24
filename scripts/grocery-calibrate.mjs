@@ -37,17 +37,6 @@ const LATEST = join(DATA_DIR, 'grocery-calibration-latest.json');
 const TOP_N_CANDIDATES = 5;
 const SUSPECT_PRICE_FRACTION = 0.3;
 
-// Words that indicate the candidate is a processed/prepared variant
-// rather than the raw ingredient the watchlist usually wants.
-// Observed: "Chicken Breast per kg" matched "Chicken Breast Dino Nuggets".
-const PROCESSED_MARKERS = new Set([
-  'nuggets','schnitzel','schnitzels','crumbed','kiev','kievs',
-  'seasoned','marinated','sausages','sausage','patty','patties',
-  'burger','burgers','meatballs','rissoles','frozen','ready','meal',
-  'tenders','goujons','strips','battered','coated','flavoured','flavored',
-  'smoked','glazed','rolled','stuffed',
-]);
-
 export function isCalibrationStale(maxAgeHours = 48) {
   if (!existsSync(LATEST)) return true;
   try {
@@ -78,17 +67,6 @@ function probeOneStore(item, candidates) {
   if (kept && typeof item.expected_promo === 'number'
       && kept.price < item.expected_promo * SUSPECT_PRICE_FRACTION) {
     flags.push(`suspect-low-price ($${kept.price} < ${SUSPECT_PRICE_FRACTION * 100}% of expected_promo $${item.expected_promo})`);
-  }
-  // Processed-variant flag — kept candidate has a processing marker word
-  // (e.g. "nuggets", "schnitzel") absent from the watchlist itself, so the
-  // user is buying a different category of product than they asked for.
-  if (kept) {
-    const itemWords = new Set(significantWords(item.name));
-    const keptWords = normaliseName(kept.name).split(/\s+/);
-    const processedHit = keptWords.find(w => PROCESSED_MARKERS.has(w) && !itemWords.has(w));
-    if (processedHit) {
-      flags.push(`processed-variant ("${kept.name}" contains "${processedHit}" — likely not the raw ingredient)`);
-    }
   }
   // False-negative heuristic: nothing accepted, but the cheapest rejected
   // candidate contains ALL distinctive watchlist words. Strong signal that

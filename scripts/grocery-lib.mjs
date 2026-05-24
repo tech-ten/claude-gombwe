@@ -317,6 +317,18 @@ const NAME_STOPWORDS = new Set([
   'capsule','capsules','caps','count','ct','approx',
 ]);
 
+// Words that mark a candidate as a processed/prepared variant rather
+// than the raw ingredient. If the watchlist doesn't ask for one of
+// these but the candidate has it, reject. (Observed: "Chicken Breast
+// per kg" was matching "Chicken Breast Dino Nuggets 1kg" at Coles.)
+export const PROCESSED_MARKERS = new Set([
+  'nuggets','schnitzel','schnitzels','crumbed','kiev','kievs',
+  'seasoned','marinated','sausages','sausage','patty','patties',
+  'burger','burgers','meatballs','rissoles','frozen','ready','meal',
+  'tenders','goujons','strips','battered','coated','flavoured','flavored',
+  'smoked','glazed','rolled','stuffed',
+]);
+
 export function significantWords(s) {
   return normaliseName(s).split(/\s+/).filter(w =>
     w.length >= 3
@@ -354,10 +366,26 @@ export function productMatchesDetailed(watchlistName, productName, unitString = 
   // appear in the candidate. (Observed: "Oxyshred" pre-workout matched
   // against "Finish Quantum Ultimate 38 tabs" before this gate existed.)
   const wantWords = significantWords(watchlistName);
+  const wantSet = new Set(wantWords);
+  const gotTokens = got.split(/\s+/);
+  const gotSet = new Set(gotTokens);
   if (wantWords.length > 0) {
-    const gotWords = new Set(got.split(/\s+/));
-    if (!wantWords.some(w => gotWords.has(w))) {
+    if (!wantWords.some(w => gotSet.has(w))) {
       return { ok: false, reason: `no-name-overlap (need any of: ${wantWords.slice(0, 3).join(', ')})` };
+    }
+  }
+
+  // Processed-variant gate — only applied when the WATCHLIST asks for a
+  // raw ingredient (no processed marker words in its own name). If the
+  // user wrote "Beef Burgers 4 pack" they're already in processed-food
+  // territory; "Patties" alongside "Burgers" shouldn't be a rejection.
+  // But "Chicken Breast per kg" matching "Chicken Breast Dino Nuggets"
+  // is exactly the bug this gate exists to catch.
+  const watchlistIsRaw = !wantWords.some(w => PROCESSED_MARKERS.has(w));
+  if (watchlistIsRaw) {
+    const processedHit = gotTokens.find(w => PROCESSED_MARKERS.has(w));
+    if (processedHit) {
+      return { ok: false, reason: `processed-variant ("${processedHit}" not in watchlist)` };
     }
   }
 
