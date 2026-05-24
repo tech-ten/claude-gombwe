@@ -308,13 +308,33 @@ export function normaliseName(s) {
     .trim();
 }
 
+// Words to ignore when looking for name-overlap between watchlist and
+// candidate. Units, pack-count nouns, and prepositions never identify a
+// product on their own — "per kg" alone matches everything sold by weight.
+const NAME_STOPWORDS = new Set([
+  'the','and','or','of','for','with','a','an','in','on','to','per','each',
+  'pack','packs','pk','kg','g','ml','l','cl','tab','tabs','tablet','tablets',
+  'capsule','capsules','caps','count','ct','approx',
+]);
+
+function significantWords(s) {
+  return normaliseName(s).split(/\s+/).filter(w =>
+    w.length >= 3
+    && !NAME_STOPWORDS.has(w)
+    && !/^\d+(?:\.\d+)?$/.test(w)
+    && !/^\d+(?:\.\d+)?[a-z]+$/.test(w)
+  );
+}
+
 export function extractTokens(itemName) {
   const norm = normaliseName(itemName);
   const tokens = { sizes: [], pack: null, perKg: false, each: false };
   const sizeRe = /(\d+(?:\.\d+)?)\s?(l|ml|g|kg|cl)\b/g;
   let m;
   while ((m = sizeRe.exec(norm)) !== null) tokens.sizes.push(`${m[1]}${m[2]}`);
-  const pm = norm.match(/(\d+)\s?(pack|pk)\b/);
+  // Watchlist items routinely say "38 tabs" not "38 pack" — extend the
+  // suffix list so the matcher picks up a real pack-count constraint.
+  const pm = norm.match(/(\d+)\s?(pack|pk|tabs?|tablets?|capsules?|caps)\b/);
   if (pm) tokens.pack = parseInt(pm[1], 10);
   if (/\bper\s+kg\b/.test(norm)) tokens.perKg = true;
   if (/\beach\b/.test(norm)) tokens.each = true;
@@ -328,6 +348,16 @@ export function productMatches(watchlistName, productName, unitString = '') {
   const got = normaliseName(productName);
   const unit = normaliseName(unitString);
 
+  // Without this gate the attribute checks alone are too permissive —
+  // a watchlist item with no recognisable size/pack tokens accepts
+  // anything. (Observed: "Oxyshred" pre-workout matched against
+  // "Finish Quantum Ultimate 38 tabs".)
+  const wantWords = significantWords(watchlistName);
+  if (wantWords.length > 0) {
+    const gotWords = new Set(got.split(/\s+/));
+    if (!wantWords.some(w => gotWords.has(w))) return false;
+  }
+
   for (const s of want.sizes) {
     const num = s.replace(/[a-z]/g, '');
     const u = s.replace(/[\d.]/g, '');
@@ -339,11 +369,20 @@ export function productMatches(watchlistName, productName, unitString = '') {
     }
   }
   if (want.pack !== null) {
-    const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk)\\b`);
+    const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk|tabs?|tablets?|capsules?|caps)\\b`);
     if (!packRe.test(got)) return false;
   }
   if (want.perKg) {
-    const looksKg = /\bper\s+kg\b/.test(got) || /\$\s?[\d.]+\s*\/\s*\d*\s*kg/.test(unit) || /per\s+kg/.test(unit);
+    // The unit-string "$X / 1kg" is a per-kg COMPARISON price, not proof
+    // the product is sold per kg — an 80g lunch-meat pack also shows a
+    // per-kg comparison. Reject candidates whose name states a smaller
+    // g/ml pack size, and require the name itself to mention kg.
+    const hasSmallPack = /\b\d+(?:\.\d+)?\s?(g|ml)\b/.test(got);
+    if (hasSmallPack) return false;
+    // "kg\b" alone — covers both "per kg" / "1kg" / "1.1kg" / "approx. 1.1kg".
+    // No leading \b because "\b" requires a non-word boundary, and the
+    // transition from digit "1" to letter "k" inside "1.1kg" isn't one.
+    const looksKg = /kg\b/.test(got);
     if (!looksKg) return false;
   }
   if (want.each && !want.perKg) {
