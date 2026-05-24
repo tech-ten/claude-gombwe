@@ -107,6 +107,7 @@ async function probeOneStore(item, candidates, storeLabel) {
     candidates_accepted: accepted.length,
     kept,
     classifier_source: classified.source,
+    classifier_raw: classified.raw || null,
     cheapest_accepted: cheapestAccepted,
     top_rejected: rejected.slice(0, TOP_N_CANDIDATES),
     flags,
