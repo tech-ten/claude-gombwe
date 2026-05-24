@@ -27,7 +27,7 @@ import {
   colesSearch, woolworthsSearch,
   productMatchesDetailed, significantWords, normaliseName,
 } from './grocery-lib.mjs';
-import { classifyMatch } from './grocery-classifier.mjs';
+import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-resolutions.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -53,10 +53,14 @@ function loadWatchlist() {
   return JSON.parse(readFileSync(WATCHLIST, 'utf8')).items || [];
 }
 
-async function probeOneStore(item, candidates, storeLabel) {
+async function probeOneStore(item, candidates, storeLabel, opts = {}) {
+  const { cache, forceReclassify = false } = opts;
+  // The calibrator must preserve original candidate metadata (url,
+  // stockcode) so the resolution cache can compute stable product IDs
+  // when the classifier fires. Reduced shapes were stripping those.
   const enriched = candidates.map(p => {
     const d = productMatchesDetailed(item.name, p.name, p.cup || '', { requires: item.requires });
-    return { name: p.name, price: p.price, cup: p.cup || '', accepted: d.ok, reason: d.reason };
+    return { ...p, cup: p.cup || '', accepted: d.ok, reason: d.reason };
   });
   const accepted = enriched.filter(c => c.accepted)
     .sort((a, b) => a.price - b.price);
@@ -64,10 +68,9 @@ async function probeOneStore(item, candidates, storeLabel) {
     .sort((a, b) => a.price - b.price);
   const cheapestAccepted = accepted[0] || null;
 
-  // Run Haiku classifier to pick the actual best match from the regex
-  // shortlist. The "kept" item in the calibration report is now Haiku's
-  // pick — same as what the watch run will record.
-  const classified = await classifyMatch(item, accepted, storeLabel);
+  // Resolve via shared cache where possible; only call Haiku when the
+  // cached pick is missing or the user asked for a forced refresh.
+  const classified = await resolveBestMatch(item, accepted, storeLabel, { cache, forceReclassify });
   const kept = classified.picked;
 
   const flags = [];
@@ -140,7 +143,7 @@ async function searchBothStores(item, wPage, cPage, apiPattern) {
   return { wAll: dedupe(wAll), cAll: dedupe(cAll) };
 }
 
-export async function runCalibration({ itemsFilter = null } = {}) {
+export async function runCalibration({ itemsFilter = null, forceReclassify = false } = {}) {
   console.log('[calibrate] connecting to Chrome...');
   const browser = await connectChrome();
   const pages = await browser.pages();
@@ -159,14 +162,16 @@ export async function runCalibration({ itemsFilter = null } = {}) {
   console.log(`[calibrate] probing ${items.length} item${items.length === 1 ? '' : 's'}`);
 
   const report = { calibrated_at: new Date().toISOString(), items: [] };
+  const resolutionCache = loadResolutions();
 
   for (const item of items) {
     process.stdout.write(`  ${item.name}... `);
     const { wAll, cAll } = await searchBothStores(item, wPage, cPage, apiPattern);
     const [coles, woolies] = await Promise.all([
-      probeOneStore(item, cAll, 'coles'),
-      probeOneStore(item, wAll, 'woolworths'),
+      probeOneStore(item, cAll, 'coles',      { forceReclassify, cache: resolutionCache }),
+      probeOneStore(item, wAll, 'woolworths', { forceReclassify, cache: resolutionCache }),
     ]);
+    saveResolutions(resolutionCache);
     const allFlags = [...coles.flags.map(f => `coles: ${f}`),
                       ...woolies.flags.map(f => `woolies: ${f}`)];
     report.items.push({
@@ -247,7 +252,8 @@ if (isMainModule) {
   const args = process.argv.slice(2);
   const itemsArg = args.find(a => a.startsWith('--items='));
   const itemsFilter = itemsArg ? itemsArg.slice('--items='.length).split(',').map(s => s.trim()) : null;
-  runCalibration({ itemsFilter }).catch(err => {
+  const forceReclassify = args.includes('--force-reclassify');
+  runCalibration({ itemsFilter, forceReclassify }).catch(err => {
     console.error('Calibration failed:', err.message);
     console.error(err.stack);
     process.exit(1);

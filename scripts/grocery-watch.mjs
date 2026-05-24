@@ -33,7 +33,7 @@ import {
   MIN_ORDER_COLES as MIN_COLE,
 } from './grocery-lib.mjs';
 import { isCalibrationStale, runCalibration } from './grocery-calibrate.mjs';
-import { classifyMatch } from './grocery-classifier.mjs';
+import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-resolutions.mjs';
 
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
@@ -132,7 +132,8 @@ function planCarts(classified) {
 
 // ── Poll + report ────────────────────────────────────────────────────
 
-async function pollOnce(items) {
+async function pollOnce(items, { forceReclassify = false } = {}) {
+  const resolutionCache = loadResolutions();
   const browser = await connectChrome();
   const wPage = await getPage(browser, 'woolworths.com.au');
   const cPage = await getPage(browser, 'coles.com.au');
@@ -179,15 +180,15 @@ async function pollOnce(items) {
     const wValid = wAll.filter(confirmed).sort((a, b) => a.price - b.price);
     const cValid = cAll.filter(confirmed).sort((a, b) => a.price - b.price);
 
-    // Haiku picks the actual match from the regex-accepted shortlist.
-    // Both stores classified in parallel to halve the added latency.
-    // classifyMatch short-circuits when shortlist has 0 or 1 candidates,
-    // and falls back to cheapest-accepted on any Haiku error so the run
-    // never silently breaks.
+    // Resolve picks via the resolution cache — Haiku is only invoked
+    // on cache miss (new item, or previously-picked product no longer
+    // in search results). Both stores resolved in parallel.
     const [wPick, cPick] = await Promise.all([
-      classifyMatch(item, wValid, 'woolworths'),
-      classifyMatch(item, cValid, 'coles'),
+      resolveBestMatch(item, wValid, 'woolworths', { forceReclassify, cache: resolutionCache }),
+      resolveBestMatch(item, cValid, 'coles',      { forceReclassify, cache: resolutionCache }),
     ]);
+    // Persist per-item so a crash mid-run still saves progress.
+    saveResolutions(resolutionCache);
     const wBest = wPick.picked;
     const cBest = cPick.picked;
 
@@ -262,6 +263,7 @@ const dealsOnly         = args.includes('--deals');
 const asJson            = args.includes('--json');
 const skipCalibration   = args.includes('--skip-calibration');
 const forceCalibration  = args.includes('--force-calibration');
+const forceReclassify   = args.includes('--force-reclassify');
 
 async function main() {
   const watchlist = loadWatchlist();
@@ -302,7 +304,7 @@ async function main() {
     });
   } else {
     console.log(`  Polling ${items.length} items across Woolworths + Coles…\n`);
-    records = await pollOnce(items);
+    records = await pollOnce(items, { forceReclassify });
   }
 
   const history = loadPriceHistory();
