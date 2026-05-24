@@ -1,7 +1,7 @@
 ---
 name: school-calendar-sync
-description: Read iCloud Mail for this-week school events, write actionable items to gombwe family.json AND Apple Calendar Family calendar with reminders (deadlines have real consequences)
-version: 1.1.0
+description: Read iCloud Mail for ALL future school events, write actionable items to gombwe family.json AND Apple Calendar Family — alarms only for events within 14 days
+version: 1.2.0
 user-invocable: true
 ---
 
@@ -19,9 +19,9 @@ Scan the user's primary email inbox via Mail.app on the Mac mini
 (gombwe runs there, so AppleScript / `mdfind` can read whatever mail
 accounts the user has signed in). The user typically tells gombwe which
 inbox to check; if not, default to whichever account they read most.
-Scan emails from the past 14–30 days. Extract events
-that need parental action this week or in the next two weeks. Write
-them to BOTH:
+Scan emails from the past 14–30 days. Extract **every future event that
+needs parental action** — whether it's tomorrow, next month, or end of
+term. Write them to BOTH:
 
 1. **gombwe family.json** events array (dashboard surfaces them)
 2. **Apple Calendar.app → Family calendar** (wife sees them on her
@@ -124,6 +124,15 @@ end tell
 
 **Alarm rules** (so wife's iPhone pings appropriately):
 
+**Only attach alarms to events occurring within the next 14 days.**
+Events further out still get written to the calendar (visibility) but
+without alarms — no point pinging the household about something three
+months away. When an event later enters the 14-day window, the next
+run of this skill should *add* the alarm to the existing event (see
+Idempotency).
+
+For events within 14 days, by event type:
+
 - **Payment / consent deadlines**: alarm 24h before, second alarm 2h before
 - **Order cutoffs** (sushi day, canteen): alarm same morning + 2h before
 - **Parent-attendance events** (assembly, interview): alarm 1h before
@@ -132,12 +141,20 @@ end tell
 
 **Idempotency** — before creating an event in Calendar.app, check if one
 already exists for that date with the same title (or a duplicate-detection
-substring like "Sushi orders DUE"). If yes, skip; don't double-add. AppleScript
-to check:
+substring). AppleScript to check:
 
 ```applescript
 set existing to (every event of calendar "Family" whose summary contains "<distinctive substring>" and start date is greater than (current date))
 ```
+
+If the existing event is **outside the 14-day alarm window** but the
+incoming event would now be **inside** that window (the event date is
+within 14 days of today), upgrade the existing event by attaching the
+appropriate alarm — don't re-create. This handles "I added Grade 5 camp
+2 months ago and it's now 12 days away" naturally on the next run.
+
+If the title or date differs (e.g., school changed the date), update
+the existing event in place rather than duplicating.
 
 ## Pre-requisite (one-time, not part of this skill)
 
@@ -167,7 +184,9 @@ After writing, report to the user:
 - Don't guess which child is at which school — leave `child` empty if
   not explicit in the email
 - Don't add events older than today
-- Don't add events more than ~3 weeks out
+- Don't omit far-future events. Capture everything from the inbox; the
+  alarm/no-alarm decision is what filters by recency, not the
+  add/skip decision
 - Don't write to other calendars in Calendar.app (Work, Home, etc.) —
   Family only
 - Don't fail silently if Calendar.app is closed; either tell the user
