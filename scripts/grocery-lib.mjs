@@ -167,17 +167,55 @@ export async function woolworthsSearch(page, query, limit = 10) {
 
   const products = [];
   if (response?.Products) {
+    let position = 0;
     for (const group of response.Products) {
       for (const p of (group.Products || [group])) {
         if (!p.Stockcode) continue;
+        position++;
+        // Aggressive field extraction — the API returns 40+ fields per
+        // product and we want them all for the long-term dataset.
+        // Unknown future fields land in `_raw` for forensic safety.
         products.push({
-          name:      p.DisplayName || p.Name || '',
-          price:     typeof p.Price === 'number' ? p.Price
-                    : typeof p.InstorePrice === 'number' ? p.InstorePrice
-                    : null,
-          stockcode: p.Stockcode,
-          url:       `https://www.woolworths.com.au/shop/productdetails/${p.Stockcode}`,
-          cup:       p.CupString || '',
+          name:         p.DisplayName || p.Name || '',
+          price:        typeof p.Price === 'number' ? p.Price
+                       : typeof p.InstorePrice === 'number' ? p.InstorePrice
+                       : null,
+          stockcode:    p.Stockcode,
+          url:          `https://www.woolworths.com.au/shop/productdetails/${p.Stockcode}`,
+          cup:          p.CupString || '',
+          // Promos / specials
+          was_price:    typeof p.WasPrice === 'number' ? p.WasPrice : null,
+          is_on_special:!!p.IsOnSpecial,
+          save_amount:  typeof p.SavingsAmount === 'number' ? p.SavingsAmount : null,
+          promotion:    p.Promotion || p.PromotionInfo || null,
+          // Identity / classification
+          brand:        p.Brand || null,
+          variety:      p.Variety || null,
+          package_size: p.PackageSize || null,
+          unit_of_size: p.UnitOfSize || null,
+          barcode:      p.Barcode || null,
+          department:   p.Department || null,
+          category:     p.Category || null,
+          sap_dept:     p.SapDepartmentName || null,
+          sap_aisle:    p.SapAisleName || null,
+          // Media / description
+          image_url:    p.LargeImageFile || p.MediumImageFile || p.SmallImageFile || null,
+          description:  p.Description || null,
+          // Availability / restrictions
+          in_stock:     p.IsAvailable !== false,
+          is_available: p.IsAvailable !== false,
+          age_restricted:!!p.AgeRestricted,
+          // Search-result context
+          search_position: position,
+          is_sponsored: !!(p.AdId || p.AdvertId || p.IsAdvertisement),
+          ad_id:        p.AdId || p.AdvertId || null,
+          // Ratings
+          rating:       typeof p.AverageRating === 'number' ? p.AverageRating : null,
+          rating_count: typeof p.RatingCount === 'number' ? p.RatingCount : null,
+          // Diet / additional attributes (keep as-is, structure varies)
+          additional_attributes: Array.isArray(p.AdditionalAttributes) ? p.AdditionalAttributes : null,
+          // Full forensic blob — preserves anything we missed above.
+          _raw: p,
         });
       }
     }
@@ -249,7 +287,7 @@ export async function colesSearch(page, query, apiPattern = null) {
           return lists[0] || [];
         };
         const items = extractList(data);
-        return items.map(p => ({
+        return items.map((p, idx) => ({
           name:  p?.name || p?.productName || p?.title || '',
           price: typeof p?.pricing?.now === 'number' ? p.pricing.now
                 : typeof p?.pricing?.normal === 'number' ? p.pricing.normal
@@ -258,6 +296,36 @@ export async function colesSearch(page, query, apiPattern = null) {
           url:   p?.url || p?.canonicalUrl || null,
           cup:   p?.pricing?.unit?.value ? `${p.pricing.unit.value} ${p.pricing.unit.unit ?? ''}`.trim()
                 : p?.unitPrice || '',
+          // Promos / specials
+          was_price:        typeof p?.pricing?.was === 'number' ? p.pricing.was
+                          : typeof p?.pricing?.normal === 'number' ? p.pricing.normal
+                          : null,
+          is_on_special:    !!(p?.pricing?.onSpecial || p?.pricing?.saveAmount),
+          save_amount:      typeof p?.pricing?.saveAmount === 'number' ? p.pricing.saveAmount : null,
+          promotion:        p?.pricing?.promotion || p?.pricing?.promotionType || null,
+          promotion_text:   p?.pricing?.promotionDescription || p?.pricing?.offerText || null,
+          // Identity / classification
+          brand:            p?.brand?.name || p?.brand || null,
+          size:             p?.size || p?.packSize || null,
+          merchandise_hier: p?.merchandiseHeir || p?.merchandiseHierarchy || null,
+          category:         p?.category?.name || p?.categoryName || null,
+          // Media / description
+          image_url:        p?.imageUris?.large || p?.imageUris?.medium || p?.imageUris?.small
+                          || p?.image?.url || p?.imageUrl || null,
+          description:      p?.description || null,
+          // Availability / restrictions
+          in_stock:         p?.availability?.status !== 'NotAvailable' && p?.availability?.inStock !== false,
+          restrictions:     p?.restrictions || null,
+          // Search-result context
+          search_position:  idx + 1,
+          is_sponsored:     !!(p?.adId || p?.adType || p?.sponsored),
+          ad_id:            p?.adId || null,
+          ad_type:          p?.adType || null,
+          // Ratings
+          rating:           typeof p?.rating?.average === 'number' ? p.rating.average : null,
+          rating_count:     typeof p?.rating?.count === 'number' ? p.rating.count : null,
+          // Full forensic blob — preserves anything we missed.
+          _raw: p,
         })).filter(x => typeof x.price === 'number');
       } catch { return null; }
     }, query, apiPattern);
@@ -278,6 +346,7 @@ export async function colesSearch(page, query, apiPattern = null) {
   return page.evaluate(() => {
     const tiles = document.querySelectorAll('[data-testid="product-tile"], section');
     const out = [];
+    let position = 0;
     for (const tile of tiles) {
       const titleEl = tile.querySelector('[data-testid="product-title"], h2, h3');
       const priceEl = tile.querySelector('[data-testid="product-pricing"] .price__value, .price__value');
@@ -287,12 +356,29 @@ export async function colesSearch(page, query, apiPattern = null) {
       if (!name || name.length < 3) continue;
       const m = priceEl.textContent.match(/\$(\d+\.\d{2})/);
       if (!m) continue;
-      const linkEl = tile.querySelector('a[href*="/product/"]');
+      position++;
+      const linkEl    = tile.querySelector('a[href*="/product/"]');
+      const wasEl     = tile.querySelector('.price__was, [data-testid="product-pricing-was"]');
+      const saveEl    = tile.querySelector('.price__save, [data-testid="product-pricing-save"], .badge');
+      const badgeEl   = tile.querySelector('.product-badge, [data-testid="product-badge"]');
+      const imgEl     = tile.querySelector('img');
+      const sponsoredEl = tile.querySelector('[data-testid*="sponsored"], [class*="sponsored"], [class*="Sponsored"]');
+      const wasMatch  = wasEl?.textContent?.match(/\$(\d+(?:\.\d+)?)/);
+      const saveMatch = saveEl?.textContent?.match(/\$(\d+(?:\.\d+)?)/);
       out.push({
         name,
         price: parseFloat(m[1]),
         url: linkEl?.href || null,
         cup: unitEl?.textContent?.trim() || '',
+        was_price:    wasMatch ? parseFloat(wasMatch[1]) : null,
+        save_amount:  saveMatch ? parseFloat(saveMatch[1]) : null,
+        is_on_special:!!(wasEl || saveEl),
+        promotion_text: badgeEl?.textContent?.trim() || null,
+        image_url:    imgEl?.src || null,
+        in_stock:     true,  // DOM tiles only render for in-stock items
+        search_position: position,
+        is_sponsored: !!sponsoredEl,
+        _source:      'dom-fallback',
       });
     }
     return out;
