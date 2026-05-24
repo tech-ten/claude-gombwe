@@ -111,6 +111,9 @@ function openChat(key) {
   activeSessionKey = key;
   renderChatSidebar();
   renderChatThread();
+  // On mobile, opening a chat = navigate into the detail panel.
+  // Desktop ignores this class (both panels always visible there).
+  document.querySelector('#tab-chat .split-view')?.classList.add('viewing-detail');
 }
 
 function renderChatThread() {
@@ -228,6 +231,7 @@ function openTask(id) {
   activeTaskId = id;
   renderTaskSidebar();
   renderTaskThread(id);
+  document.querySelector('#tab-tasks .split-view')?.classList.add('viewing-detail');
 }
 
 function renderTaskThread(id) {
@@ -800,6 +804,27 @@ function renderCmdResults(query) {
     container.appendChild(div);
   }
 }
+
+// ========== MOBILE: BACK-TO-LIST IN SPLIT-VIEW TABS ==========
+// Each chat/tasks detail-header has a back-arrow button that, on mobile,
+// returns the user to the list of conversations / tasks. The class
+// `viewing-detail` on `.split-view` is what hides the list and shows
+// the detail; the back button removes that class.
+document.querySelectorAll('.back-to-list').forEach(btn => {
+  btn.addEventListener('click', () => {
+    btn.closest('.split-view')?.classList.remove('viewing-detail');
+  });
+});
+
+// When the user clicks a top-level sidebar nav-item to enter Chat or
+// Tasks, they should land on the LIST (not whatever detail was last
+// open). Clearing the class achieves that.
+document.querySelectorAll('.nav-item').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.split-view.viewing-detail')
+      .forEach(sv => sv.classList.remove('viewing-detail'));
+  });
+});
 
 // ========== SIDEBAR TOGGLE / MOBILE DRAWER ==========
 // On desktop the hamburger collapses the sidebar to icon-only.

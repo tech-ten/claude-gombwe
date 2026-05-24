@@ -2553,10 +2553,45 @@ body {
     min-height: 40px;
   }
 
-  /* Split-view (Chat/Tasks) flips to single column with toggle */
-  .split-view { flex-direction: column; }
-  .list-panel { width: 100%; max-height: 200px; }
-  .detail-panel { flex: 1; }
+  /* Split-view (Chat/Tasks) — show LIST or DETAIL, not both. State
+     class .viewing-detail on .split-view determines which is visible.
+     Set by openChat()/openTask() in app.js; cleared by .back-to-list. */
+  .split-view {
+    flex-direction: column;
+    position: relative;
+  }
+  .list-panel { width: 100%; flex: 1; max-height: none; }
+  .detail-panel { display: none; }
+
+  .split-view.viewing-detail .list-panel { display: none; }
+  .split-view.viewing-detail .detail-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    width: 100%;
+  }
+
+  /* Back-to-list arrow — visible only on mobile, only when viewing a detail */
+  .back-to-list {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 8px;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .back-to-list:hover { background: var(--bg-deep); color: var(--text); }
+}
+
+/* Hide back arrow on desktop — both panels always visible there */
+@media (min-width: 768px) {
+  .back-to-list { display: none; }
 }
 
 /* ──────────────────────────────────────────────────────────────────
