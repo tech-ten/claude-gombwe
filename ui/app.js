@@ -801,10 +801,41 @@ function renderCmdResults(query) {
   }
 }
 
-// ========== SIDEBAR TOGGLE ==========
-document.getElementById('sidebarToggle').addEventListener('click', () => {
-  document.querySelector('.sidebar').classList.toggle('collapsed');
-});
+// ========== SIDEBAR TOGGLE / MOBILE DRAWER ==========
+// On desktop the hamburger collapses the sidebar to icon-only.
+// On mobile (<768px) the sidebar is hidden by default and slides in as a drawer.
+// Tablet (768-1024) auto-collapses via CSS; toggle there is a no-op visually.
+(function () {
+  const sidebar = document.querySelector('.sidebar');
+  const backdrop = document.getElementById('drawerBackdrop');
+  const toggleBtn = document.getElementById('sidebarToggle');
+  const mobileMql = window.matchMedia('(max-width: 767px)');
+
+  function closeDrawer() {
+    sidebar.classList.remove('drawer-open');
+    backdrop?.classList.remove('show');
+  }
+
+  toggleBtn?.addEventListener('click', () => {
+    if (mobileMql.matches) {
+      const open = sidebar.classList.toggle('drawer-open');
+      backdrop?.classList.toggle('show', open);
+    } else {
+      sidebar.classList.toggle('collapsed');
+    }
+  });
+
+  backdrop?.addEventListener('click', closeDrawer);
+
+  // Tapping any nav-item on mobile closes the drawer (the user has navigated)
+  document.querySelectorAll('.nav-item').forEach(b => {
+    b.addEventListener('click', () => { if (mobileMql.matches) closeDrawer(); });
+  });
+
+  // If the viewport crosses the mobile breakpoint while the drawer is open,
+  // close it so the desktop layout doesn't render with leftover drawer state.
+  mobileMql.addEventListener('change', closeDrawer);
+})();
 
 // ========== TOP BAR SEARCH ==========
 document.getElementById('topbarSearch')?.addEventListener('click', () => {

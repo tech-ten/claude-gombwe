@@ -919,83 +919,117 @@ body {
 /* ── Family Page ──────────────────────────────────────────── */
 
 .family-page {
-  --cream: #F6F3EE;
-  --parchment: #EDE8DF;
-  --ink: #2A2520;
-  --ink-light: #6B5D4D;
-  --terracotta: #C47B4B;
-  --terracotta-light: #D4956B;
-  --olive: #6B8B5C;
-  --olive-dark: #536B42;
-  --sage: #A8B896;
-  --warm-white: #FDFCF9;
-  --warm-border: #E4DDD3;
-  --warm-shadow: rgba(42, 37, 32, 0.05);
-  --family-serif: 'Cormorant Garamond', Georgia, serif;
-  --family-radius: 12px;
+  /* Clean professional palette: cool neutral base, single muted accent.
+     Inspired by Data Annotation / Cloudflare dashboards — substance over
+     character. NOT a warm cream + terracotta scheme; that was the previous
+     iteration. */
+  --fam-bg:           #FFFFFF;
+  --fam-bg-soft:      #FAFAFB;     /* soft section background */
+  --fam-border:       #E4E6EB;     /* hairline divider */
+  --fam-border-soft:  #EFF0F3;
+  --fam-text:         #1A1D24;     /* primary text — near-black */
+  --fam-text-2:       #4B5260;     /* secondary text */
+  --fam-text-3:       #8A92A0;     /* meta / labels */
+  --fam-accent:       #2563EB;     /* single muted blue accent — used sparingly */
+  --fam-accent-soft:  rgba(37, 99, 235, 0.08);
+  --fam-success:      #15803D;
+  --fam-danger:       #B91C1C;
+  --fam-radius:       6px;
+  --fam-radius-lg:    8px;
 
-  max-width: 920px;
+  /* Single sans-serif throughout, weight + size for hierarchy.
+     Inherits Plus Jakarta Sans from the global --sans. */
+  --fam-font: var(--sans);
+
+  max-width: 980px;
+  background: var(--fam-bg);
+  color: var(--fam-text);
 }
 
-.family-page .page-header { margin-bottom: 28px; }
+.family-page .page-header {
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--fam-border);
+}
 
 .family-page .page-title {
-  font-family: var(--family-serif);
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--ink);
-  letter-spacing: -0.03em;
+  font-family: var(--fam-font);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--fam-text);
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
 }
 
 .family-page .page-desc {
-  color: var(--ink-light);
+  color: var(--fam-text-3);
   font-size: 13.5px;
+  margin: 0;
 }
 
 .family-section {
-  margin-bottom: 36px;
+  margin-bottom: 40px;
 }
 
 .family-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--fam-border-soft);
 }
 
 .family-section-title {
-  font-family: var(--family-serif);
-  font-size: 22px;
+  font-family: var(--fam-font);
+  font-size: 14px;
   font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.02em;
+  color: var(--fam-text);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  /* Sub-header treatment — labels a region without dominating it */
 }
 
 .family-page .btn-sm {
-  padding: 6px 14px;
-  font-size: 11.5px;
-  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border-radius: var(--fam-radius);
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 .family-page .btn-ghost.btn-sm {
-  border-color: var(--warm-border);
-  color: var(--ink-light);
+  background: transparent;
+  border: 1px solid var(--fam-border);
+  color: var(--fam-text-2);
 }
 
 .family-page .btn-ghost.btn-sm:hover {
-  border-color: var(--terracotta);
-  color: var(--terracotta);
-  background: rgba(196, 123, 75, 0.05);
+  border-color: var(--fam-accent);
+  color: var(--fam-accent);
+  background: var(--fam-accent-soft);
 }
 
 .family-page .btn-primary {
-  background: var(--terracotta);
-  color: white;
-  border-radius: 20px;
+  background: var(--fam-accent);
+  color: #fff;
+  border: 1px solid var(--fam-accent);
+  border-radius: var(--fam-radius);
+  font-weight: 500;
 }
 
 .family-page .btn-primary:hover {
-  background: var(--terracotta-light);
+  background: #1D4ED8;
+  border-color: #1D4ED8;
+}
+
+/* Cards are flat: hairline border, no shadow — matches dashboard.cloudflare */
+.family-page .card {
+  background: var(--fam-bg);
+  border: 1px solid var(--fam-border);
+  border-radius: var(--fam-radius-lg);
+  box-shadow: none;
+  overflow: hidden;
 }
 
 /* ── Family Members ──────────────────────────────────────── */
@@ -1005,7 +1039,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 18px;
-  border-bottom: 1px solid var(--parchment);
+  border-bottom: 1px solid var(--fam-border-soft);
 }
 
 .family-page .member-item:last-of-type { border-bottom: none; }
@@ -1017,10 +1051,10 @@ body {
 }
 
 .family-page .member-name {
-  font-family: var(--family-serif);
+  font-family: var(--fam-font);
   font-size: 15px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--fam-text);
 }
 
 .family-page .member-type {
@@ -1028,22 +1062,22 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--ink-light);
-  background: var(--parchment);
+  color: var(--fam-text-2);
+  background: var(--fam-bg-soft);
   padding: 2px 10px;
   border-radius: 10px;
 }
 
 .family-page .member-dietary {
   font-size: 11.5px;
-  color: var(--terracotta);
+  color: var(--fam-accent);
   font-style: italic;
 }
 
 .family-page .member-remove {
   background: none;
   border: none;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   cursor: pointer;
   font-size: 11px;
   font-weight: 500;
@@ -1057,8 +1091,8 @@ body {
 .family-page .member-summary {
   padding: 10px 18px;
   font-size: 11.5px;
-  color: var(--ink-light);
-  border-top: 1px solid var(--parchment);
+  color: var(--fam-text-2);
+  border-top: 1px solid var(--fam-border-soft);
 }
 
 /* ── Week Calendar Grid ──────────────────────────────────── */
@@ -1074,13 +1108,13 @@ body {
 }
 
 .family-page .week-day {
-  background: var(--warm-white);
-  border: 1px solid var(--warm-border);
-  border-radius: var(--family-radius);
+  background: var(--fam-bg);
+  border: 1px solid var(--fam-border);
+  border-radius: var(--fam-radius-lg);
   padding: 14px;
   min-height: 140px;
   transition: all 0.25s ease;
-  box-shadow: 0 1px 3px var(--warm-shadow);
+  box-shadow: none;
 }
 
 .family-page .week-day:hover {
@@ -1089,15 +1123,15 @@ body {
 }
 
 .family-page .week-day.today {
-  background: var(--warm-white);
-  border-color: var(--terracotta);
+  background: var(--fam-bg);
+  border-color: var(--fam-accent);
 }
 
 .family-page .week-day.today .week-day-header {
-  background: var(--terracotta);
+  background: var(--fam-accent);
   margin: -14px -14px 10px;
   padding: 10px 14px;
-  border-radius: var(--family-radius) var(--family-radius) 0 0;
+  border-radius: var(--fam-radius-lg) var(--fam-radius-lg) 0 0;
 }
 
 .family-page .week-day.today .week-day-label,
@@ -1117,14 +1151,14 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
 }
 
 .family-page .week-day-num {
-  font-family: var(--family-serif);
+  font-family: var(--fam-font);
   font-size: 22px;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--fam-text);
   line-height: 1;
 }
 
@@ -1138,7 +1172,7 @@ body {
   font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
 }
 
 .family-page .week-nav .btn-ghost {
@@ -1149,14 +1183,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-color: var(--warm-border);
-  color: var(--ink-light);
+  border-color: var(--fam-border);
+  color: var(--fam-text-2);
 }
 
 .family-page .week-nav .btn-ghost:hover {
-  border-color: var(--terracotta);
-  color: var(--terracotta);
-  background: rgba(196, 123, 75, 0.05);
+  border-color: var(--fam-accent);
+  color: var(--fam-accent);
+  background: var(--fam-accent-soft);
 }
 
 .family-page .week-day-meals {
@@ -1177,7 +1211,7 @@ body {
 
 .family-page .meal-slot {
   font-size: 12px;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 6px;
@@ -1186,13 +1220,13 @@ body {
 }
 
 .family-page .meal-slot:hover {
-  background: rgba(196, 123, 75, 0.05);
-  color: var(--ink);
+  background: var(--fam-bg-soft);
+  color: var(--fam-text);
 }
 
-.family-page .meal-slot[data-slot="breakfast"] { border-left-color: var(--terracotta-light); }
-.family-page .meal-slot[data-slot="lunch"] { border-left-color: var(--olive); }
-.family-page .meal-slot[data-slot="dinner"] { border-left-color: var(--terracotta); }
+.family-page .meal-slot[data-slot="breakfast"] { border-left-color: var(--fam-accent); }
+.family-page .meal-slot[data-slot="lunch"] { border-left-color: var(--fam-success); }
+.family-page .meal-slot[data-slot="dinner"] { border-left-color: var(--fam-accent); }
 
 .family-page .meal-slot-label {
   font-size: 8px;
@@ -1202,19 +1236,19 @@ body {
   margin-right: 4px;
 }
 
-.family-page .meal-slot[data-slot="breakfast"] .meal-slot-label { color: var(--terracotta-light); }
-.family-page .meal-slot[data-slot="lunch"] .meal-slot-label { color: var(--olive); }
-.family-page .meal-slot[data-slot="dinner"] .meal-slot-label { color: var(--terracotta); }
+.family-page .meal-slot[data-slot="breakfast"] .meal-slot-label { color: var(--fam-accent); }
+.family-page .meal-slot[data-slot="lunch"] .meal-slot-label { color: var(--fam-success); }
+.family-page .meal-slot[data-slot="dinner"] .meal-slot-label { color: var(--fam-accent); }
 
 .family-page .meal-slot-name {
-  font-family: var(--family-serif);
+  font-family: var(--fam-font);
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--fam-text);
 }
 
 .family-page .meal-slot.empty .meal-slot-name {
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   font-style: italic;
   font-weight: 400;
   opacity: 0.4;
@@ -1230,16 +1264,16 @@ body {
   border-radius: 6px;
 }
 
-.family-page .week-event.school { background: rgba(196, 123, 75, 0.08); color: var(--terracotta); }
-.family-page .week-event.general { background: rgba(107, 139, 92, 0.08); color: var(--olive-dark); }
+.family-page .week-event.school { background: var(--fam-accent-soft); color: var(--fam-accent); }
+.family-page .week-event.general { background: rgba(21, 128, 61, 0.08); color: var(--fam-success); }
 
 /* ── Grocery / Non-food / Pantry cards ───────────────────── */
 
 .family-page .card {
-  background: var(--warm-white);
-  border: 1px solid var(--warm-border);
-  border-radius: var(--family-radius);
-  box-shadow: 0 1px 3px var(--warm-shadow);
+  background: var(--fam-bg);
+  border: 1px solid var(--fam-border);
+  border-radius: var(--fam-radius-lg);
+  box-shadow: none;
 }
 
 .family-page .grocery-item {
@@ -1247,7 +1281,7 @@ body {
   align-items: center;
   gap: 12px;
   padding: 10px 18px;
-  border-bottom: 1px solid var(--parchment);
+  border-bottom: 1px solid var(--fam-border-soft);
   font-size: 13.5px;
   line-height: 1.4;
 }
@@ -1256,7 +1290,7 @@ body {
   width: 17px;
   height: 17px;
   min-width: 17px;
-  border: 2px solid var(--ink-light);
+  border: 2px solid var(--fam-text-2);
   border-radius: 4px;
   cursor: pointer;
   flex-shrink: 0;
@@ -1264,10 +1298,10 @@ body {
   transition: all var(--transition);
 }
 
-.family-page .grocery-check:hover { border-color: var(--terracotta); }
+.family-page .grocery-check:hover { border-color: var(--fam-accent); }
 .family-page .grocery-item.checked .grocery-check {
-  background: var(--terracotta);
-  border-color: var(--terracotta);
+  background: var(--fam-accent);
+  border-color: var(--fam-accent);
 }
 .family-page .grocery-item.checked .grocery-check::after {
   content: '';
@@ -1280,21 +1314,22 @@ body {
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.family-page .grocery-name { flex: 1; color: var(--ink); }
+.family-page .grocery-name { flex: 1; color: var(--fam-text); }
 
 .family-page .grocery-remove:hover { color: #c0392b; }
 
 .family-page .grocery-add input {
-  border-color: var(--warm-border);
+  border-color: var(--fam-border);
   border-radius: var(--radius);
-  background: var(--warm-white);
+  background: var(--fam-bg);
   font-size: 13.5px;
   padding: 9px 14px;
 }
 
 .family-page .grocery-add input:focus {
-  border-color: var(--terracotta);
-  box-shadow: 0 0 0 3px rgba(196, 123, 75, 0.06);
+  border-color: var(--fam-accent);
+  box-shadow: 0 0 0 3px var(--fam-accent-soft);
+  outline: none;
 }
 
 .family-page .grocery-source {
@@ -1304,18 +1339,18 @@ body {
   font-weight: 500;
 }
 
-.family-page .grocery-source.from-auto { color: var(--terracotta); background: rgba(196, 123, 75, 0.07); }
-.family-page .grocery-source.from-human { color: var(--olive-dark); background: rgba(107, 139, 92, 0.08); }
+.family-page .grocery-source.from-auto { color: var(--fam-accent); background: var(--fam-accent-soft); }
+.family-page .grocery-source.from-human { color: var(--fam-success); background: rgba(21, 128, 61, 0.08); }
 
 .family-page .pantry-item {
-  border-bottom-color: var(--parchment);
+  border-bottom-color: var(--fam-border-soft);
   padding: 12px 18px;
 }
 
 .family-page .pantry-remove:hover { color: #c0392b; }
 
 .family-page .empty-list {
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   font-size: 13.5px;
   padding: 28px 18px;
 }
@@ -1328,7 +1363,7 @@ body {
 
 .order-status {
   font-size: 11.5px;
-  color: var(--olive-dark);
+  color: var(--fam-success);
   font-weight: 500;
 }
 
@@ -1336,33 +1371,33 @@ body {
 
 .family-page .school-event {
   padding: 14px 18px;
-  border-bottom-color: var(--parchment);
+  border-bottom-color: var(--fam-border-soft);
 }
 
 .family-page .school-event-title {
-  font-family: var(--family-serif);
+  font-family: var(--fam-font);
   font-size: 15px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--fam-text);
 }
 
-.family-page .school-event-meta { color: var(--ink-light); }
-.family-page .school-event-date { color: var(--terracotta); font-weight: 500; }
+.family-page .school-event-meta { color: var(--fam-text-2); }
+.family-page .school-event-date { color: var(--fam-accent); font-weight: 500; }
 
 /* ── Recipes ─────────────────────────────────────────────── */
 
 .recipe-hint {
   font-size: 11.5px;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   font-style: italic;
 }
 
 .family-page .recipe-card {
-  background: var(--warm-white);
-  border: 1px solid var(--warm-border);
-  border-radius: var(--family-radius);
+  background: var(--fam-bg);
+  border: 1px solid var(--fam-border);
+  border-radius: var(--fam-radius-lg);
   margin-bottom: 10px;
-  box-shadow: 0 1px 3px var(--warm-shadow);
+  box-shadow: none;
   transition: box-shadow 0.25s;
 }
 
@@ -1375,22 +1410,22 @@ body {
   cursor: pointer;
 }
 
-.family-page .recipe-header:hover { background: var(--cream); }
+.family-page .recipe-header:hover { background: var(--fam-bg-soft); }
 
 .family-page .recipe-name {
-  font-family: var(--family-serif);
+  font-family: var(--fam-font);
   font-size: 16px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--fam-text);
 }
 
 .family-page .recipe-count {
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   font-size: 11.5px;
 }
 
 .family-page .recipe-body {
-  border-top-color: var(--parchment);
+  border-top-color: var(--fam-border-soft);
 }
 
 .recipe-body.collapsed { display: none; }
@@ -1402,17 +1437,17 @@ body {
   gap: 8px;
 }
 
-.family-page .recipe-ingredient:hover { background: var(--cream); }
+.family-page .recipe-ingredient:hover { background: var(--fam-bg-soft); }
 
 .family-page .recipe-ingredient-name {
   flex: 1;
   cursor: pointer;
   padding: 2px 0;
-  color: var(--ink);
+  color: var(--fam-text);
   font-size: 13.5px;
 }
 
-.family-page .recipe-ingredient-name:hover { color: var(--terracotta); }
+.family-page .recipe-ingredient-name:hover { color: var(--fam-accent); }
 
 .recipe-ingredient-tag {
   font-size: 9px;
@@ -1423,12 +1458,12 @@ body {
   font-weight: 600;
 }
 
-.recipe-ingredient-tag.auto { color: var(--ink-light); background: var(--parchment); }
-.recipe-ingredient-tag.human { color: var(--terracotta); background: rgba(196, 123, 75, 0.08); }
+.recipe-ingredient-tag.auto { color: var(--fam-text-2); background: var(--parchment); }
+.recipe-ingredient-tag.human { color: var(--fam-accent); background: var(--fam-accent-soft); }
 
 .recipe-ingredient-remove {
   font-size: 10px;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   background: none;
   border: none;
   cursor: pointer;
@@ -1440,7 +1475,7 @@ body {
 .recipe-ingredient-remove:hover { color: #c0392b; }
 
 .family-page .recipe-add-form {
-  border-top-color: var(--parchment);
+  border-top-color: var(--fam-border-soft);
   padding: 10px 18px 14px;
   display: flex;
   gap: 8px;
@@ -1448,18 +1483,18 @@ body {
 
 .family-page .recipe-add-form input {
   flex: 1;
-  border-color: var(--warm-border);
+  border-color: var(--fam-border);
   border-radius: var(--radius);
-  background: var(--cream);
+  background: var(--fam-bg-soft);
   font-size: 13px;
   padding: 7px 12px;
 }
 
-.family-page .recipe-add-form input:focus { border-color: var(--terracotta); }
+.family-page .recipe-add-form input:focus { border-color: var(--fam-accent); }
 
 .family-page .recipe-instructions {
-  border-top-color: var(--parchment);
-  color: var(--ink-light);
+  border-top-color: var(--fam-border-soft);
+  color: var(--fam-text-2);
   padding: 12px 18px 16px;
   font-size: 13px;
   line-height: 1.7;
@@ -1469,7 +1504,7 @@ body {
 
 .family-page .action-item {
   padding: 12px 18px;
-  border-bottom-color: var(--parchment);
+  border-bottom-color: var(--fam-border-soft);
   font-size: 13px;
   display: flex;
   gap: 10px;
@@ -1484,22 +1519,22 @@ body {
   letter-spacing: 0.02em;
 }
 
-.action-actor.human { color: var(--ink-light); }
-.action-actor.ai { color: var(--terracotta); }
+.action-actor.human { color: var(--fam-text-2); }
+.action-actor.ai { color: var(--fam-accent); }
 
 .action-body { flex: 1; }
 
 .action-type {
   font-weight: 600;
-  color: var(--ink);
+  color: var(--fam-text);
   margin-right: 6px;
 }
 
-.action-detail { color: var(--ink-light); }
+.action-detail { color: var(--fam-text-2); }
 
 .action-time {
   font-size: 10px;
-  color: var(--ink-light);
+  color: var(--fam-text-2);
   opacity: 0.5;
   white-space: nowrap;
 }
@@ -1773,11 +1808,11 @@ body {
 .ov-enforcement-cats { display: flex; flex-wrap: wrap; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 .ov-enforcement-cat { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .ov-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
-.ov-cat-name { font-family: monospace; font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); }
-.ov-cat-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+.ov-cat-name { font-family: monospace; font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fam-text); }
+.ov-cat-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--fam-text); }
 .ov-sub-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 6px; }
 .ov-device-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12.5px; }
-.ov-device-name { color: var(--ink); }
+.ov-device-name { color: var(--fam-text); }
 .ov-device-count { font-variant-numeric: tabular-nums; color: var(--text-3); }
 .ov-cat-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; margin-right: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; font-size: 11px; font-family: monospace; text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -2044,7 +2079,7 @@ body {
 /* ── Network/Access Control — category management UI ──────────── */
 
 .eero-form-label {
-  font-size: 13px; font-weight: 500; color: var(--ink);
+  font-size: 13px; font-weight: 500; color: var(--fam-text);
   margin: 0 0 8px;
 }
 .ac-uncat-list { padding: 0; margin: 0; list-style: none; max-height: 320px; overflow-y: auto; }
@@ -2055,7 +2090,7 @@ body {
   padding: 8px 0; border-bottom: 1px solid var(--border);
 }
 .ac-uncat-row:last-child { border-bottom: 0; }
-.ac-uncat-name { color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-uncat-name { color: var(--fam-text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-uncat-actions { display: inline-flex; gap: 6px; align-items: center; }
 .ac-uncat-app { width: 110px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface); }
 .ac-uncat-cat { padding: 4px 6px; font-size: 12px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface); }
@@ -2075,7 +2110,7 @@ body {
 .ac-adlist-row--custom { grid-template-columns: 1fr auto; }
 .ac-adlist-row--custom > button { justify-self: end; }
 .ac-adlist-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
-.ac-adlist-label { color: var(--ink); font-weight: 500; }
+.ac-adlist-label { color: var(--fam-text); font-weight: 500; }
 
 .ac-cat-block { border-bottom: 1px solid var(--border); }
 .ac-cat-block[open] { background: rgba(0, 0, 0, 0.015); }
@@ -2089,7 +2124,7 @@ body {
 .ac-cat-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
 .ac-cat-name {
   font-family: monospace; font-size: 12px; letter-spacing: 0.06em;
-  text-transform: uppercase; color: var(--ink); font-weight: 500;
+  text-transform: uppercase; color: var(--fam-text); font-weight: 500;
   min-width: 100px;
 }
 .ac-cat-counts {
@@ -2107,7 +2142,7 @@ body {
   padding: 4px 0;
   font-size: 12.5px;
 }
-.ac-cat-suffix { font-family: monospace; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-cat-suffix { font-family: monospace; color: var(--fam-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-entry-source {
   font-family: monospace; font-size: 10px; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--text-3);
@@ -2189,7 +2224,7 @@ body {
 
 .eero-device-main { cursor: pointer; }
 .eero-device.is-expanded {
-  background: var(--parchment);
+  background: var(--fam-bg-soft);
 }
 .eero-device-detail {
   grid-column: 1 / -1;
@@ -2231,7 +2266,7 @@ body {
   font-size: 12.5px;
 }
 .dd-k { color: var(--text-3); }
-.dd-v { color: var(--text-1, var(--ink)); overflow: hidden; text-overflow: ellipsis; }
+.dd-v { color: var(--text-1, var(--fam-text)); overflow: hidden; text-overflow: ellipsis; }
 .dd-v code { font-family: monospace; font-size: 11.5px; }
 .dd-title {
   font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
@@ -2275,11 +2310,11 @@ body {
 }
 .recipe-mods {
   margin-top: 8px; padding: 8px 10px;
-  background: var(--parchment); border-radius: 4px; font-size: 13px;
+  background: var(--fam-bg-soft); border-radius: 4px; font-size: 13px;
 }
 .recipe-mods-title { font-weight: 500; margin-bottom: 4px; color: var(--text-2); }
 .recipe-mod        { margin: 2px 0; color: var(--text-2); }
-.recipe-mod-who    { font-weight: 500; color: var(--ink); }
+.recipe-mod-who    { font-weight: 500; color: var(--fam-text); }
 .recipe-tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
 .recipe-tag {
   font-size: 10.5px; letter-spacing: 0.04em;
@@ -2297,8 +2332,8 @@ body {
 }
 .deal-row:last-child { border-bottom: 0; }
 .deal-row:hover      { background: var(--parchment); }
-.deal-name    { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.deal-price   { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 500; }
+.deal-name    { color: var(--fam-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deal-price   { font-variant-numeric: tabular-nums; color: var(--fam-text); font-weight: 500; }
 .deal-store   { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin-left: 4px; }
 .deal-ceiling { font-size: 11px; color: var(--text-3); }
 
@@ -2310,12 +2345,12 @@ body {
 }
 .plan-row:last-child { border-bottom: 0; }
 .plan-date { font-family: monospace; font-size: 12px; color: var(--text-3); }
-.plan-name { color: var(--ink); }
-.plan-cost { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 500; }
+.plan-name { color: var(--fam-text); }
+.plan-cost { font-variant-numeric: tabular-nums; color: var(--fam-text); font-weight: 500; }
 .plan-flag { color: #b85c00; }
 .plan-mods { font-size: 12px; }
 .plan-mods summary       { cursor: pointer; color: var(--text-2); }
-.plan-mods[open] > summary { color: var(--ink); }
+.plan-mods[open] > summary { color: var(--fam-text); }
 
 .wl-cat-head {
   font-family: monospace; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -2327,7 +2362,7 @@ body {
   align-items: center; gap: 10px;
   padding: 6px 10px; font-size: 13.5px;
 }
-.wl-name   { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-name   { color: var(--fam-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-prices { font-family: monospace; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .wl-max    { font-size: 12px; color: var(--text-3); display: inline-flex; align-items: center; gap: 4px; }
 .wl-max-input {
@@ -2355,4 +2390,195 @@ body {
   .nav-item { justify-content: center; padding: 10px; }
   .nav-item span:last-child { display: none; }
   .list-panel { width: 180px; }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   RESPONSIVE LAYER  (added 2026-05-24 — mobile + tablet)
+   ──────────────────────────────────────────────────────────────────
+   Three breakpoints:
+   - Mobile  (<768px):   sidebar → off-canvas drawer, hamburger toggles
+   - Tablet  (768-1024): sidebar auto-collapses to icon-only
+   - Desktop (>1024px):  unchanged from existing layout
+
+   Touch targets ≥ 44px on mobile (Apple HIG).
+   Tables get overflow wrappers; subtabs scroll horizontally.
+   ────────────────────────────────────────────────────────────────── */
+
+/* Mobile drawer backdrop */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(42, 37, 32, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+  z-index: 19;
+}
+.drawer-backdrop.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Tablet: 768–1024px ─────────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .sidebar { width: 54px; }
+  .sidebar .nav-label { display: none; }
+  .sidebar .nav-item {
+    justify-content: center;
+    padding: 10px;
+    gap: 0;
+  }
+  .sidebar .nav-item span:last-child { display: none; }
+  .sidebar .nav-dot { width: 6px; height: 6px; }
+}
+
+/* ── Mobile: <768px ─────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Topbar tightens: no search, smaller brand, less padding */
+  .topbar { padding: 0 12px; gap: 10px; height: 52px; }
+  .topbar-left { min-width: 0; gap: 8px; }
+  .topbar-brand { font-size: 20px; }
+  .topbar-center { display: none; }
+  .topbar-right { font-size: 10px; gap: 10px; min-width: 0; }
+
+  /* Sidebar becomes an off-canvas drawer.
+     `width !important` overrides the tablet-range collapsed width. */
+  .sidebar {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    bottom: 0;
+    width: 240px !important;
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
+    z-index: 20;
+    box-shadow: 4px 0 16px rgba(42, 37, 32, 0.12);
+  }
+  .sidebar.drawer-open { transform: translateX(0); }
+
+  /* When the drawer IS open, nav items render full-width again */
+  .sidebar.drawer-open .nav-label { display: block; }
+  .sidebar.drawer-open .nav-item {
+    justify-content: flex-start;
+    padding: 12px 14px;
+    gap: 10px;
+    min-height: 44px;
+  }
+  .sidebar.drawer-open .nav-item span:last-child { display: inline; }
+  .sidebar.drawer-open .nav-dot { width: 5px; height: 5px; }
+
+  /* App container goes block so the (now-fixed) sidebar doesn't reserve space */
+  #app { display: block; height: calc(100vh - 52px); }
+  .content { width: 100%; height: 100%; }
+  .tab-content.active { display: flex; flex-direction: column; }
+
+  /* Subtab rows that overflow → horizontal scroll, no scrollbar visible */
+  .eero-subnav,
+  .nav-tabs,
+  .eero-section-bar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .eero-subnav::-webkit-scrollbar,
+  .nav-tabs::-webkit-scrollbar,
+  .eero-section-bar::-webkit-scrollbar { display: none; }
+  .eero-subtab, .filter-btn { flex-shrink: 0; }
+
+  /* Tables: stop forcing layouts that overflow viewport */
+  .eero-table, .audit-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+  .eero-table thead, .eero-table tbody {
+    display: table;
+    width: 100%;
+    min-width: 600px;
+  }
+
+  /* Form inputs hit Apple's 44px minimum */
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="url"],
+  select,
+  textarea {
+    min-height: 44px;
+    font-size: 16px;  /* prevents iOS Safari from auto-zooming on focus */
+  }
+  button.btn-sm,
+  button.btn-primary,
+  button.btn-secondary,
+  button.btn-ghost {
+    min-height: 40px;
+  }
+
+  /* Split-view (Chat/Tasks) flips to single column with toggle */
+  .split-view { flex-direction: column; }
+  .list-panel { width: 100%; max-height: 200px; }
+  .detail-panel { flex: 1; }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   FAMILY PAGE — refreshed layout + responsive
+   ──────────────────────────────────────────────────────────────────
+   Cleaner aesthetic: tighter sections divided by hairlines instead of
+   nested cards. Section headers gain a small subtitle slot for context.
+   Two-column grid for grocery/pantry/non-food on tablet+ where the
+   content benefits from side-by-side visibility.
+   ────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .family-page { max-width: 100%; padding-right: 24px; padding-left: 24px; }
+  .family-page .page-title { font-size: 26px; }
+  .family-section { margin-bottom: 28px; }
+  .family-section-title { font-size: 19px; }
+}
+
+@media (max-width: 767px) {
+  .family-page {
+    padding: 18px 14px;
+  }
+  .family-page .page-header { margin-bottom: 18px; }
+  .family-page .page-title { font-size: 22px; }
+  .family-page .page-desc { font-size: 12.5px; }
+  .family-section { margin-bottom: 24px; }
+  .family-section-title { font-size: 16px; }
+
+  /* Section header: stack title + actions when actions wrap */
+  .family-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .family-section-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+  .family-section-actions .btn-sm,
+  .family-section-actions button { flex: 1 1 auto; min-width: 0; }
+
+  /* Grocery add forms: full-width input + button row */
+  .grocery-add form,
+  .grocery-add {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .grocery-add input { width: 100%; }
+  .grocery-add button { width: 100%; }
+
+  /* Week grid: shrink + scroll if needed */
+  .week-grid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
