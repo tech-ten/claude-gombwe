@@ -21,12 +21,25 @@
  */
 
 import { spawn } from 'node:child_process';
-import { significantWords, normaliseName } from './grocery-lib.mjs';
+import { significantWords, normaliseName, stripNotes } from './grocery-lib.mjs';
 
 const CLAUDE_BIN = 'claude';
 const HAIKU = 'claude-haiku-4-5-20251001';
 const TIMEOUT_MS = 60000;
 const MAX_CANDIDATES_TO_LLM = 20;
+
+// Words that turn a generic product into a SPECIFIC variant. Same brand
+// with different qualifier = different product. Picked product MUST
+// carry the watchlist's qualifier word(s) if any are present.
+const STRICT_QUALIFIERS = new Set([
+  'plus','premium','original','sensitive','concentrate','gentle',
+  'professional','classic','ultimate','advanced','fresh','pure',
+  'natural','organic','select','simply','gold','pro','active',
+  'lemon','apple','orange','mint','eucalyptus','lavender','rose',
+  'crunchy','smooth','crispy','crisp','wholegrain','whole',
+  'unsalted','salted','light','full','low','reduced','extra',
+  'plain','spicy','sweet','sour','garlic','herb',
+]);
 
 function runHaiku(prompt) {
   return new Promise((resolve, reject) => {
@@ -54,6 +67,17 @@ function buildPrompt(item, candidates, store) {
   const lines = candidates.map((c, i) =>
     `${i}. "${c.name}" — $${c.price}${c.cup ? ` (${c.cup})` : ''}`
   ).join('\n');
+
+  // Pull out qualifier words present in the watchlist so we can demand
+  // they appear in the picked product. Catches brand-line variant
+  // confusion like "Cold Power Advanced PLUS" matched against "Advanced
+  // CLEAN" — they're different formulations from the same brand.
+  const wlWords = significantWords(stripNotes(item.name));
+  const qualifiers = wlWords.filter(w => STRICT_QUALIFIERS.has(w));
+  const qualifierLine = qualifiers.length > 0
+    ? `HARD CONSTRAINT — the picked product's name MUST contain ALL of these qualifier words: ${qualifiers.map(q => `"${q}"`).join(', ')}. These distinguish brand-line variants from each other. If no candidate satisfies this, reply "none".`
+    : '';
+
   return [
     `You are picking a grocery product for a household shopping list.`,
     '',
@@ -62,23 +86,29 @@ function buildPrompt(item, candidates, store) {
     `Candidates from ${store}:`,
     lines,
     '',
+    qualifierLine,
+    qualifierLine ? '' : null,
     `Decision process (apply IN THIS ORDER, don't skip ahead):`,
     '',
     `STEP 1 — Filter to candidates that GENUINELY ARE the wanted product.`,
     `        Reject anything that's a different kind of product, even if it shares words or is cheap. Examples of WRONG matches you must reject:`,
-    `          - "Salted Butter" wanted, candidate "Butter Chicken Sauce" or "Microwave Popcorn Butter" or "Peanut Butter" → ALL WRONG (different products)`,
-    `          - "Laundry Liquid" wanted, candidate "Dishwashing Liquid" or "Wool Wash" → ALL WRONG (different cleaning products)`,
-    `          - "Chicken Breast" wanted, candidate "Chicken Breast Dino Nuggets" or "Butter Chicken Sauce" → ALL WRONG (different category)`,
+    `          - "Salted Butter" wanted, candidate "Butter Chicken Sauce" / "Microwave Popcorn Butter" / "Peanut Butter" → ALL WRONG (different products)`,
+    `          - "Laundry Liquid" wanted, candidate "Dishwashing Liquid" / "Wool Wash" → ALL WRONG (different cleaning products)`,
+    `          - "Chicken Breast" wanted, candidate "Chicken Breast Dino Nuggets" / "Butter Chicken Sauce" → ALL WRONG (different category)`,
+    `          - "Cold Power Advanced PLUS 4L" wanted, candidate "Cold Power Advanced CLEAN 2L" → WRONG (different formulation in same brand line)`,
+    `          - "Pantene Pro-V Original" wanted, candidate "Pantene Pro-V Sheer Volume" → WRONG (different variant)`,
+    `          - "Bega Peanut Butter Smooth" wanted, candidate "Bega Peanut Butter Crunchy" → WRONG (different variant of same brand)`,
     `        Same product in different words is FINE: "Whole Milk" = "Full Cream Milk"; "Front Loader Laundry Liquid" = "Laundry Liquid".`,
     '',
     `STEP 2 — Among the candidates that survived STEP 1, pick the one with the BEST PER-UNIT PRICE (the cup string in parentheses, like "\$2.55/1L" or "\$14.00/1kg").`,
-    `        The size in the wanted name (e.g. "1L", "500g", "38 tabs") is a HINT, NOT a requirement — a 4L laundry liquid bottle at \$3.00/L beats a 1L bottle at \$4.50/L. Bulk wins on unit price.`,
+    `        The size in the wanted name (e.g. "1L", "500g", "38 tabs") is a HINT, NOT a requirement — a 4L laundry liquid bottle at \$3.00/L beats a 1L bottle at \$4.50/L. Bulk wins on unit price WHEN BOTH ARE THE SAME PRODUCT VARIANT.`,
+    `        Never substitute a cheaper VARIANT to get a better unit price. "Advanced Plus" ≠ "Advanced Clean" even if Clean is cheaper per litre.`,
     `        If only one candidate survives STEP 1, pick it regardless of price.`,
     '',
     `STEP 3 — If NO candidate survives STEP 1, reply "none". Never pick a wrong product just because it has a good unit price.`,
     '',
     `Reply with ONLY the index number (e.g. "0") or the word "none". No explanation.`,
-  ].join('\n');
+  ].filter(line => line !== null).join('\n');
 }
 
 function parsePick(response) {
