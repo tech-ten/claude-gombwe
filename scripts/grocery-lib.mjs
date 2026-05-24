@@ -573,17 +573,18 @@ export function productMatchesDetailed(watchlistName, productName, unitString = 
   // because perKg / each still gate, and the size token is informative
   // even though no longer enforced here.
   if (want.perKg) {
-    // Unit-string "$X / 1kg" is a per-kg COMPARISON price, not proof the
-    // product is sold per kg — an 80g pack also shows it. Reject names
-    // that state a smaller g/ml pack and require the name to mention kg.
-    if (/\b\d+(?:\.\d+)?\s?(g|ml)\b/.test(got)) {
-      return { ok: false, reason: 'has-small-pack (g/ml in name, need per kg)' };
-    }
-    // "kg\b" — covers "per kg" / "1kg" / "1.1kg" / "approx. 1.1kg".
-    // No leading \b: the digit→letter transition in "1.1kg" isn't a
-    // non-word boundary.
-    if (!/kg\b/.test(got)) {
-      return { ok: false, reason: 'not-per-kg (name has no kg)' };
+    // Per-kg gate is now Haiku's job — the regex was either too loose
+    // (accepting 80g lunch meat because the unit-string showed "$X/kg")
+    // or too strict (rejecting all candidates because every Coles
+    // chicken pack has "500g" in the name even though they're sold by
+    // weight). Hand the disambiguation to the classifier; the
+    // processed-variant gate above still catches "Dino Nuggets".
+    // We only enforce a soft signal: if name has no "kg" hint anywhere
+    // and unit string doesn't show per-kg, reject.
+    const nameHasKg = /kg\b/.test(got);
+    const unitHasKg = /\/\s*\d*\s*kg/.test(unit);
+    if (!nameHasKg && !unitHasKg) {
+      return { ok: false, reason: 'not-per-kg (no kg signal in name or unit)' };
     }
   }
   if (want.each && !want.perKg) {
