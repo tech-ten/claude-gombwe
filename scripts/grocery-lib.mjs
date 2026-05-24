@@ -308,6 +308,14 @@ export function normaliseName(s) {
     .trim();
 }
 
+/** Strip parenthetical content from a name. Watchlist entries often
+ *  carry human-only notes in parens — "(home brand fine — Coles,
+ *  Woolies Essentials acceptable)" — that must not poison token
+ *  extraction or name-overlap. */
+export function stripNotes(s) {
+  return String(s || '').replace(/\s*\([^)]*\)/g, '').trim();
+}
+
 // Words to ignore when looking for name-overlap between watchlist and
 // candidate. Units, pack-count nouns, and prepositions never identify a
 // product on their own — "per kg" alone matches everything sold by weight.
@@ -330,7 +338,7 @@ export const PROCESSED_MARKERS = new Set([
 ]);
 
 export function significantWords(s) {
-  return normaliseName(s).split(/\s+/).filter(w =>
+  return normaliseName(stripNotes(s)).split(/\s+/).filter(w =>
     w.length >= 3
     && !NAME_STOPWORDS.has(w)
     && !/^\d+(?:\.\d+)?$/.test(w)
@@ -339,7 +347,7 @@ export function significantWords(s) {
 }
 
 export function extractTokens(itemName) {
-  const norm = normaliseName(itemName);
+  const norm = normaliseName(stripNotes(itemName));
   const tokens = { sizes: [], pack: null, perKg: false, each: false };
   const sizeRe = /(\d+(?:\.\d+)?)\s?(l|ml|g|kg|cl)\b/g;
   let m;
@@ -394,22 +402,14 @@ export function productMatchesDetailed(watchlistName, productName, unitString = 
     }
   }
 
-  for (const s of want.sizes) {
-    const num = s.replace(/[a-z]/g, '');
-    const u = s.replace(/[\d.]/g, '');
-    const altLitres = u === 'l' ? `${num} litre` : null;
-    if (!got.includes(s)
-        && !got.includes(`${num} ${u}`)
-        && !(altLitres && got.includes(altLitres))) {
-      return { ok: false, reason: `size-mismatch (need ${s})` };
-    }
-  }
-  if (want.pack !== null) {
-    const packRe = new RegExp(`\\b${want.pack}\\s?(pack|pk|tabs?|tablets?|capsules?|caps)\\b`);
-    if (!packRe.test(got)) {
-      return { ok: false, reason: `pack-mismatch (need ${want.pack}-pack)` };
-    }
-  }
+  // NOTE: size and pack-count are no longer hard rejects. The watchlist
+  // name's "500g" or "38 tabs" is a HINT, not a requirement — we want
+  // the classifier to be free to pick a larger pack with better $/unit
+  // ("Laundry Liquid 1L" should consider the 4L bottle if it's cheaper
+  // per litre). The downstream Haiku classifier sees the cup string for
+  // every candidate and picks on unit value. extractTokens still runs
+  // because perKg / each still gate, and the size token is informative
+  // even though no longer enforced here.
   if (want.perKg) {
     // Unit-string "$X / 1kg" is a per-kg COMPARISON price, not proof the
     // product is sold per kg — an 80g pack also shows it. Reject names

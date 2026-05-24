@@ -21,10 +21,12 @@
  */
 
 import { spawn } from 'node:child_process';
+import { significantWords, normaliseName } from './grocery-lib.mjs';
 
 const CLAUDE_BIN = 'claude';
 const HAIKU = 'claude-haiku-4-5-20251001';
-const TIMEOUT_MS = 30000;
+const TIMEOUT_MS = 60000;
+const MAX_CANDIDATES_TO_LLM = 20;
 
 function runHaiku(prompt) {
   return new Promise((resolve, reject) => {
@@ -53,31 +55,66 @@ function buildPrompt(item, candidates, store) {
     `${i}. "${c.name}" — $${c.price}${c.cup ? ` (${c.cup})` : ''}`
   ).join('\n');
   return [
-    `Pick the candidate from ${store} that genuinely IS this grocery item.`,
+    `You are picking a grocery product for a household shopping list.`,
     '',
     `Wanted: ${wanted}`,
     '',
-    `Candidates:`,
+    `Candidates from ${store}:`,
     lines,
     '',
-    `Reject candidates that are a different product (e.g. "Salted Butter" should NOT match "Butter Chicken Sauce" — they share words but are different things).`,
-    `Reject candidates whose quantity is too small to be useful (e.g. an 80g lunch-meat pack for "Chicken Breast per kg").`,
-    `Accept candidates that are essentially the same product even if labelled differently (e.g. "Whole Milk" = "Full Cream Milk").`,
+    `Decision process (apply IN THIS ORDER, don't skip ahead):`,
     '',
-    `Reply with ONLY the index number (e.g. "0") or the word "none" if no candidate is acceptable. No explanation.`,
+    `STEP 1 — Filter to candidates that GENUINELY ARE the wanted product.`,
+    `        Reject anything that's a different kind of product, even if it shares words or is cheap. Examples of WRONG matches you must reject:`,
+    `          - "Salted Butter" wanted, candidate "Butter Chicken Sauce" or "Microwave Popcorn Butter" or "Peanut Butter" → ALL WRONG (different products)`,
+    `          - "Laundry Liquid" wanted, candidate "Dishwashing Liquid" or "Wool Wash" → ALL WRONG (different cleaning products)`,
+    `          - "Chicken Breast" wanted, candidate "Chicken Breast Dino Nuggets" or "Butter Chicken Sauce" → ALL WRONG (different category)`,
+    `        Same product in different words is FINE: "Whole Milk" = "Full Cream Milk"; "Front Loader Laundry Liquid" = "Laundry Liquid".`,
+    '',
+    `STEP 2 — Among the candidates that survived STEP 1, pick the one with the BEST PER-UNIT PRICE (the cup string in parentheses, like "\$2.55/1L" or "\$14.00/1kg").`,
+    `        The size in the wanted name (e.g. "1L", "500g", "38 tabs") is a HINT, NOT a requirement — a 4L laundry liquid bottle at \$3.00/L beats a 1L bottle at \$4.50/L. Bulk wins on unit price.`,
+    `        If only one candidate survives STEP 1, pick it regardless of price.`,
+    '',
+    `STEP 3 — If NO candidate survives STEP 1, reply "none". Never pick a wrong product just because it has a good unit price.`,
+    '',
+    `Reply with ONLY the index number (e.g. "0") or the word "none". No explanation.`,
   ].join('\n');
 }
 
 function parsePick(response) {
   const t = response.trim().toLowerCase();
-  if (t === 'none' || t.startsWith('none')) return { kind: 'none' };
-  const m = t.match(/^(\d+)/);
+  // "none" anywhere in the response takes priority over a stray digit
+  // (Haiku sometimes writes "none — option 3 is wool wash" and we'd
+  // wrongly parse 3 as the pick if we matched digits first).
+  if (/\bnone\b/.test(t)) return { kind: 'none' };
+  // First standalone integer anywhere in the response. Tolerates prose
+  // prefixes ("I pick 2", "The answer is 2", "2 because…") since Haiku
+  // occasionally ignores the "index only" instruction.
+  const m = t.match(/\b(\d+)\b/);
   if (m) return { kind: 'index', value: parseInt(m[1], 10) };
   return { kind: 'unparseable', raw: response };
 }
 
 function cheapest(candidates) {
   return candidates.slice().sort((a, b) => a.price - b.price)[0] || null;
+}
+
+/** Rank candidates by (watchlist-word overlap DESC, price ASC) and take
+ *  the top N. Bare price-sort would put cheap-but-irrelevant products
+ *  first; bare overlap-sort would put expensive specialty variants
+ *  first. Overlap-then-price ensures the genuine matches are at the
+ *  top of the list Haiku sees. */
+function rankAndCap(item, candidates, n) {
+  if (candidates.length <= n) return candidates.slice().sort((a, b) => a.price - b.price);
+  const want = new Set(significantWords(item.name));
+  const scored = candidates.map(c => {
+    const tokens = new Set(normaliseName(c.name).split(/\s+/));
+    let overlap = 0;
+    for (const w of want) if (tokens.has(w)) overlap++;
+    return { c, overlap };
+  });
+  scored.sort((a, b) => (b.overlap - a.overlap) || (a.c.price - b.c.price));
+  return scored.slice(0, n).map(s => s.c);
 }
 
 /**
@@ -94,25 +131,29 @@ export async function classifyMatch(item, candidates, store) {
     return { picked: candidates[0], source: 'only-candidate' };
   }
 
-  const prompt = buildPrompt(item, candidates, store);
+  // Cap to avoid prompt-too-long timeouts. Salted Butter at Coles was
+  // returning 70+ accepted candidates; the prompt couldn't be processed
+  // within the timeout and would fall back to cheapest (Popcorn Butter).
+  const shortlist = rankAndCap(item, candidates, MAX_CANDIDATES_TO_LLM);
+  const prompt = buildPrompt(item, shortlist, store);
   let response;
   try {
     response = await runHaiku(prompt);
   } catch (err) {
-    const fallback = cheapest(candidates);
-    return { picked: fallback, source: `fallback-${err.message}` };
+    return { picked: cheapest(shortlist), source: `fallback-${err.message}` };
   }
 
   const parsed = parsePick(response);
   if (parsed.kind === 'none') {
     return { picked: null, source: 'haiku-none' };
   }
-  if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < candidates.length) {
-    return { picked: candidates[parsed.value], source: 'haiku', raw: response };
+  if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < shortlist.length) {
+    return { picked: shortlist[parsed.value], source: 'haiku', raw: response };
   }
-  // Bad output — fall back to cheapest accepted rather than silently dropping
+  // Bad output — fall back to cheapest of the shortlist (not the full
+  // candidate list) so we stay consistent with what Haiku was looking at.
   return {
-    picked: cheapest(candidates),
+    picked: cheapest(shortlist),
     source: 'fallback-unparseable',
     raw: response,
   };
