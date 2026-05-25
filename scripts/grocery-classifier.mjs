@@ -195,6 +195,30 @@ export async function classifyMatch(item, candidates, store) {
     // candidate list) so we stay consistent with what Haiku was looking at.
     result = { picked: cheapest(shortlist), source: 'fallback-unparseable', raw: response };
   }
+
+  // Post-hoc qualifier check — deterministic guard against Haiku drift.
+  // The prompt says "MUST contain ALL qualifier words" but Haiku
+  // occasionally ignores that under pressure (long shortlist, similar
+  // words). Re-validate here: if the picked product's name lacks any
+  // strict qualifier present in the watchlist, force "none".
+  // Caught: "Finish Quantum Ultimate 38 tabs" → "Men Deodorant Quantum"
+  // (the Rexona deodorant has 'Quantum' but not 'Ultimate').
+  if (result.picked) {
+    const wlWords = significantWords(stripNotes(item.name));
+    const requiredQualifiers = wlWords.filter(w => STRICT_QUALIFIERS.has(w));
+    if (requiredQualifiers.length > 0) {
+      const pickedWords = new Set(normaliseName(result.picked.name).split(/\s+/));
+      const missing = requiredQualifiers.filter(q => !pickedWords.has(q));
+      if (missing.length > 0) {
+        result = {
+          picked: null,
+          source: `posthoc-qualifier-fail (missing: ${missing.join(', ')})`,
+          raw: response,
+          rejected_pick: { name: result.picked.name, price: result.picked.price },
+        };
+      }
+    }
+  }
   logClassifierDecision({
     item: item.name, store, shortlist,
     picked_index: (parsed.kind === 'index') ? parsed.value : null,
