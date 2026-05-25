@@ -618,6 +618,36 @@ const NAME_STOPWORDS = new Set([
   'capsule','capsules','caps','count','ct','approx',
 ]);
 
+/** Parse a size string ("4L", "500g", "12 pack", "1.5kg") into a
+ *  canonical numeric quantity tagged by unit-family so two sizes can
+ *  be compared meaningfully. Returns null if no parseable size found
+ *  or the size doesn't have a recognised unit.
+ *  family is one of: 'volume_ml', 'weight_g', 'count'. */
+export function parseSizeToCanonical(s) {
+  if (!s) return null;
+  const norm = String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+
+  // Pack/count: "12 pack", "38 tabs", "24 ct", "8pk"
+  const packM = norm.match(/(\d+)\s?(pack|pk|tabs?|tablets?|capsules?|caps|count|ct|each|ea)\b/);
+  if (packM) return { qty: parseInt(packM[1], 10), family: 'count' };
+
+  // Mass: kg, g
+  const kgM = norm.match(/(\d+(?:\.\d+)?)\s?kg\b/);
+  if (kgM) return { qty: parseFloat(kgM[1]) * 1000, family: 'weight_g' };
+  const gM = norm.match(/(\d+(?:\.\d+)?)\s?g\b/);
+  if (gM) return { qty: parseFloat(gM[1]), family: 'weight_g' };
+
+  // Volume: L, ml, cl
+  const lM = norm.match(/(\d+(?:\.\d+)?)\s?l\b/);
+  if (lM) return { qty: parseFloat(lM[1]) * 1000, family: 'volume_ml' };
+  const mlM = norm.match(/(\d+(?:\.\d+)?)\s?ml\b/);
+  if (mlM) return { qty: parseFloat(mlM[1]), family: 'volume_ml' };
+  const clM = norm.match(/(\d+(?:\.\d+)?)\s?cl\b/);
+  if (clM) return { qty: parseFloat(clM[1]) * 10, family: 'volume_ml' };
+
+  return null;
+}
+
 // Words that mark a candidate as a processed/prepared variant rather
 // than the raw ingredient. If the watchlist doesn't ask for one of
 // these but the candidate has it, reject. (Observed: "Chicken Breast
