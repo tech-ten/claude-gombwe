@@ -664,12 +664,19 @@ export function extractTokens(itemName) {
  *  most callers want.
  *
  *  opts.requires: array of substrings the candidate name MUST contain
- *  (case-insensitive). Use when the watchlist needs to distinguish
- *  between near-relatives — e.g. requires: ["fillets"] keeps "Chicken
- *  Thigh Cutlets" out of "Chicken Thigh Fillets per kg" results. */
+ *  opts.brand: candidate's brand (Coles NEXT_DATA puts brand in a
+ *    separate field — e.g. brand="Cold Power", name="Laundry Liquid
+ *    Advanced Clean". We must check both for name-overlap, otherwise
+ *    branded watchlist items get rejected because the brand isn't in
+ *    the candidate name.). */
 export function productMatchesDetailed(watchlistName, productName, unitString = '', opts = {}) {
   const want = extractTokens(watchlistName);
-  const got = normaliseName(productName);
+  // For matching purposes, combine brand + name so a watchlist word
+  // can match in either. Display name stays unchanged elsewhere.
+  const combinedName = opts.brand
+    ? `${opts.brand} ${productName}`
+    : productName;
+  const got = normaliseName(combinedName);
   const unit = normaliseName(unitString);
 
   // Name-overlap gate — at least one distinctive watchlist word must

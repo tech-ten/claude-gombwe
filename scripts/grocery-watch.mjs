@@ -186,6 +186,7 @@ async function pollOnce(items, { forceReclassify = false, deep = false } = {}) {
           ...(store === 'woolworths' ? { stockcode: cached.product_id } : {}),
           url: cached.product_url,
           name: res.name || cached.product_name,
+          brand: res.brand || cached.product_brand || null,
           price: res.price,
           cup: res.cup || null,
           was_price: res.was_price ?? null,
@@ -256,7 +257,7 @@ async function pollOnce(items, { forceReclassify = false, deep = false } = {}) {
     // negative-price scraping artefacts.
     const confirmed = (p) =>
       typeof p.price === 'number' && p.price >= 0.10
-      && productMatches(item.name, p.name, p.cup, { requires: item.requires });
+      && productMatches(item.name, p.name, p.cup, { requires: item.requires, brand: p.brand });
 
     const wValid = wAll.filter(confirmed).sort((a, b) => a.price - b.price);
     const cValid = cAll.filter(confirmed).sort((a, b) => a.price - b.price);
