@@ -21,7 +21,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { significantWords, normaliseName, stripNotes } from './grocery-lib.mjs';
+import { significantWords, normaliseName, stripNotes, parseSizeToCanonical } from './grocery-lib.mjs';
 import { logClassifierDecision } from './grocery-forensics.mjs';
 
 const CLAUDE_BIN = 'claude';
@@ -175,6 +175,31 @@ export async function classifyMatch(item, candidates, store) {
     logClassifierDecision({ item: item.name, store, shortlist: [], picked_index: null, picked_id: null, source: r.source, raw: null, ms: 0 });
     return r;
   }
+
+  // Pre-filter by size compliance — if the watchlist names a specific
+  // size, drop candidates that are SMALLER (in the same unit family)
+  // BEFORE Haiku sees them. Larger packs are kept (the prompt prefers
+  // them on unit price anyway). Caught: "Cold Power Advanced 4L" → 2L
+  // bottles were being picked because they were cheapest absolute.
+  const wantSize = parseSizeToCanonical(stripNotes(item.name));
+  if (wantSize) {
+    const sizeCompliant = candidates.filter(c => {
+      const cs = parseSizeToCanonical(c.size)
+              || parseSizeToCanonical(c.package_size)
+              || parseSizeToCanonical(c.name);
+      // Keep if no size extractable (don't drop on ambiguity).
+      if (!cs) return true;
+      // Cross-family is a category mismatch (powder ≠ liquid for laundry,
+      // tabs ≠ ml for dishwasher). Drop.
+      if (cs.family !== wantSize.family) return false;
+      // Same family — must be ≥ wanted quantity.
+      return cs.qty >= wantSize.qty;
+    });
+    if (sizeCompliant.length > 0) candidates = sizeCompliant;
+    // If size filter eliminated everything, fall back to the full list
+    // — better to let Haiku reject than to force no-match here.
+  }
+
   if (candidates.length === 1) {
     const r = { picked: candidates[0], source: 'only-candidate' };
     logClassifierDecision({ item: item.name, store, shortlist: candidates, picked_index: 0, picked_id: candidates[0].product_id, source: r.source, raw: null, ms: 0 });
@@ -187,25 +212,52 @@ export async function classifyMatch(item, candidates, store) {
   const shortlist = rankAndCap(item, candidates, MAX_CANDIDATES_TO_LLM);
   const prompt = buildPrompt(item, shortlist, store);
   const _t0 = Date.now();
-  let response;
+  let response = null;
   let result;
+  let parsed = null;
   try {
     response = await runHaiku(prompt);
+    parsed = parsePick(response);
   } catch (err) {
-    result = { picked: cheapest(shortlist), source: `fallback-${err.message}` };
-    logClassifierDecision({ item: item.name, store, shortlist, picked_index: null, picked_id: result.picked?.product_id, source: result.source, raw: null, ms: Date.now() - _t0 });
-    return result;
+    // Haiku failed (timeout, parse error, etc.). Fall through to a
+    // synthetic "unparseable" so the post-hoc checks below STILL run
+    // on the fallback pick — otherwise a timed-out call can slip a
+    // wrong product (deodorant!) past every safety net.
+    result = { picked: cheapest(shortlist), source: `fallback-${err.message}`, raw: null };
   }
 
-  const parsed = parsePick(response);
-  if (parsed.kind === 'none') {
-    result = { picked: null, source: 'haiku-none', raw: response };
-  } else if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < shortlist.length) {
-    result = { picked: shortlist[parsed.value], source: 'haiku', raw: response };
-  } else {
-    // Bad output — fall back to cheapest of the shortlist (not the full
-    // candidate list) so we stay consistent with what Haiku was looking at.
-    result = { picked: cheapest(shortlist), source: 'fallback-unparseable', raw: response };
+  if (!result) {
+    if (parsed.kind === 'none') {
+      result = { picked: null, source: 'haiku-none', raw: response };
+    } else if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < shortlist.length) {
+      result = { picked: shortlist[parsed.value], source: 'haiku', raw: response };
+    } else {
+      // Bad output — fall back to cheapest of the shortlist (not the full
+      // candidate list) so we stay consistent with what Haiku was looking at.
+      result = { picked: cheapest(shortlist), source: 'fallback-unparseable', raw: response };
+    }
+  }
+
+  // Post-hoc SIZE check — if the watchlist specifies a size (4L, 500g,
+  // 12 pack, etc.), the picked product must be ≥ that in the same
+  // unit-family. Catches: "Cold Power Advanced 4L" → Haiku picking a
+  // 2L bottle because it was cheapest absolute, ignoring the prompt's
+  // "size is MINIMUM" rule.
+  if (result.picked) {
+    const wantSize = parseSizeToCanonical(stripNotes(item.name));
+    if (wantSize) {
+      const pickedSize = parseSizeToCanonical(result.picked.size)
+                     || parseSizeToCanonical(result.picked.package_size)
+                     || parseSizeToCanonical(result.picked.name);
+      if (pickedSize && pickedSize.family === wantSize.family && pickedSize.qty < wantSize.qty) {
+        result = {
+          picked: null,
+          source: `posthoc-size-fail (picked ${pickedSize.qty}${wantSize.family === 'count' ? 'ct' : (wantSize.family === 'weight_g' ? 'g' : 'ml')} < wanted ${wantSize.qty})`,
+          raw: response,
+          rejected_pick: { name: result.picked.name, brand: result.picked.brand, size: result.picked.size, price: result.picked.price },
+        };
+      }
+    }
   }
 
   // Post-hoc qualifier check — deterministic guard against Haiku drift.
