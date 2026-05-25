@@ -22,6 +22,7 @@
 
 import { spawn } from 'node:child_process';
 import { significantWords, normaliseName, stripNotes } from './grocery-lib.mjs';
+import { logClassifierDecision } from './grocery-forensics.mjs';
 
 const CLAUDE_BIN = 'claude';
 const HAIKU = 'claude-haiku-4-5-20251001';
@@ -158,10 +159,14 @@ function rankAndCap(item, candidates, n) {
  */
 export async function classifyMatch(item, candidates, store) {
   if (!candidates || candidates.length === 0) {
-    return { picked: null, source: 'empty-shortlist' };
+    const r = { picked: null, source: 'empty-shortlist' };
+    logClassifierDecision({ item: item.name, store, shortlist: [], picked_index: null, picked_id: null, source: r.source, raw: null, ms: 0 });
+    return r;
   }
   if (candidates.length === 1) {
-    return { picked: candidates[0], source: 'only-candidate' };
+    const r = { picked: candidates[0], source: 'only-candidate' };
+    logClassifierDecision({ item: item.name, store, shortlist: candidates, picked_index: 0, picked_id: candidates[0].product_id, source: r.source, raw: null, ms: 0 });
+    return r;
   }
 
   // Cap to avoid prompt-too-long timeouts. Salted Butter at Coles was
@@ -169,25 +174,33 @@ export async function classifyMatch(item, candidates, store) {
   // within the timeout and would fall back to cheapest (Popcorn Butter).
   const shortlist = rankAndCap(item, candidates, MAX_CANDIDATES_TO_LLM);
   const prompt = buildPrompt(item, shortlist, store);
+  const _t0 = Date.now();
   let response;
+  let result;
   try {
     response = await runHaiku(prompt);
   } catch (err) {
-    return { picked: cheapest(shortlist), source: `fallback-${err.message}` };
+    result = { picked: cheapest(shortlist), source: `fallback-${err.message}` };
+    logClassifierDecision({ item: item.name, store, shortlist, picked_index: null, picked_id: result.picked?.product_id, source: result.source, raw: null, ms: Date.now() - _t0 });
+    return result;
   }
 
   const parsed = parsePick(response);
   if (parsed.kind === 'none') {
-    return { picked: null, source: 'haiku-none' };
+    result = { picked: null, source: 'haiku-none', raw: response };
+  } else if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < shortlist.length) {
+    result = { picked: shortlist[parsed.value], source: 'haiku', raw: response };
+  } else {
+    // Bad output — fall back to cheapest of the shortlist (not the full
+    // candidate list) so we stay consistent with what Haiku was looking at.
+    result = { picked: cheapest(shortlist), source: 'fallback-unparseable', raw: response };
   }
-  if (parsed.kind === 'index' && parsed.value >= 0 && parsed.value < shortlist.length) {
-    return { picked: shortlist[parsed.value], source: 'haiku', raw: response };
-  }
-  // Bad output — fall back to cheapest of the shortlist (not the full
-  // candidate list) so we stay consistent with what Haiku was looking at.
-  return {
-    picked: cheapest(shortlist),
-    source: 'fallback-unparseable',
-    raw: response,
-  };
+  logClassifierDecision({
+    item: item.name, store, shortlist,
+    picked_index: (parsed.kind === 'index') ? parsed.value : null,
+    picked_id: result.picked?.product_id,
+    source: result.source, raw: response,
+    ms: Date.now() - _t0,
+  });
+  return result;
 }
