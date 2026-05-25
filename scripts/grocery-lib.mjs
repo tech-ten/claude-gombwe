@@ -298,11 +298,105 @@ export async function discoverColesApi(page) {
   return tpl;
 }
 
-/** Search Coles. Tries the discovered JSON API first, falls back to DOM
- *  scrape. Returns array of {name, price, url, cup}. Pass `apiPattern`
- *  from discoverColesApi() to enable fast path; null = DOM only. */
+/** Search Coles via __NEXT_DATA__ — the SSR data blob Coles embeds on
+ *  every search page. Contains every result with full structured data
+ *  (id, name, brand, size, pricing.now, pricing.was, unit price, ad
+ *  flags, category hierarchy, stock quantity, retail/promo limits).
+ *  No API discovery, no XHR sniffing, no DOM scraping. Just navigate
+ *  to the search URL and parse the <script id="__NEXT_DATA__"> tag.
+ *  Returns array in our standard candidate shape, or empty on failure. */
+export async function colesSearchViaNextData(page, query) {
+  try {
+    await page.goto(`https://www.coles.com.au/search/products?q=${encodeURIComponent(query)}`, {
+      waitUntil: 'domcontentloaded', timeout: 20000,
+    });
+  } catch { return []; }
+  return page.evaluate(() => {
+    const nd = document.querySelector('#__NEXT_DATA__');
+    if (!nd) return [];
+    let data;
+    try { data = JSON.parse(nd.textContent); } catch { return []; }
+    const results = data?.props?.pageProps?.searchResults?.results || [];
+    const out = [];
+    let position = 0;
+    for (const p of results) {
+      if (p?._type !== 'PRODUCT' || !p?.id) continue;
+      position++;
+      const pricing = p.pricing || {};
+      const unit = pricing.unit || {};
+      const imageRel = p.imageUris?.[0]?.uri || null;
+      // Coles image CDN — uri is like "/9/9760091.jpg"
+      const imageUrl = imageRel
+        ? `https://cdn.productimages.coles.com.au/productimages${imageRel}`
+        : null;
+      out.push({
+        name: p.name || '',
+        price: typeof pricing.now === 'number' ? pricing.now : null,
+        product_id: String(p.id),
+        url: `https://www.coles.com.au/product/${p.id}`,
+        cup: pricing.comparable || (unit.price && unit.ofMeasureType
+              ? `\$${unit.price}/ ${unit.ofMeasureQuantity || 1}${unit.ofMeasureType}` : ''),
+        // Promo
+        was_price:     typeof pricing.was === 'number' && pricing.was > 0 ? pricing.was : null,
+        is_on_special: !!pricing.onlineSpecial || (typeof pricing.was === 'number' && pricing.was > 0 && pricing.was > pricing.now),
+        save_amount:   (typeof pricing.was === 'number' && pricing.was > 0)
+                       ? +(pricing.was - pricing.now).toFixed(2) : null,
+        promotion:     pricing.promotion || null,
+        promotion_text:pricing.promotionDescription || null,
+        // Identity
+        brand:         p.brand || null,
+        size:          p.size || null,
+        package_size:  p.size || null,
+        description:   p.description || null,
+        // Category — Coles has TWO hierarchies; capture both
+        merchandise_hier: p.merchandiseHeir ? `${p.merchandiseHeir.category} / ${p.merchandiseHeir.subCategory} / ${p.merchandiseHeir.className}` : null,
+        category:      p.onlineHeirs?.[0]?.category || null,
+        department:    p.merchandiseHeir?.tradeProfitCentre || null,
+        // Media
+        image_url:     imageUrl,
+        // Availability + restrictions
+        in_stock:      p.availability !== false,
+        is_available:  p.availability !== false,
+        available_quantity: typeof p.availableQuantity === 'number' ? p.availableQuantity : null,
+        availability_type: p.availabilityType || null,
+        age_restricted:!!(p.restrictions?.liquorAgeRestrictionFlag || p.restrictions?.tobaccoAgeRestrictionFlag),
+        restrictions:  p.restrictions || null,
+        retail_limit:  typeof p.restrictions?.retailLimit === 'number' ? p.restrictions.retailLimit : null,
+        promo_limit:   typeof p.restrictions?.promotionalLimit === 'number' ? p.restrictions.promotionalLimit : null,
+        min_shelf_life: p.minGuarantee || null,
+        // Search context
+        search_position: position,
+        is_sponsored: !!(p.adId || p.adSource || p.featured),
+        sponsored_marker: p.adId ? `adId=${p.adId}` : (p.featured ? 'featured' : (p.adSource ? `adSource=${p.adSource}` : null)),
+        ad_id:        p.adId || null,
+        ad_source:    p.adSource || null,
+        // Variations
+        variation_count: typeof p.variations?.total === 'number' ? p.variations.total : null,
+        _source:      'nextdata',
+        _raw:         p,
+      });
+    }
+    return out;
+  });
+}
+
+/** Search Coles. Strategy order:
+ *  1. __NEXT_DATA__ (preferred — full structured data, no detection signal)
+ *  2. Discovered JSON API (legacy fallback if NEXT_DATA shape changes)
+ *  3. DOM-scrape fallback
+ *  Returns array in our standard candidate shape. */
 export async function colesSearch(page, query, apiPattern = null) {
   const _t0 = Date.now();
+
+  // 1. __NEXT_DATA__ — the data is right there in the HTML, no XHR needed.
+  try {
+    const list = await colesSearchViaNextData(page, query);
+    if (list && list.length) {
+      logSearch({ store: 'coles', query, result_count: list.length, ms: Date.now() - _t0, ok: true });
+      return list;
+    }
+  } catch { /* fall through */ }
+
   if (apiPattern) {
     const list = await page.evaluate(async (q, tpl) => {
       try {

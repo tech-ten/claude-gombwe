@@ -50,13 +50,16 @@ const TRACKED_FIELDS = [
   'image_url', 'description',
   // availability / restrictions
   'in_stock', 'is_available', 'age_restricted', 'restrictions',
-  'purchase_limit_text',
+  'purchase_limit_text', 'available_quantity', 'availability_type',
+  'retail_limit', 'promo_limit', 'min_shelf_life',
   // search-result context
-  'search_position', 'is_sponsored', 'ad_id', 'ad_type',
+  'search_position', 'is_sponsored', 'ad_id', 'ad_type', 'ad_source',
   // ratings
   'rating', 'rating_count',
   // diet / additional attributes (Woolies-shaped array)
   'additional_attributes',
+  // variants
+  'variation_count',
   // DOM-fallback flag + sponsored-detection diagnostic
   '_source', 'sponsored_marker',
   // Full forensic blobs (raw API object OR DOM HTML for the tile)
