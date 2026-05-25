@@ -85,17 +85,21 @@ export async function fetchSpotPrice(page, url, store) {
         const offers = Array.isArray(product.offers) ? product.offers : [product.offers].filter(Boolean);
         for (const offer of offers) {
           if (!offer) continue;
+          // offer.price IS the package price (what you pay at checkout).
           if (out.price == null && typeof offer.price === 'number') out.price = offer.price;
           else if (out.price == null && typeof offer.price === 'string') out.price = parseFloat(offer.price);
           if (offer.priceCurrency) out.currency = offer.priceCurrency;
           const avail = offer.availability || '';
           out.in_stock = !/OutOfStock|Discontinued|SoldOut/i.test(avail);
-          if (offer.priceSpecification) {
-            const ps = offer.priceSpecification;
-            if (typeof ps.price === 'number' && ps.unitText) {
-              out.cup = `\$${ps.price} / ${ps.unitText}`;
-            }
-          }
+          // DO NOT build a cup string from priceSpecification — Woolies
+          // populates it as price=$1.47 (per-100g) + unitText="470g"
+          // (the pack size, not the measure unit). Constructing "$1.47
+          // / 470g" misreads as "the 470g pack costs $1.47" which is
+          // wrong (it's actually $6.90). cup is reliably extracted by
+          // the search-time scrape (pricing.comparable on Coles,
+          // CupString on Woolies) and stored in the catalog; the DOM
+          // fallback below also picks up a correct cup. Skip JSON-LD's
+          // unit price entirely.
           if (out.price != null) break;
         }
         if (out.price != null) break;
