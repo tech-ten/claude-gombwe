@@ -67,9 +67,15 @@ function runHaiku(prompt) {
 
 function buildPrompt(item, candidates, store) {
   const wanted = item.name + (item.notes ? `  (notes: ${item.notes})` : '');
-  const lines = candidates.map((c, i) =>
-    `${i}. "${c.name}" — $${c.price}${c.cup ? ` (${c.cup})` : ''}`
-  ).join('\n');
+  // Display brand alongside name — Coles NEXT_DATA puts brand in a
+  // separate field, so the name alone is often anonymous ("Laundry
+  // Liquid Advanced Clean" with brand="Cold Power"). Haiku needs to
+  // see the brand to make the right call.
+  const lines = candidates.map((c, i) => {
+    const brandPrefix = c.brand && !new RegExp(`\\b${c.brand.split(/\s+/)[0]}\\b`, 'i').test(c.name)
+      ? `[${c.brand}] ` : '';
+    return `${i}. ${brandPrefix}"${c.name}" — $${c.price}${c.cup ? ` (${c.cup})` : ''}`;
+  }).join('\n');
 
   // Pull out qualifier words present in the watchlist so we can demand
   // they appear in the picked product. Catches brand-line variant
@@ -142,7 +148,13 @@ function rankAndCap(item, candidates, n) {
   if (candidates.length <= n) return candidates.slice().sort((a, b) => a.price - b.price);
   const want = new Set(significantWords(item.name));
   const scored = candidates.map(c => {
-    const tokens = new Set(normaliseName(c.name).split(/\s+/));
+    // Include brand alongside name — for Coles NEXT_DATA where brand is
+    // a separate field, scoring on name alone leaves branded watchlist
+    // items orphaned. "Cold Power Advanced 4L" wouldn't score against
+    // candidate name "Laundry Liquid Advanced Clean" unless we also
+    // count brand="Cold Power".
+    const haystack = c.brand ? `${c.brand} ${c.name}` : c.name;
+    const tokens = new Set(normaliseName(haystack).split(/\s+/));
     let overlap = 0;
     for (const w of want) if (tokens.has(w)) overlap++;
     return { c, overlap };
@@ -207,14 +219,20 @@ export async function classifyMatch(item, candidates, store) {
     const wlWords = significantWords(stripNotes(item.name));
     const requiredQualifiers = wlWords.filter(w => STRICT_QUALIFIERS.has(w));
     if (requiredQualifiers.length > 0) {
-      const pickedWords = new Set(normaliseName(result.picked.name).split(/\s+/));
+      // Include brand in the picked-words set (Coles NEXT_DATA splits
+      // brand from name; without this a qualifier in the brand part
+      // would be miscounted as missing).
+      const pickedHaystack = result.picked.brand
+        ? `${result.picked.brand} ${result.picked.name}`
+        : result.picked.name;
+      const pickedWords = new Set(normaliseName(pickedHaystack).split(/\s+/));
       const missing = requiredQualifiers.filter(q => !pickedWords.has(q));
       if (missing.length > 0) {
         result = {
           picked: null,
           source: `posthoc-qualifier-fail (missing: ${missing.join(', ')})`,
           raw: response,
-          rejected_pick: { name: result.picked.name, price: result.picked.price },
+          rejected_pick: { name: result.picked.name, brand: result.picked.brand, price: result.picked.price },
         };
       }
     }

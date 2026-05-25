@@ -78,6 +78,9 @@ export async function fetchSpotPrice(page, url, store) {
         if (!product) continue;
         out._source = 'pdp-jsonld';
         out.name = product.name || null;
+        // Brand is a separate field on both Coles + Woolies PDPs.
+        // Capture it so the watch fast path can carry it through.
+        out.brand = product.brand?.name || product.brand || null;
         if (typeof product.image === 'string') out.image_url = product.image;
         else if (Array.isArray(product.image)) out.image_url = product.image[0];
 

@@ -121,6 +121,7 @@ export async function resolveBestMatch(item, candidates, store, opts = {}) {
       product_id: pid,
       product_url: result.picked.url || null,
       product_name: result.picked.name,
+      product_brand: result.picked.brand || null,
       resolved_at: now,
       last_seen_at: now,
       classifier_source: result.source,

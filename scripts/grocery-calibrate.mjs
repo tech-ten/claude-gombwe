@@ -60,7 +60,7 @@ async function probeOneStore(item, candidates, storeLabel, opts = {}) {
   // stockcode) so the resolution cache can compute stable product IDs
   // when the classifier fires. Reduced shapes were stripping those.
   const enriched = candidates.map(p => {
-    const d = productMatchesDetailed(item.name, p.name, p.cup || '', { requires: item.requires });
+    const d = productMatchesDetailed(item.name, p.name, p.cup || '', { requires: item.requires, brand: p.brand });
     return { ...p, cup: p.cup || '', accepted: d.ok, reason: d.reason };
   });
   const accepted = enriched.filter(c => c.accepted)

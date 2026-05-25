@@ -56,7 +56,12 @@ function audit(item, store, resolution) {
   const flags = [];
   const wlClean = stripNotes(item.name);
   const wlWords = new Set(significantWords(wlClean));
-  const pickedNorm = normaliseName(resolution.product_name || '');
+  // Include brand alongside name so a watchlist brand-name matches even
+  // when the candidate stores brand separately (Coles NEXT_DATA).
+  const pickedHaystack = resolution.product_brand
+    ? `${resolution.product_brand} ${resolution.product_name}`
+    : (resolution.product_name || '');
+  const pickedNorm = normaliseName(pickedHaystack);
   const pickedWords = new Set(pickedNorm.split(/\s+/));
 
   // 1. Distinctive long word missing
