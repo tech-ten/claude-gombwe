@@ -35,6 +35,7 @@ import {
 import { isCalibrationStale, runCalibration } from './grocery-calibrate.mjs';
 import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-resolutions.mjs';
 import { newObservationCollector } from './grocery-products.mjs';
+import { fetchSpotPrice } from './grocery-spot-price.mjs';
 
 const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
@@ -133,19 +134,28 @@ function planCarts(classified) {
 
 // ── Poll + report ────────────────────────────────────────────────────
 
-async function pollOnce(items, { forceReclassify = false } = {}) {
+async function pollOnce(items, { forceReclassify = false, deep = false } = {}) {
   const resolutionCache = loadResolutions();
   const browser = await connectChrome();
   const wPage = await getPage(browser, 'woolworths.com.au');
   const cPage = await getPage(browser, 'coles.com.au');
 
-  // One-shot discovery of Coles' internal search endpoint — saves us a
-  // full page navigation per query. Falls back to DOM scrape if discovery
-  // doesn't find anything.
-  colesApiPattern = await discoverColesApi(cPage);
-  console.log(colesApiPattern
-    ? `  Coles via internal API: ${colesApiPattern.slice(0, 80)}…`
-    : `  Coles via DOM scrape (slower fallback).`);
+  // Figure out which items will need the slow search-and-classify path
+  // up-front, so we can skip Coles API discovery entirely if every item
+  // can take the fast direct-PDP path.
+  const needsSearch = forceReclassify || deep || items.some(item => {
+    const w = resolutionCache.resolutions[item.name]?.woolworths;
+    const c = resolutionCache.resolutions[item.name]?.coles;
+    return !w?.product_url || !c?.product_url;
+  });
+  if (needsSearch) {
+    colesApiPattern = await discoverColesApi(cPage);
+    console.log(colesApiPattern
+      ? `  Coles via internal API: ${colesApiPattern.slice(0, 80)}…`
+      : `  Coles via DOM scrape (slower fallback).`);
+  } else {
+    console.log('  Every watchlist item is resolved — direct-PDP fast path only (no search).');
+  }
 
   const ts = new Date().toISOString();
   const records = [];
@@ -154,6 +164,69 @@ async function pollOnce(items, { forceReclassify = false } = {}) {
   const observations = newObservationCollector(ts);
 
   for (const item of items) {
+    const wCached = resolutionCache.resolutions[item.name]?.woolworths;
+    const cCached = resolutionCache.resolutions[item.name]?.coles;
+    const canFastPath = !forceReclassify && !deep
+                     && wCached?.product_url && cCached?.product_url;
+
+    if (canFastPath) {
+      // ── FAST PATH ────────────────────────────────────────────────
+      // Both stores have a cached resolution. Go straight to each
+      // product's PDP, read the current spot price, record, move on.
+      // No search, no Haiku, no matcher overhead.
+      const [wRes, cRes] = await Promise.all([
+        fetchSpotPrice(wPage, wCached.product_url, 'woolworths'),
+        fetchSpotPrice(cPage, cCached.product_url, 'coles'),
+      ]);
+
+      const buildCandidate = (cached, res, store) => {
+        if (!res.ok || !res.in_stock || !(res.price > 0)) return null;
+        return {
+          product_id: cached.product_id,
+          ...(store === 'woolworths' ? { stockcode: cached.product_id } : {}),
+          url: cached.product_url,
+          name: res.name || cached.product_name,
+          price: res.price,
+          cup: res.cup || null,
+          was_price: res.was_price ?? null,
+          is_on_special: res.is_on_special ?? false,
+          save_amount: res.save_amount ?? null,
+          image_url: res.image_url || null,
+          in_stock: res.in_stock,
+          is_available: res.in_stock,
+          _source: 'pdp-direct',
+        };
+      };
+      const wBest = buildCandidate(wCached, wRes, 'woolworths');
+      const cBest = buildCandidate(cCached, cRes, 'coles');
+
+      if (wBest) observations.observe('woolworths', '<spot-pdp>', [wBest]);
+      if (cBest) observations.observe('coles', '<spot-pdp>', [cBest]);
+
+      const rec = {
+        ts, item: item.name,
+        woolworths_price: wBest?.price ?? null,
+        woolworths_name:  wBest?.name  ?? null,
+        coles_price:      cBest?.price ?? null,
+        coles_name:       cBest?.name  ?? null,
+        candidates_seen:  { woolworths: 1, coles: 1 },
+        candidates_valid: { woolworths: wBest ? 1 : 0, coles: cBest ? 1 : 0 },
+        classifier:       { woolworths: wRes._source, coles: cRes._source },
+        _fast_path: true,
+      };
+      appendPrice(rec);
+      records.push({ item, current: { woolworths: wBest, coles: cBest } });
+
+      const fmt = (best, res) => best
+        ? `$${best.price.toFixed(2)} (${res._source})`
+        : (res.in_stock === false ? `OOS (${res._source})` : `none (${res._source})`);
+      process.stdout.write(`  ${item.name.padEnd(45).slice(0, 45)}  W: ${fmt(wBest, wRes).padStart(22)}  C: ${fmt(cBest, cRes).padStart(22)}\n`);
+
+      await jitter(600, 2000);
+      continue;
+    }
+
+    // ── SLOW PATH (search + classify) ─────────────────────────────
     const terms = item.search_terms?.length ? item.search_terms : [item.name];
 
     // Accumulate ALL candidate products from every search term, then pick
@@ -277,6 +350,7 @@ const asJson            = args.includes('--json');
 const skipCalibration   = args.includes('--skip-calibration');
 const forceCalibration  = args.includes('--force-calibration');
 const forceReclassify   = args.includes('--force-reclassify');
+const deepScan          = args.includes('--deep');
 
 async function main() {
   const watchlist = loadWatchlist();
@@ -317,7 +391,7 @@ async function main() {
     });
   } else {
     console.log(`  Polling ${items.length} items across Woolworths + Coles…\n`);
-    records = await pollOnce(items, { forceReclassify });
+    records = await pollOnce(items, { forceReclassify, deep: deepScan });
   }
 
   const history = loadPriceHistory();
