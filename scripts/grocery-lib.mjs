@@ -26,6 +26,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { findChrome, detachedSpawnOptions } from './platform.mjs';
+import { logSearch, logDiscoveryAttempt } from './grocery-forensics.mjs';
 
 // ── constants ────────────────────────────────────────────────────────
 
@@ -171,6 +172,7 @@ export async function woolworthsSearch(page, query, limit = 10) {
   }, query, limit);
 
   const products = [];
+  const _t0 = Date.now();
   if (response?.Products) {
     let position = 0;
     for (const group of response.Products) {
@@ -226,7 +228,9 @@ export async function woolworthsSearch(page, query, limit = 10) {
       }
     }
   }
-  return products.slice(0, limit);
+  const out = products.slice(0, limit);
+  logSearch({ store: 'woolworths', query, result_count: out.length, ms: Date.now() - _t0, ok: out.length > 0 });
+  return out;
 }
 
 /** Discover Coles's internal SPA search endpoint. Tries the cached pattern
@@ -249,6 +253,11 @@ export async function discoverColesApi(page) {
 
   console.log('  Discovering Coles internal search endpoint (network sniff)…');
   const candidates = [];
+  // Also collect ALL JSON responses we saw, not just the ones that
+  // passed our content filter — explains discovery failures when they
+  // happen ("we saw N JSON URLs but none matched the milk/price/name
+  // pattern, here they are").
+  const allJsonSeen = [];
   const onResp = async (response) => {
     try {
       const url = response.url();
@@ -258,6 +267,7 @@ export async function discoverColesApi(page) {
       if (!ct.includes('json')) return;
       const text = await response.text();
       if (text.length < 200) return;
+      allJsonSeen.push({ url, bytes: text.length, has_milk: /milk/i.test(text), has_price: /price|pricing|\$/i.test(text), has_name: /name/i.test(text) });
       if (/milk/i.test(text) && /price|pricing|\$/i.test(text) && /name/i.test(text)) {
         candidates.push({ url });
       }
@@ -276,13 +286,15 @@ export async function discoverColesApi(page) {
   });
 
   if (candidates.length === 0) {
-    console.log('  No Coles JSON search endpoint discovered — falling back to DOM scrape.');
+    console.log(`  No Coles JSON search endpoint discovered (${allJsonSeen.length} JSON URLs sniffed but none matched filter) — falling back to DOM scrape.`);
+    logDiscoveryAttempt({ captured_urls: allJsonSeen, picked_template: null, success: false });
     return null;
   }
 
   const tpl = candidates[0].url.replace(/([?&]q=)milk/i, '$1{Q}').replace(/(query=)milk/i, '$1{Q}');
   console.log(`  Coles via internal API (newly discovered): ${tpl.slice(0, 80)}${tpl.length > 80 ? '…' : ''}`);
   recordSuccessfulPattern(tpl);
+  logDiscoveryAttempt({ captured_urls: allJsonSeen, picked_template: tpl, success: true });
   return tpl;
 }
 
@@ -290,6 +302,7 @@ export async function discoverColesApi(page) {
  *  scrape. Returns array of {name, price, url, cup}. Pass `apiPattern`
  *  from discoverColesApi() to enable fast path; null = DOM only. */
 export async function colesSearch(page, query, apiPattern = null) {
+  const _t0 = Date.now();
   if (apiPattern) {
     const list = await page.evaluate(async (q, tpl) => {
       try {
@@ -359,7 +372,10 @@ export async function colesSearch(page, query, apiPattern = null) {
         })).filter(x => typeof x.price === 'number');
       } catch { return null; }
     }, query, apiPattern);
-    if (list && list.length) return list;
+    if (list && list.length) {
+      logSearch({ store: 'coles', query, result_count: list.length, ms: Date.now() - _t0, ok: true });
+      return list;
+    }
     // API returned nothing — fall through to DOM for this one query
   }
 
@@ -373,7 +389,7 @@ export async function colesSearch(page, query, apiPattern = null) {
     await page.waitForSelector('[data-testid="product-tile"]', { timeout: 8000 });
   } catch { /* tiles never appeared — captcha or zero results */ }
   await wait(800);
-  return page.evaluate(() => {
+  const domResult = await page.evaluate(() => {
     const tiles = document.querySelectorAll('[data-testid="product-tile"], section');
     const out = [];
     let position = 0;
@@ -413,7 +429,20 @@ export async function colesSearch(page, query, apiPattern = null) {
       );
       const multibuyEl = tile.querySelector('[data-testid*="multibuy"], [class*="multibuy"], [data-testid*="multi-buy"]');
       const imgEl     = tile.querySelector('img[data-testid="product-image"], img');
-      const sponsoredEl = tile.querySelector('[data-testid*="sponsored"], [class*="sponsored"], [class*="Sponsored"]');
+      // Broader sponsored/promoted/featured detection. Coles labels
+      // these inconsistently across tile templates; cast a wider net
+      // (case-insensitive via i flag in attribute selectors).
+      const sponsoredEl = tile.querySelector(
+        '[data-testid*="sponsored" i], [data-testid*="promoted" i], [data-testid*="featured" i], '
+      + '[data-testid*="advertis" i], [data-testid*="ad-" i], [data-testid="adInfo"], '
+      + '[class*="sponsored" i], [class*="Sponsored"], [class*="promoted" i], '
+      + '[class*="advertis" i], [class*="adContent" i], [class*="AdBadge" i], '
+      + '[aria-label*="sponsored" i], [aria-label*="advertisement" i], '
+      + '[role="complementary"]'
+      );
+      // Also look for tile-level text labels (some templates use a plain
+      // text "Sponsored" span without a stable selector).
+      const sponsoredByText = !sponsoredEl && /\b(sponsored|advertisement|advertised|promoted)\b/i.test(tile.textContent || '');
       const restrictionEl = tile.querySelector('[data-testid*="restriction"], [data-testid*="age-"], [class*="age-restriction"]');
       const unavailableEl = tile.querySelector('[data-testid*="unavailable"], [class*="unavailable"], [data-testid*="out-of-stock"]');
       const limitEl   = tile.querySelector('[data-testid*="purchase-limit"], [class*="purchase-limit"]');
@@ -450,15 +479,23 @@ export async function colesSearch(page, query, apiPattern = null) {
         purchase_limit_text: limitEl?.textContent?.trim() || null,
         // Search context
         search_position: position,
-        is_sponsored: !!sponsoredEl,
+        is_sponsored: !!sponsoredEl || !!sponsoredByText,
+        sponsored_marker: sponsoredEl ? (sponsoredEl.getAttribute('data-testid') || sponsoredEl.getAttribute('class') || 'matched-selector') : (sponsoredByText ? 'matched-text' : null),
         // Ratings (DOM rarely exposes — try anyway)
         rating:       ratingMatch ? parseFloat(ratingMatch[1]) : null,
         rating_count: reviewMatch ? parseInt(reviewMatch[1], 10) : null,
         _source: 'dom-fallback',
+        // Full forensic HTML — first 6KB of the tile. Lets us
+        // back-extract any field later (sponsored markers, badges,
+        // anything else) without re-scraping. Bounded to keep the
+        // JSONL row size manageable.
+        _raw_html: tile.outerHTML?.slice(0, 6000) || null,
       });
     }
     return out;
   });
+  logSearch({ store: 'coles', query, result_count: domResult.length, ms: Date.now() - _t0, ok: true });
+  return domResult;
 }
 
 // ── Matching ─────────────────────────────────────────────────────────

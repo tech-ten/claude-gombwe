@@ -57,10 +57,10 @@ const TRACKED_FIELDS = [
   'rating', 'rating_count',
   // diet / additional attributes (Woolies-shaped array)
   'additional_attributes',
-  // DOM-fallback flag
-  '_source',
-  // Full forensic blob from scraper (raw API/DOM object)
-  '_raw',
+  // DOM-fallback flag + sponsored-detection diagnostic
+  '_source', 'sponsored_marker',
+  // Full forensic blobs (raw API object OR DOM HTML for the tile)
+  '_raw', '_raw_html',
 ];
 
 function mergeFields(target, source) {
