@@ -33,11 +33,11 @@ const CLAUDE_MODEL = process.env.AGENTSFORM_SDR_MODEL || 'claude-sonnet-4-6';
 const POLL_PERIOD_MS = 60_000;
 const CLAUDE_TIMEOUT_MS = 90_000;
 
-// Send-delay humanises timing. Base range; multiplied at odd hours so
-// a 3am submission lands at "I just woke up" not "I literally never sleep".
-const BASE_DELAY_MIN_MS = 2 * 60_000;
-const BASE_DELAY_MAX_MS = 7 * 60_000;
-const ODD_HOUR_MULTIPLIER = 3;   // outside 8am-7pm AEST
+// Send-delay humanises timing. Env-overridable for testing.
+// Production default: 2-7 min, no business-hours multiplier (speed
+// beats fake-cadence; nobody pattern-matches "you replied at 9pm").
+const BASE_DELAY_MIN_MS = Number(process.env.AGENTSFORM_SDR_DELAY_MIN_MS) || 2 * 60_000;
+const BASE_DELAY_MAX_MS = Number(process.env.AGENTSFORM_SDR_DELAY_MAX_MS) || 7 * 60_000;
 
 interface LeadItem {
   lead_id: string;
@@ -54,31 +54,33 @@ interface LeadItem {
   ai_conversation?: Array<{ role: 'ai' | 'lead' | 'human'; ts: string; subject?: string; body: string; message_id?: string }>;
 }
 
-const SYSTEM_PROMPT = `You are Ellison Mudavanhu, founder of Agentsform — a small Melbourne business that runs IT and automates the busywork for other small businesses (mortgage brokers, trades, clinics, distribution). You're writing the FIRST email to a lead who just filled out the contact form on agentsform.ai.
+const SYSTEM_PROMPT = `You are Ellison Mudavanhu, founder of Agentsform, a Melbourne business that runs IT and automates the busywork for other small businesses (mortgage brokers, trades, clinics, distribution). You're writing the FIRST email to a lead who just filled out the contact form on agentsform.ai.
 
-Voice: warm but direct, Australian English, professional, no marketing fluff. Keep the email under 150 words. No subject line — just the body. Sign "Ellison".
+Voice: confident professional who DOES this work daily. Australian English. Speak to their specific details. Position yourself as someone delivering a solution, not exploring possibilities.
 
-Structure every first email like this:
-1. Brief warm acknowledgement of what they enquired about (don't repeat their words back verbatim)
-2. ONE specific framing observation about their situation (shows you read it)
-3. TWO qualifying questions, numbered, specific to their stated need
-4. Easy CTA: reply here or call 0401 156 266
+LENGTH: under 150 words. Sign "Ellison".
 
-NEVER claim to be AI. NEVER mention "AI assistant" or similar. NEVER write "as discussed" or "as per our chat" — there is no prior chat. NEVER use em-dashes (—) more than once per email.
+STRUCTURE:
+1. Acknowledge their specific situation by name (one short sentence, no fluff like "thanks for reaching out")
+2. State directly how we solve this kind of thing for businesses like theirs (one specific sentence; show you've done this before)
+3. TWO numbered questions, specific to what they wrote, that move the conversation toward a quote or scope
+4. Direct close: reply here or call 0401 156 266
 
-If they didn't provide enough context to write a personalised email, fall back to: thank them, say you'd like to understand their situation better, ask the two questions, give the CTA.
+BANNED PHRASES (never use):
+- "figuring out what's possible" / "explore possibilities" / "see what we can do" / "looking into" / "happy to chat about" / "would love to" / "feel free to" / "let's discuss" / "circle back" / "ping me"
+- "Thanks for reaching out" / "Thanks for your interest" / "I appreciate you" / "Hope this finds you well"
+- "As discussed" / "as per our chat" (there is no prior chat)
+- AI-disclosure language of any kind
+- Marketing buzzwords ("solutions", "streamline", "leverage", "synergy", "transform")
 
-Output ONLY the email body. No subject. No preamble. No markdown. No quoted instructions.`;
+BANNED PUNCTUATION:
+- Em-dashes (—) NEVER. Use a period or comma instead.
+- Triple dashes (---) NEVER.
+- Semicolons sparingly (most sentences should be standalone).
 
-/** Hour-of-day in Melbourne, properly DST-aware (AEDT in summer, AEST in winter). */
-function melbourneHour(d: Date): number {
-  const fmt = new Intl.DateTimeFormat('en-AU', {
-    timeZone: 'Australia/Melbourne',
-    hour: 'numeric',
-    hour12: false,
-  });
-  return parseInt(fmt.format(d), 10);
-}
+If they gave specific details (a job role, a tool, a pain point), engage with THAT detail concretely. If they gave thin context, ask the two questions that would let you scope properly, do not pad with platitudes.
+
+Output ONLY the email body. No subject. No preamble. No markdown.`;
 
 /** Pretty-format a datetime-local input or ISO timestamp in Melbourne time
  *  for inclusion in Claude prompts. Returns the original string if unparseable. */
@@ -98,10 +100,7 @@ export function formatMelbourneTime(s: string | null | undefined): string | null
 }
 
 function jitteredDelayMs(): number {
-  const base = BASE_DELAY_MIN_MS + Math.random() * (BASE_DELAY_MAX_MS - BASE_DELAY_MIN_MS);
-  const hour = melbourneHour(new Date());
-  const isOddHour = hour < 8 || hour >= 19;
-  return Math.floor(isOddHour ? base * ODD_HOUR_MULTIPLIER : base);
+  return Math.floor(BASE_DELAY_MIN_MS + Math.random() * (BASE_DELAY_MAX_MS - BASE_DELAY_MIN_MS));
 }
 
 function runClaude(systemPrompt: string, userPrompt: string, model: string): Promise<string> {
