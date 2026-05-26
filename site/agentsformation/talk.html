@@ -10,6 +10,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500&family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,300;1,14..32,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/flatpickr.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/plugins/confirmDate/confirmDate.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -61,11 +63,8 @@
         <input class="leadform-input" type="email" name="email" placeholder="Email address" required autocomplete="email">
         <div class="leadform-field-with-label leadform-time-block">
           <span class="leadform-label">Preferred call time (Melbourne, optional)</span>
-          <div class="leadform-time-row">
-            <input class="leadform-input leadform-time-input" type="datetime-local" name="preferred_time">
-            <button type="button" class="leadform-time-set" onclick="setLeadTime(this)">Set time</button>
-          </div>
-          <small class="leadform-time-display">Tap the field, pick a date and time, then tap Set time.</small>
+          <input class="leadform-input leadform-time-input" type="text" name="preferred_time" placeholder="Tap to pick a date and time" autocomplete="off" readonly>
+          <small class="leadform-time-display">Optional. Pick a slot from the calendar, then tap Set time.</small>
         </div>
         <textarea class="leadform-input leadform-textarea" name="message" placeholder="What&rsquo;s eating your week? (optional)" rows="2"></textarea>
         <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;">
@@ -103,5 +102,31 @@
     </div>
   </footer>
 
+
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/plugins/confirmDate/confirmDate.js"></script>
+  <script>
+    document.querySelectorAll('.leadform-time-input').forEach(function(input) {
+      var displayEl = input.parentElement.querySelector('.leadform-time-display');
+      flatpickr(input, {
+        enableTime: true,
+        dateFormat: "Y-m-d H:i",
+        minuteIncrement: 15,
+        time_24hr: false,
+        minDate: "today",
+        plugins: [new confirmDatePlugin({ confirmText: 'Set time', showAlways: true })],
+        onChange: function(selectedDates) {
+          if (!selectedDates[0]) return;
+          var fmt = new Intl.DateTimeFormat('en-AU', {
+            weekday: 'long', day: 'numeric', month: 'long',
+            hour: 'numeric', minute: '2-digit', hour12: true,
+            timeZone: 'Australia/Melbourne'
+          });
+          displayEl.textContent = 'Set: ' + fmt.format(selectedDates[0]) + ' (Melbourne)';
+          displayEl.classList.add('is-set');
+        }
+      });
+    });
+  </script>
 </body>
 </html>

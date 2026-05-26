@@ -1545,28 +1545,6 @@ input.leadform-input[type="datetime-local"] {
 }
 
 /* datetime-local helper UI — confirm button + formatted display */
-.leadform-time-row {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-.leadform-time-input { flex: 1; min-width: 0; }
-.leadform-time-set {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 16px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.leadform-time-set:hover { background: var(--bg-alt); border-color: var(--ink-4); }
 .leadform-time-display {
   font-family: var(--sans);
   font-size: 12px;
@@ -1578,7 +1556,12 @@ input.leadform-input[type="datetime-local"] {
   color: var(--accent);
   font-weight: 500;
 }
-@media (max-width: 480px) {
-  .leadform-time-row { flex-direction: column; gap: 6px; }
-  .leadform-time-set { padding: 10px 16px; }
-}
+
+
+/* Flatpickr theming to match the site palette */
+.flatpickr-calendar { box-shadow: 0 10px 32px rgba(20,18,16,0.15); border-radius: 6px; }
+.flatpickr-day.selected, .flatpickr-day.selected:hover { background: var(--accent); border-color: var(--accent); }
+.flatpickr-day:hover { background: var(--accent-glow); }
+.flatpickr-confirm.darkTheme { background: var(--accent); color: #fff; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.04em; font-size: 12px; }
+.flatpickr-confirm.darkTheme:hover { background: var(--accent-deep); }
+.flatpickr-confirm svg path { fill: #fff; }
