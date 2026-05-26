@@ -354,7 +354,8 @@
       -->
       <form class="leadform" action="https://api.agentsform.ai/lead" method="POST">
         <input class="leadform-input" type="text" name="name" placeholder="Your name" required autocomplete="name">
-        <input class="leadform-input" type="tel" name="phone" placeholder="Best number to call" required autocomplete="tel" pattern="[\d\s+()-]{8,}">
+        <input class="leadform-input" type="tel" name="phone" placeholder="Phone (optional)" autocomplete="tel">
+        <input class="leadform-input" type="email" name="email" placeholder="Email address" required autocomplete="email">
         <select class="leadform-input leadform-select" name="preferred_time">
           <option value="">When&rsquo;s a good time to call?</option>
           <option value="this-morning">This morning</option>
