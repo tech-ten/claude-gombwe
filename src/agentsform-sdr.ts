@@ -70,13 +70,37 @@ If they didn't provide enough context to write a personalised email, fall back t
 
 Output ONLY the email body. No subject. No preamble. No markdown. No quoted instructions.`;
 
+/** Hour-of-day in Melbourne, properly DST-aware (AEDT in summer, AEST in winter). */
+function melbourneHour(d: Date): number {
+  const fmt = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Melbourne',
+    hour: 'numeric',
+    hour12: false,
+  });
+  return parseInt(fmt.format(d), 10);
+}
+
+/** Pretty-format a datetime-local input or ISO timestamp in Melbourne time
+ *  for inclusion in Claude prompts. Returns the original string if unparseable. */
+export function formatMelbourneTime(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Melbourne',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d) + ' (Melbourne)';
+}
+
 function jitteredDelayMs(): number {
   const base = BASE_DELAY_MIN_MS + Math.random() * (BASE_DELAY_MAX_MS - BASE_DELAY_MIN_MS);
-  const now = new Date();
-  // AEST is UTC+10 (no DST in QLD/NSW for current cron; for Melbourne we'd account for AEDT
-  // but a 3x multiplier is fuzzy enough that it doesn't matter)
-  const aestHour = (now.getUTCHours() + 10) % 24;
-  const isOddHour = aestHour < 8 || aestHour >= 19;
+  const hour = melbourneHour(new Date());
+  const isOddHour = hour < 8 || hour >= 19;
   return Math.floor(isOddHour ? base * ODD_HOUR_MULTIPLIER : base);
 }
 
@@ -209,7 +233,7 @@ export class AgentsformSdr {
       `Lead details:`,
       `- Name: ${lead.name}`,
       lead.phone ? `- Phone: ${lead.phone}` : null,
-      lead.preferred_time ? `- Preferred call time: ${lead.preferred_time}` : null,
+      lead.preferred_time ? `- Preferred call time: ${formatMelbourneTime(lead.preferred_time) || lead.preferred_time}` : null,
       `- Source page: ${lead.source || 'unknown'}`,
       lead.message ? `- Message they wrote: "${lead.message}"` : `- They didn't write a specific message.`,
     ].filter(Boolean).join('\n');

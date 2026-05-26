@@ -356,16 +356,10 @@
         <input class="leadform-input" type="text" name="name" placeholder="Your name" required autocomplete="name">
         <input class="leadform-input" type="tel" name="phone" placeholder="Phone (optional)" autocomplete="tel">
         <input class="leadform-input" type="email" name="email" placeholder="Email address" required autocomplete="email">
-        <select class="leadform-input leadform-select" name="preferred_time">
-          <option value="">When&rsquo;s a good time to call?</option>
-          <option value="this-morning">This morning</option>
-          <option value="this-afternoon">This afternoon</option>
-          <option value="tomorrow-morning">Tomorrow morning</option>
-          <option value="tomorrow-afternoon">Tomorrow afternoon</option>
-          <option value="later-this-week">Later this week</option>
-          <option value="next-week">Next week</option>
-          <option value="evening">Evening (after 5pm)</option>
-        </select>
+        <div class="leadform-field-with-label">
+          <span class="leadform-label">Preferred call time (Melbourne, optional)</span>
+          <input class="leadform-input" type="datetime-local" name="preferred_time">
+        </div>
         <textarea class="leadform-input leadform-textarea" name="message" placeholder="What&rsquo;s eating your week? (optional)" rows="2"></textarea>
         <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;">
         <input type="hidden" name="source" value="homepage">
