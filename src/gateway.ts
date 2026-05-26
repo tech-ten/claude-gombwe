@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter } from './types.js';
@@ -98,6 +98,9 @@ export class Gateway {
 
     this.app = express();
     this.app.use(express.json());
+    // Standard HTML form posts arrive as application/x-www-form-urlencoded;
+    // needed for the agentsform lead endpoint where the form has no JS.
+    this.app.use(express.urlencoded({ extended: true, limit: '64kb' }));
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
 
@@ -1139,6 +1142,88 @@ export class Gateway {
         return;
       }
       res.json(this.notify(message, Array.isArray(targets) ? targets : undefined));
+    });
+
+    // ── Agentsform lead form receiver ─────────────────────────────
+    // Public POST endpoint for agentsform.ai contact forms. Plain HTML
+    // form submission (application/x-www-form-urlencoded), no auth, no
+    // CORS preflight. Validates honeypot + rate-limits per IP, appends
+    // to leads.jsonl, fires Discord notification, redirects to /thanks.
+    //
+    // Tunnel: route api.agentsform.ai → localhost:18790 (no Access policy).
+    const leadsFile = join(homedir(), '.claude-gombwe', 'data', 'leads.jsonl');
+    const leadRateLimit = new Map<string, { count: number; resetAt: number }>();
+    const LEAD_LIMIT_WINDOW_MS = 60_000;
+    const LEAD_LIMIT_MAX = 5;  // 5 submissions per IP per minute
+
+    this.app.post('/api/agentsform-lead', (req: Request, res: Response) => {
+      const now = Date.now();
+      const ip = (req.headers['cf-connecting-ip'] as string)
+              || (req.headers['x-forwarded-for'] as string || '').split(',')[0].trim()
+              || req.socket.remoteAddress
+              || 'unknown';
+
+      // Rate limit per IP
+      const rl = leadRateLimit.get(ip);
+      if (rl && rl.resetAt > now) {
+        if (rl.count >= LEAD_LIMIT_MAX) {
+          res.status(429).type('text/plain').send('Too many submissions. Try again in a minute.');
+          return;
+        }
+        rl.count++;
+      } else {
+        leadRateLimit.set(ip, { count: 1, resetAt: now + LEAD_LIMIT_WINDOW_MS });
+      }
+
+      const body = req.body ?? {};
+      const honeypot = String(body._gotcha ?? '').trim();
+      if (honeypot.length > 0) {
+        // Bot — pretend success so they don't retry, but discard.
+        res.redirect(302, 'https://agentsform.ai/thanks.html');
+        return;
+      }
+
+      const name = String(body.name ?? '').trim().slice(0, 200);
+      const phone = String(body.phone ?? '').trim().slice(0, 50);
+      const email = String(body.email ?? '').trim().slice(0, 200);
+      const message = String(body.message ?? '').trim().slice(0, 2000);
+      const preferred = String(body.preferred_time ?? '').trim().slice(0, 100);
+      const source = String(body.source ?? 'unknown').trim().slice(0, 100);
+
+      if (!name || (!phone && !email)) {
+        res.status(400).type('text/plain').send('Name and at least one of phone/email required.');
+        return;
+      }
+
+      const record = {
+        ts: new Date().toISOString(),
+        ip,
+        name, phone, email, message, preferred_time: preferred, source,
+        user_agent: String(req.headers['user-agent'] ?? '').slice(0, 300),
+        referer: String(req.headers['referer'] ?? '').slice(0, 300),
+      };
+
+      try {
+        mkdirSync(dirname(leadsFile), { recursive: true });
+        appendFileSync(leadsFile, JSON.stringify(record) + '\n', { mode: 0o600 });
+      } catch (err) {
+        console.error('[agentsform-lead] write failed:', err);
+        res.status(500).type('text/plain').send('Could not record lead. Please call 0401 156 266 directly.');
+        return;
+      }
+
+      const summary = [
+        `**New lead from agentsform.ai** (${source})`,
+        `Name: ${name}`,
+        phone ? `Phone: ${phone}` : null,
+        email ? `Email: ${email}` : null,
+        preferred ? `Preferred time: ${preferred}` : null,
+        message ? `Message: ${message}` : null,
+        `_(${ip})_`,
+      ].filter(Boolean).join('\n');
+      this.notify(summary);
+
+      res.redirect(302, 'https://agentsform.ai/thanks.html');
     });
 
     // ── Network monitoring + control ─────────────────────────────

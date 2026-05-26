@@ -1320,3 +1320,206 @@ a { color: inherit; text-decoration: none; }
   .cta-title { font-size: 34px; }
   .africa-stat-num { font-size: 36px; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Lead-gen additions: contact form, sticky mobile CTA bar,
+   /before-you-hire math layout.
+   ════════════════════════════════════════════════════════════ */
+
+.leadform {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+  margin: 0 auto;
+  text-align: left;
+}
+.leadform-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: var(--sans);
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.leadform-input::placeholder { color: var(--ink-4); }
+.leadform-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.leadform-textarea { resize: vertical; min-height: 60px; }
+.leadform-select {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23807A72'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 16px;
+  padding-right: 44px;
+}
+.leadform-submit { width: 100%; margin-top: 4px; cursor: pointer; border: none; }
+
+/* Sticky mobile contact bar — always reachable on small screens */
+.mobile-cta-bar {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 100;
+  background: var(--bg-dark);
+  padding: 10px 12px;
+  gap: 8px;
+  border-top: 1px solid var(--border-dark);
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+}
+.mobile-cta-bar a {
+  flex: 1;
+  padding: 12px 8px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mobile-cta-call { background: var(--accent); color: var(--surface); }
+.mobile-cta-book {
+  background: transparent;
+  color: var(--ink-on-dark);
+  border: 1px solid var(--ink-3);
+}
+@media (max-width: 720px) {
+  .mobile-cta-bar { display: flex; }
+  body { padding-bottom: 72px; }
+}
+
+/* /before-you-hire cost-of-hire math layout */
+.math-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin-top: 48px;
+}
+.math-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 32px 28px;
+  border-radius: 4px;
+}
+.math-col-us {
+  background: var(--bg-dark);
+  border-color: var(--border-dark);
+  color: var(--ink-on-dark);
+}
+.math-col-us .math-col-title { color: var(--ink-on-dark); }
+.math-col-us .math-table td { color: var(--ink-2-dark); border-bottom-color: var(--border-dark); }
+.math-col-us .math-total td { color: var(--ink-on-dark); }
+.math-col-us .math-note { color: var(--ink-3-dark); }
+.math-col-title {
+  font-family: var(--serif);
+  font-size: 26px;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--ink);
+  margin-bottom: 20px;
+  letter-spacing: -0.01em;
+}
+.math-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 14px;
+}
+.math-table td {
+  padding: 12px 0;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--border);
+}
+.math-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.math-total td {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  border-bottom: none;
+  padding-top: 16px;
+}
+.math-note {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ink-3);
+  font-style: italic;
+  font-family: var(--serif);
+}
+.math-callout {
+  margin-top: 56px;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--ink);
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.math-callout em { font-style: italic; color: var(--accent); }
+
+.replace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 32px;
+  margin-top: 48px;
+}
+.replace-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 28px 26px;
+  border-radius: 4px;
+}
+.replace-role {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.replace-pain {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-style: italic;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.replace-us {
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.cta-divider {
+  border: none;
+  height: 1px;
+  background: var(--border);
+  margin: 32px auto;
+  max-width: 200px;
+}
+
+@media (max-width: 720px) {
+  .math-grid { grid-template-columns: 1fr; gap: 24px; }
+  .replace-grid { grid-template-columns: 1fr; gap: 20px; }
+  .math-callout { font-size: 19px; }
+}
