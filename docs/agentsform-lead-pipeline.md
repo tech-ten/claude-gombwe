@@ -11,7 +11,7 @@ no Calendly, no Formspree, no third-party SaaS in the loop.
       │  fills form on /before-you-hire, /talk, or homepage
       │  HTML form POST (no JS, no CORS preflight)
       ▼
-  https://api.agentsform.ai/api/agentsform-lead
+  https://leads.gombwe.com/api/agentsform-lead
       │  Cloudflare DNS → CNAME → tunnel UUID
       │  Cloudflare Tunnel → Mac mini
       ▼
@@ -44,7 +44,7 @@ Add to `/etc/cloudflared/config.yml` BEFORE the catch-all `service: http_status:
 
 ```yaml
   # Agentsform lead form receiver — public POST endpoint, no Access policy
-  - hostname: api.agentsform.ai
+  - hostname: leads.gombwe.com
     service: http://localhost:18790
 ```
 
@@ -57,7 +57,7 @@ sudo launchctl kickstart -k system/com.cloudflare.cloudflared
 ### 3. NO Cloudflare Access policy on this hostname
 
 Form submitters are anonymous visitors — they can't authenticate. Make
-sure `api.agentsform.ai` is **NOT** behind any Access application in
+sure `leads.gombwe.com` is **NOT** behind any Access application in
 the Cloudflare Zero Trust dashboard. (`dashboard.gombwe.com` is — leave
 that one alone.)
 
@@ -74,7 +74,7 @@ npm run build
 ### 5. Verify
 
 ```
-curl -i -X POST https://api.agentsform.ai/api/agentsform-lead \
+curl -i -X POST https://leads.gombwe.com/api/agentsform-lead \
   -d "name=Test" \
   -d "phone=0400000000" \
   -d "message=test from setup verification" \
@@ -133,7 +133,7 @@ cat ~/.claude-gombwe/data/leads.jsonl | jq -r 'select(.phone != "") | [.ts, .nam
 
 | Page                           | Form action                                  | Source value      |
 |--------------------------------|----------------------------------------------|-------------------|
-| `/` (homepage contact section) | `https://api.agentsform.ai/api/agentsform-lead` | `homepage`        |
+| `/` (homepage contact section) | `https://leads.gombwe.com/api/agentsform-lead` | `homepage`        |
 | `/before-you-hire.html`        | same                                         | `before-you-hire` |
 | `/talk.html`                   | same                                         | `talk`            |
 
