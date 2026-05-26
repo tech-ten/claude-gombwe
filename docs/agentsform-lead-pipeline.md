@@ -1,167 +1,185 @@
-# Agentsform Lead Pipeline
+# Agentsform Lead Pipeline (AWS-native)
 
-Lead-capture flow for agentsform.ai contact forms. Owned end-to-end —
-no Calendly, no Formspree, no third-party SaaS in the loop.
+End-to-end lead-capture flow for agentsform.ai contact forms. Built
+entirely on AWS-native services in `ap-southeast-2` — no Cloudflare,
+no third-party SaaS, no Mac mini dependency in the customer-facing path.
 
 ## Architecture
 
 ```
-  Visitor on agentsform.ai (S3 + CloudFront, AWS)
+  Visitor on agentsform.ai (S3 + CloudFront)
       │
       │  fills form on /before-you-hire, /talk, or homepage
       │  HTML form POST (no JS, no CORS preflight)
       ▼
-  https://leads.gombwe.com/api/agentsform-lead
-      │  Cloudflare DNS → CNAME → tunnel UUID
-      │  Cloudflare Tunnel → Mac mini
+  https://api.agentsform.ai/lead
+      │  Route 53 alias (A record)
       ▼
-  gombwe daemon (src/gateway.ts)
+  API Gateway HTTP API  (custom domain api.agentsform.ai)
       │
-      ├─ rate-limit (5 per IP per minute)
+      ▼
+  Lambda: agentsform-lead-handler  (Node.js 20.x, arm64, 256MB)
+      │
       ├─ honeypot check (_gotcha field empty)
-      ├─ validate (name + phone or email)
-      ├─ append → ~/.claude-gombwe/data/leads.jsonl
-      ├─ notify() → Discord channel
+      ├─ validate name + (phone || email)
+      ├─ PutItem → DynamoDB table `agentsform-leads`
       └─ HTTP 302 → https://agentsform.ai/thanks.html
 ```
 
-## One-time setup
-
-### 1. Cloudflare DNS record
-
-In the Cloudflare dashboard for the `agentsform.ai` zone, add a CNAME:
-
-| Type  | Name | Target                                          | Proxy   |
-|-------|------|-------------------------------------------------|---------|
-| CNAME | api  | `2630b446-cf1e-4a99-93e5-add048043e48.cfargotunnel.com` | Proxied |
-
-The tunnel UUID is the same one already used for `dashboard.gombwe.com`
-(read from `/etc/cloudflared/config.yml`).
-
-### 2. Cloudflare Tunnel ingress rule
-
-Add to `/etc/cloudflared/config.yml` BEFORE the catch-all `service: http_status:404`:
-
-```yaml
-  # Agentsform lead form receiver — public POST endpoint, no Access policy
-  - hostname: leads.gombwe.com
-    service: http://localhost:18790
+Future side-flow (deferred, runs on Mac mini):
+```
+  gombwe daemon
+      │  scheduled poll (every N min)
+      │  Scan agentsform-leads WHERE processed = false
+      │
+      ├─ Discord notification per new lead
+      ├─ optional: AI-drafted follow-up suggestion via Haiku
+      └─ UpdateItem set processed = true
 ```
 
-Then restart cloudflared:
+## AWS resources (region ap-southeast-2 unless noted)
 
+| Resource | Name / ID | Notes |
+|----------|-----------|-------|
+| DynamoDB table | `agentsform-leads` | PAY_PER_REQUEST. PK: `lead_id` (UUID). GSI `ts-index` on `ts`. |
+| Lambda function | `agentsform-lead-handler` | Node.js 20.x, arm64, 256MB, 10s timeout. Code in `aws/agentsform-lead-handler/index.mjs`. |
+| IAM role | `agentsform-lead-handler-role` | Basic execution + inline `agentsform-leads-write` (PutItem only on the leads table). |
+| HTTP API | id `dc87zu8fhl` | `POST /lead` → Lambda. CORS allows `https://agentsform.ai` + `https://www.agentsform.ai`. |
+| Custom domain | `api.agentsform.ai` | Regional endpoint. TLS 1.2 min. ACM cert in ap-southeast-2. |
+| ACM cert | `034a0c32-…` | DNS-validated via Route 53. ap-southeast-2. |
+| Route 53 alias | `api.agentsform.ai` (A) | → `d-p5ezcr1wbd.execute-api.ap-southeast-2.amazonaws.com` |
+
+## Lambda source
+
+Source of truth: `aws/agentsform-lead-handler/index.mjs`.
+
+Redeploy after a code change:
 ```
-sudo launchctl kickstart -k system/com.cloudflare.cloudflared
-```
-
-### 3. NO Cloudflare Access policy on this hostname
-
-Form submitters are anonymous visitors — they can't authenticate. Make
-sure `leads.gombwe.com` is **NOT** behind any Access application in
-the Cloudflare Zero Trust dashboard. (`dashboard.gombwe.com` is — leave
-that one alone.)
-
-### 4. Rebuild + restart gombwe daemon
-
-Endpoint is in `src/gateway.ts`. After pulling the new code:
-
-```
-cd ~/code/claude-gombwe
-npm run build
-# restart the daemon — whichever way you start it (launchd, manual, etc.)
-```
-
-### 5. Verify
-
-```
-curl -i -X POST https://leads.gombwe.com/api/agentsform-lead \
-  -d "name=Test" \
-  -d "phone=0400000000" \
-  -d "message=test from setup verification" \
-  -d "source=verify"
+cd aws/agentsform-lead-handler
+zip -q /tmp/lambda-package.zip index.mjs
+aws lambda update-function-code \
+  --region ap-southeast-2 \
+  --function-name agentsform-lead-handler \
+  --zip-file fileb:///tmp/lambda-package.zip
 ```
 
-Expected:
-- HTTP 302 with `Location: https://agentsform.ai/thanks.html`
-- New row in `~/.claude-gombwe/data/leads.jsonl`
-- Discord notification fires
+## Form fields → DynamoDB columns
 
-## Receiving leads
+Standard HTML form POST (application/x-www-form-urlencoded):
 
-Leads land in two places automatically:
+| Form field | DDB attribute | Notes |
+|------------|---------------|-------|
+| `name` (required) | `name` | clamp 200 chars |
+| `phone` (required if no email) | `phone` | clamp 50 chars |
+| `email` (required if no phone) | `email` | clamp 200 chars |
+| `message` (optional) | `message` | clamp 2000 chars |
+| `preferred_time` (select) | `preferred_time` | enum: this-morning / this-afternoon / tomorrow-morning / tomorrow-afternoon / later-this-week / next-week / evening |
+| `source` (hidden) | `source` | identifies origin page: homepage / before-you-hire / talk |
+| `_gotcha` (honeypot) | — | discarded if non-empty |
 
-1. **`~/.claude-gombwe/data/leads.jsonl`** — durable append-only log.
-   One JSON line per submission with timestamp, IP, name, phone, email,
-   preferred call time, message, source page, user-agent, referer.
+Lambda-added fields:
+- `lead_id` (UUID v4, primary key)
+- `ts` (ISO 8601)
+- `ip` (from API Gateway request context)
+- `user_agent`, `referer` (from headers)
+- `processed` (bool, default false — flag for the gombwe poller)
 
-2. **Discord** — `notify()` posts to the configured channel(s). Message
-   format:
-   ```
-   **New lead from agentsform.ai** (before-you-hire)
-   Name: Sarah K
-   Phone: 0412 345 678
-   Preferred time: tomorrow-morning
-   Message: looking to replace office admin role
-   _(203.0.113.45)_
-   ```
-
-Quick query helpers:
+## Reading leads
 
 ```
-# All leads today
-grep $(date -u +%Y-%m-%d) ~/.claude-gombwe/data/leads.jsonl | jq .
+# Most recent leads
+aws dynamodb scan --region ap-southeast-2 \
+  --table-name agentsform-leads \
+  --query 'Items[*].{ts:ts.S,name:name.S,phone:phone.S,source:source.S}' \
+  --output table
 
-# Lead count per source
-jq -r .source ~/.claude-gombwe/data/leads.jsonl | sort | uniq -c
+# Leads from a specific page
+aws dynamodb scan --region ap-southeast-2 \
+  --table-name agentsform-leads \
+  --filter-expression "#s = :src" \
+  --expression-attribute-names '{"#s":"source"}' \
+  --expression-attribute-values '{":src":{"S":"before-you-hire"}}'
 
-# Leads with phone but no callback yet (manual — there's no callback-tracking)
-cat ~/.claude-gombwe/data/leads.jsonl | jq -r 'select(.phone != "") | [.ts, .name, .phone, .preferred_time] | @tsv'
+# Unprocessed leads
+aws dynamodb scan --region ap-southeast-2 \
+  --table-name agentsform-leads \
+  --filter-expression "processed = :f" \
+  --expression-attribute-values '{":f":{"BOOL":false}}'
 ```
 
-## Rate-limit + abuse handling
+## Notification (deferred)
 
-- **5 submissions per IP per minute** (in-memory, resets on restart).
-  Excess returns HTTP 429.
-- **Honeypot field `_gotcha`** — hidden CSS, normal users never fill it.
-  Bots typically do. Honeypot-tripped submissions get a 302 to /thanks
-  (so the bot doesn't know it was caught) but discard the data.
-- **Body size limit 64 KB** (Express `urlencoded` middleware).
-- **No CAPTCHA** — adding one would tank conversion. Revisit if spam
-  becomes meaningful.
+Customer-facing path doesn't fire any notification today. To get a
+Discord ping when a lead arrives, add a poller on the Mac mini (gombwe)
+that scans `agentsform-leads` for `processed = false`, fires Discord
+via `notify()`, then `UpdateItem` flips `processed = true`. Trivial to
+add — not blocking lead capture.
 
-## Forms on which pages
+Cheaper-and-faster alternative if real-time matters: DynamoDB Streams +
+EventBridge → SNS (email or SMS). Costs pennies/month. Skipped for v1.
 
-| Page                           | Form action                                  | Source value      |
-|--------------------------------|----------------------------------------------|-------------------|
-| `/` (homepage contact section) | `https://leads.gombwe.com/api/agentsform-lead` | `homepage`        |
-| `/before-you-hire.html`        | same                                         | `before-you-hire` |
-| `/talk.html`                   | same                                         | `talk`            |
+## Static-site deploy
 
-Source value is captured in `leads.jsonl` so you can see which page is
-converting.
-
-## Deploy notes
-
-### Static (agentsform.ai)
 After editing any HTML/CSS in `site/agentsformation/`:
 
 ```
-aws s3 cp site/agentsformation/before-you-hire.html s3://www.agentsform.ai/
-aws s3 cp site/agentsformation/talk.html s3://www.agentsform.ai/
-aws s3 cp site/agentsformation/thanks.html s3://www.agentsform.ai/
-aws s3 cp site/agentsformation/index.html s3://www.agentsform.ai/
-aws s3 cp site/agentsformation/style.css s3://www.agentsform.ai/
-aws s3 cp site/agentsformation/sitemap.xml s3://www.agentsform.ai/
-aws cloudfront create-invalidation --distribution-id <YOUR_DIST_ID> --paths "/*"
+aws s3 cp site/agentsformation/index.html s3://www.agentsform.ai/ \
+  --content-type "text/html; charset=utf-8" --cache-control "public, max-age=300"
+# repeat for before-you-hire.html, talk.html, thanks.html, style.css, sitemap.xml
+aws cloudfront create-invalidation --distribution-id E1QP7Q4V8GZBLK --paths "/*"
 ```
 
-**Do NOT** use `aws s3 sync --delete` against `www.agentsform.ai` — the
-bucket also serves a Next.js app at subpaths (see `README.md`).
+**Do NOT** `aws s3 sync --delete` against `www.agentsform.ai` — the
+bucket also serves a Next.js app at subpaths (see `site/agentsformation/README.md`).
 
-### Mac mini
-```
-cd ~/code/claude-gombwe
-git pull
-npm run build
-# restart daemon
-```
+## Costs
+
+For ~100 leads/month: ~$0.00, effectively free.
+- API Gateway HTTP API: 100 reqs ≈ $0.0001
+- Lambda: 100 invocations × ~200ms ≈ $0.000003
+- DynamoDB PAY_PER_REQUEST: 100 writes ≈ $0.0001
+- Route 53: $0.50/mo per hosted zone (already paid)
+- ACM cert: free
+
+Static site (S3 + CloudFront) dominates at maybe $1-3/mo.
+
+## Anti-abuse
+
+In place:
+- **Honeypot** (`_gotcha`) — bots fill it, get discarded silently with
+  a 302 to /thanks so the bot doesn't know it was caught.
+- **CORS** scoped to `https://agentsform.ai` + `https://www.agentsform.ai`
+  on the API Gateway side. Limits browser cross-origin abuse from random
+  pages (doesn't stop direct curl, but those aren't the threat model).
+- **Body size limit** via Lambda's natural input cap.
+
+Worth adding if spam shows up:
+- WAF rule for IP-based rate limit (~$5/mo + per-request)
+- CAPTCHA (kills conversion — last resort)
+
+## Teardown / reproduce
+
+A CloudFormation template encoding everything below is a worthwhile
+follow-up (the AWS account has no IaC today). To recreate from scratch
+in another account / region manually:
+
+1. Create DynamoDB table `agentsform-leads` (PAY_PER_REQUEST, PK
+   `lead_id`, GSI `ts-index` on `ts`)
+2. Create IAM role `agentsform-lead-handler-role` (trust: lambda),
+   attach `AWSLambdaBasicExecutionRole`, add inline policy with
+   `dynamodb:PutItem` on the leads table ARN
+3. `zip` + `aws lambda create-function` from `aws/agentsform-lead-handler/index.mjs`
+   (nodejs20.x, arm64, 256MB, 10s, env LEADS_TABLE=agentsform-leads)
+4. `aws apigatewayv2 create-api` (HTTP, name agentsform-lead-api,
+   CORS = agentsform.ai)
+5. `create-integration` (AWS_PROXY, payload v2.0, target = Lambda ARN)
+6. `create-route POST /lead`, target = integration
+7. `lambda add-permission` for API Gateway to invoke
+8. `create-stage $default --auto-deploy`
+9. `acm request-certificate` for `api.agentsform.ai` (DNS-validated;
+   add the CNAME ACM returns to Route 53)
+10. `apigatewayv2 create-domain-name` (REGIONAL, TLS 1.2, attach cert)
+11. `apigatewayv2 create-api-mapping` linking custom domain to `$default`
+12. Route 53 A-alias `api.agentsform.ai` → `ApiGatewayDomainName`
+    with HostedZoneId from the custom-domain config
+13. Static site form action → `https://api.agentsform.ai/lead`
