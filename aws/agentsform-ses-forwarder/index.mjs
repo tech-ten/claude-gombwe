@@ -1,8 +1,18 @@
 import { SESClient, SendRawEmailCommand } from "@aws-sdk/client-ses";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 const ses = new SESClient({ region: "ap-southeast-2" });
 const s3 = new S3Client({ region: "ap-southeast-2" });
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: "ap-southeast-2" }));
+
+// Addresses where inbound replies feed back into the AI SDR loop. When SES
+// receives mail at these addresses, also write a structured row to the
+// agentsform-inbound DDB table so gombwe can pick it up and continue the
+// conversation.
+const SDR_INBOUND_ADDRS = new Set(["ellison@agentsform.ai", "hello@agentsform.ai"]);
+const INBOUND_TABLE = "agentsform-inbound";
 
 const FORWARD_MAP = {
   "tendai@agentsform.ai": { to: "tmudavanhu@gmail.com", from: "forwarder.tendai@agentsform.ai" },
@@ -271,6 +281,44 @@ export const handler = async (event) => {
       }));
 
       console.log(`Forwarded to ${forwardTo} (attachments: ${attachments.length})`);
+
+      // ── SDR inbound capture ────────────────────────────────────────
+      // If the email was destined for an address we use for the AI SDR,
+      // also write a structured manifest entry to DynamoDB. Gombwe polls
+      // this table to drive the conversation loop. Sender forwarder.*
+      // addresses are ignored (those are our own outbound copies coming
+      // back via BCC, not lead replies).
+      const sdrTarget = recipients.find(r => SDR_INBOUND_ADDRS.has(r.toLowerCase()));
+      const senderEmail = parseAddress(fromHeader);
+      const isOurOwnForwarder = senderEmail.startsWith("forwarder.") && senderEmail.endsWith("@agentsform.ai");
+      const isOurAiSender = senderEmail === "ellison@agentsform.ai" || senderEmail === "hello@agentsform.ai";
+
+      if (sdrTarget && !isOurOwnForwarder && !isOurAiSender) {
+        try {
+          const inReplyTo = extractHeader(rawEmail, "In-Reply-To");
+          const references = extractHeader(rawEmail, "References");
+          await ddb.send(new PutCommand({
+            TableName: INBOUND_TABLE,
+            Item: {
+              message_id: messageId,
+              ts: new Date().toISOString(),
+              recipient: sdrTarget,
+              sender_email: senderEmail,
+              sender_full: fromHeader,
+              subject: cleanSubject,
+              in_reply_to: inReplyTo || null,
+              references: references || null,
+              text_body: (textBody || "").slice(0, 20000),
+              s3_bucket: bucket,
+              s3_key: key,
+              processed: false,
+            },
+          }));
+          console.log(`SDR inbound captured: ${senderEmail} → ${sdrTarget} (${messageId})`);
+        } catch (err) {
+          console.error("SDR inbound capture failed:", err);
+        }
+      }
     } catch (error) {
       console.error("Error forwarding:", error);
       throw error;
@@ -279,3 +327,36 @@ export const handler = async (event) => {
 
   return { status: "success" };
 };
+
+/** Strip display-name from "Name <addr@host>" → "addr@host". Lowercased. */
+function parseAddress(s) {
+  if (!s) return "";
+  const m = s.match(/<([^>]+)>/);
+  const addr = m ? m[1] : s;
+  return addr.trim().toLowerCase();
+}
+
+/** Extract a single MIME header (case-insensitive, multi-line aware). */
+function extractHeader(raw, name) {
+  const lines = raw.split(/\r?\n/);
+  const lower = name.toLowerCase();
+  let captured = "";
+  let collecting = false;
+  for (const line of lines) {
+    if (collecting) {
+      // continuation lines start with whitespace
+      if (/^\s/.test(line)) { captured += " " + line.trim(); continue; }
+      else break;
+    }
+    const i = line.indexOf(":");
+    if (i < 0) {
+      if (line === "") break;  // end of headers
+      continue;
+    }
+    if (line.slice(0, i).toLowerCase() === lower) {
+      captured = line.slice(i + 1).trim();
+      collecting = true;
+    }
+  }
+  return captured;
+}
