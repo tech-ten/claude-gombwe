@@ -27,7 +27,7 @@
       <a href="#how" class="nav-link">How it works</a>
       <a href="#examples" class="nav-link">Examples</a>
       <a href="#who" class="nav-link">Who it's for</a>
-      <a href="#why-us" class="nav-link">Why us</a>
+      <a href="before-you-hire.html" class="nav-link">Before you hire</a>
       <a href="thesis.html" class="nav-link">Thesis</a>
       <a href="#contact" class="nav-cta">Talk to us</a>
     </div>
@@ -346,23 +346,56 @@
         say so &mdash; with a fixed-fee proposal in writing. If we can&rsquo;t,
         we&rsquo;ll point you to someone who can.
       </p>
-      <div class="cta-actions">
-        <a href="tel:+61401156266" class="btn btn-primary btn-lg">0401 156 266</a>
-      </div>
-      <p class="cta-sub" style="margin-top: 1rem; font-size: 0.95rem;">
-        Prefer email? <a href="mailto:hello@agentsform.ai" style="color: var(--accent); font-weight: 500;">hello@agentsform.ai</a>
+
+      <!--
+        Form posts to api.agentsform.ai (Cloudflare-tunneled to the
+        Mac mini). Server validates honeypot + rate-limits, appends to
+        leads.jsonl, fires Discord notification, redirects to /thanks.
+      -->
+      <form class="leadform" action="https://api.agentsform.ai/api/agentsform-lead" method="POST">
+        <input class="leadform-input" type="text" name="name" placeholder="Your name" required autocomplete="name">
+        <input class="leadform-input" type="tel" name="phone" placeholder="Best number to call" required autocomplete="tel" pattern="[\d\s+()-]{8,}">
+        <select class="leadform-input leadform-select" name="preferred_time">
+          <option value="">When&rsquo;s a good time to call?</option>
+          <option value="this-morning">This morning</option>
+          <option value="this-afternoon">This afternoon</option>
+          <option value="tomorrow-morning">Tomorrow morning</option>
+          <option value="tomorrow-afternoon">Tomorrow afternoon</option>
+          <option value="later-this-week">Later this week</option>
+          <option value="next-week">Next week</option>
+          <option value="evening">Evening (after 5pm)</option>
+        </select>
+        <textarea class="leadform-input leadform-textarea" name="message" placeholder="What&rsquo;s eating your week? (optional)" rows="2"></textarea>
+        <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;">
+        <input type="hidden" name="source" value="homepage">
+        <button class="btn btn-primary btn-lg leadform-submit" type="submit">Call me back</button>
+      </form>
+      <p class="cta-sub" style="margin-top:0.75rem;font-size:0.85rem;color:var(--ink-3);">
+        We ring back within 4 business hours. Your number is only used for
+        this conversation.
+      </p>
+
+      <p class="cta-sub" style="margin-top:2rem;">
+        Or just dial <a href="tel:+61401156266" style="color: var(--accent); font-weight: 600;">0401 156 266</a>
+        &middot; email <a href="mailto:hello@agentsform.ai" style="color: var(--accent); font-weight: 600;">hello@agentsform.ai</a>
       </p>
 
       <div class="cta-signature">
         <p class="cta-name">Agentsform</p>
         <p class="cta-location">Ormond, Melbourne &middot; Australia-wide</p>
         <div class="cta-links">
+          <a href="before-you-hire.html">Before you hire</a>
           <a href="thesis.html">Read the thesis</a>
           <a href="https://github.com/tech-ten/claude-gombwe" target="_blank" rel="noopener">GitHub</a>
         </div>
       </div>
     </div>
   </section>
+
+  <div class="mobile-cta-bar" role="navigation" aria-label="Quick contact">
+    <a href="tel:+61401156266" class="mobile-cta-call">Call now</a>
+    <a href="#contact" class="mobile-cta-book">Call me back</a>
+  </div>
 
   <!-- Footer -->
   <footer class="footer footer-sticky">
@@ -372,6 +405,7 @@
         Agentsform &middot; Ormond, Melbourne
       </div>
       <div class="footer-links">
+        <a href="before-you-hire.html">Before you hire</a>
         <a href="thesis.html">Thesis</a>
         <a href="blog.html">Blog</a>
         <a href="registry.html">MCP Registry</a>
