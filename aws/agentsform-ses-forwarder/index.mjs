@@ -8,6 +8,7 @@ const FORWARD_MAP = {
   "tendai@agentsform.ai": { to: "tmudavanhu@gmail.com", from: "forwarder.tendai@agentsform.ai" },
   "magret@agentsform.ai": { to: "enhancedsoftsys@gmail.com", from: "forwarder.magret@agentsform.ai" },
   "ellison@agentsform.ai": { to: "tmudavanhu@gmail.com", from: "forwarder.ellison@agentsform.ai" },
+  "hello@agentsform.ai":   { to: "tmudavanhu@gmail.com", from: "forwarder.hello@agentsform.ai" },
 };
 const DEFAULT_FORWARD = { to: "enhancedsoftsys@gmail.com", from: "forwarder.tendai@agentsform.ai" };
 
