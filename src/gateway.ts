@@ -24,7 +24,7 @@ import { mikrotik } from './mikrotik-client.js';
 import { getNetworkService } from './network-service.js';
 import { dnsReceiver } from './dns-log-receiver.js';
 import { policyScanner } from './policy-scanner.js';
-import { AgentsformLeadPoller } from './agentsform-poller.js';
+import { AgentsformSdr } from './agentsform-sdr.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -3081,8 +3081,8 @@ The ingredients should be grocery item names with quantities scaled for ${family
     this.eeroScheduler.start();
     console.log(`[gombwe] eero scheduler watching ${this.eeroScheduler.list().length} schedules`);
 
-    // Start agentsform lead poller (DynamoDB → Discord on new leads)
-    new AgentsformLeadPoller((msg, targets) => this.notify(msg, targets)).start();
+    // Start agentsform AI SDR (DynamoDB → Claude → SES outbound from ellison@)
+    new AgentsformSdr().start();
 
     // Start eero sampler if enabled
     this.eeroStore.startSampler();
