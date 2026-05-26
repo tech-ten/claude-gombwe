@@ -235,9 +235,13 @@
         <input class="leadform-input" type="text" name="name" placeholder="Your name" required autocomplete="name">
         <input class="leadform-input" type="tel" name="phone" placeholder="Phone (optional)" autocomplete="tel">
         <input class="leadform-input" type="email" name="email" placeholder="Email address" required autocomplete="email">
-        <div class="leadform-field-with-label">
+        <div class="leadform-field-with-label leadform-time-block">
           <span class="leadform-label">Preferred call time (Melbourne, optional)</span>
-          <input class="leadform-input" type="datetime-local" name="preferred_time">
+          <div class="leadform-time-row">
+            <input class="leadform-input leadform-time-input" type="datetime-local" name="preferred_time">
+            <button type="button" class="leadform-time-set" onclick="setLeadTime(this)">Set time</button>
+          </div>
+          <small class="leadform-time-display">Tap the field, pick a date and time, then tap Set time.</small>
         </div>
         <textarea class="leadform-input leadform-textarea" name="message" placeholder="What&rsquo;s eating your week? (one line is fine)" rows="2"></textarea>
         <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;">
