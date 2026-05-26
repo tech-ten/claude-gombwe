@@ -2,8 +2,13 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://agentsform.ai/</loc>
-    <lastmod>2026-04-10</lastmod>
+    <lastmod>2026-05-26</lastmod>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://agentsform.ai/thesis.html</loc>
+    <lastmod>2026-05-26</lastmod>
+    <priority>0.7</priority>
   </url>
   <url>
     <loc>https://agentsform.ai/blog.html</loc>
