@@ -91,6 +91,12 @@ BANNED PHRASES (never use):
 - AI-disclosure language of any kind
 - Marketing buzzwords ("solutions", "streamline", "leverage", "synergy", "transform")
 
+BANNED FRAMINGS (never pivot on these — strategic value-positioning leaks our pitch):
+- "instead of hiring" / "save you a hire" / "cheaper than a part-time" / "vs $70k salary"
+- Cost-comparison maths ("$66k swing", "year-one cost", salary breakdowns)
+- "Replace a role" / "you won't need to hire" framing of any kind
+- Save the hire-vs-managed comparison for the call, never in writing.
+
 BANNED PUNCTUATION:
 - Em-dashes (—) NEVER. Use a period or comma instead.
 - Triple dashes (---) NEVER.
@@ -246,7 +252,10 @@ export class AgentsformSdr {
         }
         try {
           const body = await this.composeFirstEmail(lead);
-          const subject = `Re your enquiry. ${this.subjectHint(lead)}`;
+          const hint = this.subjectHint(lead);
+          const subject = hint
+            ? `Re your enquiry. ${hint}`
+            : `A quick note on ${lead.name?.split(' ').slice(-1)[0] || 'your site'}`;
           const messageId = await this.sendEmail(lead.email, subject, body, undefined);
           const turn = { role: 'ai' as const, ts: new Date().toISOString(), subject, body, message_id: messageId };
           await this.ddb.send(new UpdateCommand({
@@ -360,24 +369,33 @@ export class AgentsformSdr {
   }
 
   private async composeFirstEmail(lead: LeadItem): Promise<string> {
+    const isOutbound = (lead.source || '').toLowerCase().startsWith('outbound-');
+    const header = isOutbound
+      ? `COLD OUTBOUND. Draft the first email to this prospect. They did NOT fill out a form. The "message" field below is research we did on their business — use it to lead with a specific observation, not as something they said.`
+      : `New lead from agentsform.ai. Draft the first-touch email.`;
     const userPrompt = [
-      `New lead from agentsform.ai. Draft the first-touch email.`,
+      header,
       ``,
       `Lead details:`,
       `- Name: ${lead.name}`,
       lead.phone ? `- Phone: ${lead.phone}` : null,
       lead.preferred_time ? `- Preferred call time: ${formatMelbourneTime(lead.preferred_time) || lead.preferred_time}` : null,
-      `- Source page: ${lead.source || 'unknown'}`,
-      lead.message ? `- Message they wrote: "${lead.message}"` : `- They didn't write a specific message.`,
+      `- Source: ${lead.source || 'unknown'}`,
+      lead.message
+        ? (isOutbound ? `- Research finding: ${lead.message}` : `- Message they wrote: "${lead.message}"`)
+        : `- No specific message.`,
     ].filter(Boolean).join('\n');
     return runClaude(SYSTEM_PROMPT, userPrompt, CLAUDE_MODEL);
   }
 
-  private subjectHint(lead: LeadItem): string {
+  private subjectHint(lead: LeadItem): string | null {
     const src = (lead.source || '').toLowerCase();
-    if (src === 'before-you-hire') return 'hiring vs managed service';
-    if (src === 'talk') return 'quick chat';
-    return 'your message';
+    // Outbound cold prospects: subject starts the conversation, no "Re:"
+    if (src.startsWith('outbound-')) return null;
+    if (src === 'lawfirm-intern') return 'the AI intern pilot';
+    if (src === 'ai-integration') return 'your AI integration question';
+    // Default for inbound form submissions
+    return 'your enquiry';
   }
 
   // Unified send: used for first-touch (no inReplyTo) AND follow-up (with inReplyTo for threading)
