@@ -227,12 +227,12 @@
       </p>
 
       <!--
-        Form posts to api.agentsform.ai (Cloudflare-tunneled to the
+        Form posts to leads.gombwe.com (Cloudflare-tunneled to the
         Mac mini). Validates honeypot + rate-limits on the server,
         stores to leads.jsonl, fires Discord notification, redirects
         to /thanks.html. No third-party services in the loop.
       -->
-      <form class="leadform" action="https://api.agentsform.ai/api/agentsform-lead" method="POST">
+      <form class="leadform" action="https://leads.gombwe.com/api/agentsform-lead" method="POST">
         <input class="leadform-input" type="text" name="name" placeholder="Your name" required autocomplete="name">
         <input class="leadform-input" type="tel" name="phone" placeholder="Best number to call" required autocomplete="tel" pattern="[\d\s+()-]{8,}">
         <select class="leadform-input leadform-select" name="preferred_time">
