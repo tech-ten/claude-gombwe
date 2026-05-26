@@ -1523,3 +1523,23 @@ a { color: inherit; text-decoration: none; }
   .replace-grid { grid-template-columns: 1fr; gap: 20px; }
   .math-callout { font-size: 19px; }
 }
+
+/* Preferred-time field with label (datetime-local needs explicit label;
+   no usable placeholder) */
+.leadform-field-with-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.leadform-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding-left: 2px;
+}
+input.leadform-input[type="datetime-local"] {
+  font-family: var(--sans);
+  color: var(--ink);
+}
