@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Agentsform lead-capture stack. Public form POST → API Gateway HTTP API
+  → Lambda → DynamoDB. End-to-end serverless. Effectively free at expected
+  volume.
+
+  This template is the source of truth for the stack. The LIVE resources
+  (created via aws CLI on 2026-05-26) were not built from this template
+  initially — they need to be imported into a CloudFormation stack to bring
+  them under management. See README.md in this directory for the import
+  procedure, or use this template for fresh redeploy / DR / new region.
+
+  Stack name convention: agentsform-leads-<env> (e.g. agentsform-leads-prod)
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: api.agentsform.ai
+    Description: Custom hostname for the API Gateway endpoint
+  HostedZoneId:
+    Type: String
+    Default: Z0401224GBU1TTNNB67F
+    Description: Route 53 hosted zone for the parent domain (agentsform.ai)
+  StaticSiteOrigin:
+    Type: String
+    Default: https://agentsform.ai
+    Description: Primary CORS allow-origin for the form
+  StaticSiteOriginWww:
+    Type: String
+    Default: https://www.agentsform.ai
+    Description: Secondary CORS allow-origin (www subdomain)
+  ThanksUrl:
+    Type: String
+    Default: https://agentsform.ai/thanks.html
+    Description: Where Lambda redirects the browser after a successful submit
+  Project:
+    Type: String
+    Default: agentsform
+  Owner:
+    Type: String
+    Default: tendai
+
+Resources:
+
+  # ── DynamoDB ──────────────────────────────────────────────────────
+  LeadsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: agentsform-leads
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: lead_id
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      KeySchema:
+        - AttributeName: lead_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ts-index
+          KeySchema:
+            - AttributeName: ts
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - { Key: project, Value: !Ref Project }
+        - { Key: owner, Value: !Ref Owner }
+
+  # ── IAM ────────────────────────────────────────────────────────────
+  LeadHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentsform-lead-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: agentsform-leads-write
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt LeadsTable.Arn
+      Tags:
+        - { Key: project, Value: !Ref Project }
+        - { Key: owner, Value: !Ref Owner }
+
+  # ── Lambda ────────────────────────────────────────────────────────
+  # NOTE: Inline code keeps this template self-contained. For larger
+  # functions, switch to Code: { S3Bucket, S3Key } and have a CI step
+  # upload the zip.
+  LeadHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: agentsform-lead-handler
+      Runtime: nodejs20.x
+      Architectures: [arm64]
+      Handler: index.handler
+      Role: !GetAtt LeadHandlerRole.Arn
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          LEADS_TABLE: !Ref LeadsTable
+          THANKS_URL: !Ref ThanksUrl
+      Code:
+        ZipFile: |
+          // agentsform-lead-handler — see aws/agentsform-lead-handler/index.mjs
+          // for the canonical source. This inline copy must be kept in sync
+          // OR replaced with Code: { S3Bucket, S3Key } pointing at a built
+          // artifact in a deploy bucket.
+          import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+          import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+          import { randomUUID } from "node:crypto";
+          import querystring from "node:querystring";
+          const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+          const TABLE = process.env.LEADS_TABLE;
+          const THANKS_URL = process.env.THANKS_URL;
+          const clamp = (s, n) => String(s ?? "").trim().slice(0, n);
+          export const handler = async (event) => {
+            let body = event.body || "";
+            if (event.isBase64Encoded) body = Buffer.from(body, "base64").toString("utf8");
+            let p = {};
+            const ct = (event.headers?.["content-type"] || "").toLowerCase();
+            try {
+              p = ct.includes("application/json") ? JSON.parse(body) : querystring.parse(body);
+            } catch { return text(400, "Could not parse request body."); }
+            if (clamp(p._gotcha, 50).length > 0) return redirect(THANKS_URL);
+            const name = clamp(p.name, 200);
+            const phone = clamp(p.phone, 50);
+            const email = clamp(p.email, 200);
+            if (!name || (!phone && !email)) return text(400, "Name and at least one of phone or email required.");
+            const item = {
+              lead_id: randomUUID(), ts: new Date().toISOString(),
+              ip: event.headers?.["cf-connecting-ip"]
+                || event.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
+                || event.requestContext?.http?.sourceIp || "unknown",
+              name, phone: phone || null, email: email || null,
+              message: clamp(p.message, 2000) || null,
+              preferred_time: clamp(p.preferred_time, 100) || null,
+              source: clamp(p.source, 100) || "unknown",
+              user_agent: clamp(event.headers?.["user-agent"], 300),
+              referer: clamp(event.headers?.["referer"], 300),
+              processed: false,
+            };
+            try { await ddb.send(new PutCommand({ TableName: TABLE, Item: item })); }
+            catch (e) { console.error(e); return text(500, "Could not record lead. Please call directly."); }
+            return redirect(THANKS_URL);
+          };
+          const redirect = (url) => ({ statusCode: 302, headers: { Location: url, "Content-Type": "text/plain; charset=utf-8" }, body: "" });
+          const text = (code, body) => ({ statusCode: code, headers: { "Content-Type": "text/plain; charset=utf-8" }, body });
+      Tags:
+        - { Key: project, Value: !Ref Project }
+        - { Key: owner, Value: !Ref Owner }
+
+  # ── ACM cert (DNS-validated against Route 53) ─────────────────────
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - { Key: project, Value: !Ref Project }
+        - { Key: owner, Value: !Ref Owner }
+
+  # ── HTTP API (API Gateway v2) ─────────────────────────────────────
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: agentsform-lead-api
+      ProtocolType: HTTP
+      Description: Public lead-form receiver for agentsform.ai
+      CorsConfiguration:
+        AllowOrigins: [!Ref StaticSiteOrigin, !Ref StaticSiteOriginWww]
+        AllowMethods: [POST]
+        AllowHeaders: [content-type]
+        MaxAge: 86400
+      Tags:
+        project: !Ref Project
+        owner: !Ref Owner
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt LeadHandler.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 10000
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /lead
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  HttpApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LeadHandler.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/POST/lead
+
+  # ── Custom domain mapping ─────────────────────────────────────────
+  ApiDomainName:
+    Type: AWS::ApiGatewayV2::DomainName
+    Properties:
+      DomainName: !Ref DomainName
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificate
+          EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+
+  ApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      DomainName: !Ref ApiDomainName
+      ApiId: !Ref HttpApi
+      Stage: !Ref HttpApiStage
+
+  # ── Route 53 alias ────────────────────────────────────────────────
+  ApiAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApiDomainName.RegionalDomainName
+        HostedZoneId: !GetAtt ApiDomainName.RegionalHostedZoneId
+        EvaluateTargetHealth: false
+
+Outputs:
+  ApiEndpoint:
+    Description: Default API Gateway URL (use the custom domain instead for production)
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  CustomDomainUrl:
+    Description: Public form-receiver URL
+    Value: !Sub https://${DomainName}/lead
+  LeadsTableName:
+    Description: DynamoDB table holding leads
+    Value: !Ref LeadsTable
+    Export:
+      Name: !Sub ${AWS::StackName}-leads-table
+  LeadsTableArn:
+    Value: !GetAtt LeadsTable.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-leads-table-arn
