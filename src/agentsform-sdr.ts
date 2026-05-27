@@ -40,6 +40,12 @@ const CLAUDE_TIMEOUT_MS = 90_000;
 // beats fake-cadence; nobody pattern-matches "you replied at 9pm").
 const BASE_DELAY_MIN_MS = Number(process.env.AGENTSFORM_SDR_DELAY_MIN_MS) || 2 * 60_000;
 const BASE_DELAY_MAX_MS = Number(process.env.AGENTSFORM_SDR_DELAY_MAX_MS) || 7 * 60_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TOUCH_2_DELAY_MS = Number(process.env.AGENTSFORM_SDR_TOUCH2_DELAY_MS) || 5 * DAY_MS;
+const TOUCH_3_DELAY_MS = Number(process.env.AGENTSFORM_SDR_TOUCH3_DELAY_MS) || 7 * DAY_MS;
+// Melbourne business-hour gate. Defaults: Mon-Fri 9-17.
+const BUSINESS_HOUR_START = Number(process.env.AGENTSFORM_SDR_HOUR_START) || 9;
+const BUSINESS_HOUR_END = Number(process.env.AGENTSFORM_SDR_HOUR_END) || 17;
 
 interface LeadItem {
   lead_id: string;
@@ -50,10 +56,12 @@ interface LeadItem {
   message?: string | null;
   preferred_time?: string | null;
   source?: string;
-  ai_status?: 'new' | 'queued' | 'awaiting-reply' | 'in-flight' | 'human-handled' | 'closed' | 'cold' | 'no-email';
+  ai_status?: 'new' | 'queued' | 'awaiting-reply' | 'awaiting-touch-2' | 'awaiting-touch-3' | 'gave-up' | 'in-flight' | 'human-handled' | 'closed' | 'cold' | 'no-email';
   ai_first_email_at?: string;
   ai_send_after?: string;
   ai_last_activity_at?: string;
+  ai_touch2_at?: string;
+  ai_touch3_at?: string;
   ai_conversation?: Array<{ role: 'ai' | 'lead' | 'human'; ts: string; subject?: string; body: string; message_id?: string }>;
 }
 
@@ -144,6 +152,31 @@ Output STRICTLY valid JSON, no markdown code fence, no prose around it. Schema:
 {"action":"escalate","reason":"...","suggested_next":"..."} OR
 {"action":"wait","reason":"..."}`;
 
+// ── Touch-2 / Touch-3 follow-up composition (prospect HASN'T replied) ───
+const TOUCH_FOLLOWUP_SYSTEM_PROMPT = `You are Ellison Mudavanhu of Agentsform. The prospect did not reply to your first email. You're writing a short follow-up.
+
+LENGTH: under 80 words. Sign "Ellison".
+
+STRUCTURE for TOUCH 2 (sent ~5 days after touch 1):
+1. Open with the prospect's first name only and a single-line reference to the SPECIFIC observation you made in touch 1 (use their original research finding for context).
+2. One sentence: "Not chasing for the sake of it" or equivalent (graceful, not pushy).
+3. One sentence: if now is the right time, offer the 20-min scope call. If not, no problem.
+4. Sign Ellison.
+
+STRUCTURE for TOUCH 3 (sent ~7 days after touch 2, last touch):
+1. Open with first name and "last note from me on this".
+2. One sentence: restate the specific lift you'd offer (referencing original finding), framed as "still happy to walk through if useful".
+3. One sentence: "If not, no further follow-up from me" (close the loop cleanly).
+4. Sign Ellison.
+
+VOICE: Australian English. Measured, never pushy. Never apologise for sending. Never use "just bumping this", "circling back", "as per my previous", "did you get a chance", "checking in".
+
+BANNED PUNCTUATION: no em-dashes, no triple dashes.
+
+BANNED FRAMINGS: same as touch-1. No hire-cost comparisons. No "instead of hiring". No salary numbers. No role-replacement.
+
+Output ONLY the email body. No subject. No preamble. No markdown.`;
+
 /** Pretty-format a datetime-local input or ISO timestamp in Melbourne time
  *  for inclusion in Claude prompts. Returns the original string if unparseable. */
 export function formatMelbourneTime(s: string | null | undefined): string | null {
@@ -163,6 +196,22 @@ export function formatMelbourneTime(s: string | null | undefined): string | null
 
 function jitteredDelayMs(): number {
   return Math.floor(BASE_DELAY_MIN_MS + Math.random() * (BASE_DELAY_MAX_MS - BASE_DELAY_MIN_MS));
+}
+
+/** True if the current wall time falls within Melbourne business hours
+ *  (Mon-Fri 9-17 by default). Outbound sends are gated to avoid overnight
+ *  / weekend prospect inboxes. */
+function isMelbourneBusinessHoursNow(now: Date = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Melbourne',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(now);
+  const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
+  return isWeekday && hour >= BUSINESS_HOUR_START && hour < BUSINESS_HOUR_END;
 }
 
 function runClaude(systemPrompt: string, userPrompt: string, model: string): Promise<string> {
@@ -209,13 +258,14 @@ export class AgentsformSdr {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
-  async tick(): Promise<{ first_touch: number; inbound: number }> {
-    if (this.running) return { first_touch: 0, inbound: 0 };
+  async tick(): Promise<{ first_touch: number; touches: number; inbound: number }> {
+    if (this.running) return { first_touch: 0, touches: 0, inbound: 0 };
     this.running = true;
     try {
       const first_touch = await this.processFirstTouch();
+      const touches = await this.processFollowupTouches();
       const inbound = await this.processInbound();
-      return { first_touch, inbound };
+      return { first_touch, touches, inbound };
     } finally {
       this.running = false;
     }
@@ -250,12 +300,17 @@ export class AgentsformSdr {
           console.log(`[sdr] queued ${lead.lead_id} (${lead.name}) for first-touch at ${sendAfter} (${Math.round(delayMs / 1000)}s)`);
           continue;
         }
+        if (!isMelbourneBusinessHoursNow()) {
+          // Defer silently until next poll cycle when we're back in hours.
+          continue;
+        }
         try {
           const body = await this.composeFirstEmail(lead);
           const hint = this.subjectHint(lead);
+          const domain = (lead.email?.split('@')[1] || 'your site').trim();
           const subject = hint
             ? `Re your enquiry. ${hint}`
-            : `A quick note on ${lead.name?.split(' ').slice(-1)[0] || 'your site'}`;
+            : `A quick note on ${domain}`;
           const messageId = await this.sendEmail(lead.email, subject, body, undefined);
           const turn = { role: 'ai' as const, ts: new Date().toISOString(), subject, body, message_id: messageId };
           await this.ddb.send(new UpdateCommand({
@@ -274,6 +329,99 @@ export class AgentsformSdr {
       console.error('[sdr] first-touch scan failed:', err);
     }
     return sent;
+  }
+
+  // ── Touch-2 / Touch-3 follow-up loop ────────────────────────────────
+  // Sends a short polite follow-up to leads that haven't replied to touch-1
+  // (touch-2 ~5 days after touch-1) or touch-2 (touch-3 ~7 days after touch-2).
+  // Gated by Melbourne business hours. After touch-3, status flips to 'gave-up'.
+  private async processFollowupTouches(): Promise<number> {
+    if (!isMelbourneBusinessHoursNow()) return 0;
+    let sent = 0;
+    const nowMs = Date.now();
+    const touch2Cutoff = new Date(nowMs - TOUCH_2_DELAY_MS).toISOString();
+    const touch3Cutoff = new Date(nowMs - TOUCH_3_DELAY_MS).toISOString();
+
+    try {
+      // Touch-2 candidates: still 'awaiting-reply' AND touch-1 sent > TOUCH_2_DELAY_MS ago.
+      const res2 = await this.ddb.send(new ScanCommand({
+        TableName: TABLE,
+        FilterExpression: 'ai_status = :a AND ai_first_email_at < :cutoff AND attribute_not_exists(ai_touch2_at)',
+        ExpressionAttributeValues: { ':a': 'awaiting-reply', ':cutoff': touch2Cutoff },
+        Limit: 25,
+      }));
+      for (const lead of (res2.Items || []) as LeadItem[]) {
+        if (!isMelbourneBusinessHoursNow()) break;
+        try {
+          if (await this.sendTouchFollowup(lead, 2)) sent++;
+        } catch (err) {
+          console.error(`[sdr] touch-2 send failed for ${lead.lead_id}:`, err);
+        }
+      }
+
+      // Touch-3 candidates: 'awaiting-touch-2' AND touch-2 sent > TOUCH_3_DELAY_MS ago.
+      const res3 = await this.ddb.send(new ScanCommand({
+        TableName: TABLE,
+        FilterExpression: 'ai_status = :a AND ai_touch2_at < :cutoff AND attribute_not_exists(ai_touch3_at)',
+        ExpressionAttributeValues: { ':a': 'awaiting-touch-2', ':cutoff': touch3Cutoff },
+        Limit: 25,
+      }));
+      for (const lead of (res3.Items || []) as LeadItem[]) {
+        if (!isMelbourneBusinessHoursNow()) break;
+        try {
+          if (await this.sendTouchFollowup(lead, 3)) sent++;
+        } catch (err) {
+          console.error(`[sdr] touch-3 send failed for ${lead.lead_id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error('[sdr] follow-up scan failed:', err);
+    }
+    return sent;
+  }
+
+  private async sendTouchFollowup(lead: LeadItem, touchN: 2 | 3): Promise<boolean> {
+    if (!lead.email) return false;
+    const body = await this.composeTouchFollowup(lead, touchN);
+    // Subject continues the thread.
+    const firstSubject = lead.ai_conversation?.[0]?.subject || `A quick note on ${(lead.email.split('@')[1] || 'your site').trim()}`;
+    const subject = firstSubject.toLowerCase().startsWith('re:') ? firstSubject : `Re: ${firstSubject}`;
+    const messageId = await this.sendEmail(lead.email, subject, body, lead.ai_conversation?.[0]?.message_id);
+    const turn = { role: 'ai' as const, ts: new Date().toISOString(), subject, body, message_id: messageId };
+    const conversation = [...(lead.ai_conversation || []), turn];
+
+    const newStatus = touchN === 2 ? 'awaiting-touch-2' : 'gave-up';
+    const tsField = touchN === 2 ? 'ai_touch2_at' : 'ai_touch3_at';
+    await this.ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: { lead_id: lead.lead_id },
+      UpdateExpression: `SET ai_status = :s, ${tsField} = :now, ai_conversation = :c`,
+      ExpressionAttributeValues: { ':s': newStatus, ':now': new Date().toISOString(), ':c': conversation },
+    }));
+    console.log(`[sdr] sent touch-${touchN} to ${lead.email} for ${lead.lead_id} (${lead.name})`);
+    return true;
+  }
+
+  private async composeTouchFollowup(lead: LeadItem, touchN: 2 | 3): Promise<string> {
+    const firstName = (lead.name || '').split(/[\s(]/)[0] || 'there';
+    const firstEmailTurn = lead.ai_conversation?.[0];
+    const firstSentAt = lead.ai_first_email_at ? formatMelbourneTime(lead.ai_first_email_at) : 'earlier';
+    const userPrompt = [
+      `TOUCH-${touchN} follow-up. The prospect has not replied to our previous send(s).`,
+      ``,
+      `Lead details:`,
+      `- Name: ${lead.name}`,
+      `- First name (for opener): ${firstName}`,
+      `- Email domain: ${(lead.email || '').split('@')[1] || ''}`,
+      lead.message ? `- Original research finding (the specific observation we made on their business): ${lead.message}` : null,
+      `- First email sent: ${firstSentAt}`,
+      firstEmailTurn?.body ? `- First email body (for context, do NOT repeat verbatim):\n${firstEmailTurn.body}` : null,
+      ``,
+      touchN === 2
+        ? `Write touch-2 per the system prompt. Reference the specific observation by name (e.g. "the info@ inbox triage gap", "the HealthEngine BOOK NOW link"), not generically.`
+        : `Write touch-3 (last touch) per the system prompt. Restate the lift you'd offer in one sentence, close the loop cleanly.`,
+    ].filter(Boolean).join('\n');
+    return runClaude(TOUCH_FOLLOWUP_SYSTEM_PROMPT, userPrompt, CLAUDE_MODEL);
   }
 
   // ── Inbound conversation path (Phase 2) ─────────────────────────────
