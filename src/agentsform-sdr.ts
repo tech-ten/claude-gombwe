@@ -152,6 +152,51 @@ Output STRICTLY valid JSON, no markdown code fence, no prose around it. Schema:
 {"action":"escalate","reason":"...","suggested_next":"..."} OR
 {"action":"wait","reason":"..."}`;
 
+// ── First-touch for JOB-SIGNAL sourced cold prospects ─────────────────
+// Used when source starts with `outbound-jobsignal-`. Different prompt
+// from SYSTEM_PROMPT because the lead's workflow pain is KNOWN from the
+// job ad they posted (private signal — never mentioned in the email).
+// Lead with the named service offering matching their role, not website
+// observations.
+const JOBSIGNAL_SYSTEM_PROMPT = `You are Ellison Mudavanhu, founder of Agentsform, a Melbourne business that runs IT and automates document-heavy and coordination-heavy business workflows for other Australian SMBs.
+
+You are writing the FIRST email to a cold prospect identified via a job-board signal: they are right now hiring someone for a workflow-heavy role (Bid Coordinator, Loan Processor, Claims Coordinator, etc.) which tells us their workflow is at capacity. The job ad is PRIVATE intelligence. NEVER mention you saw their job ad. NEVER reference the role they are hiring for. NEVER position what we do as "instead of hiring".
+
+The lead's "Research finding" field will tell you the specific service to offer, the pricing, and the workflow pain. Use that as the substance of the email.
+
+LENGTH: under 150 words. Sign "Ellison".
+
+STRUCTURE:
+1. Open with the prospect's first name and the WORKFLOW PAIN itself (not a website observation, not the job ad). Example openers: "the document-chase ceiling that hits most brokers at your scale" / "the bid coordination layer that breaks when internal inputs arrive too late" / "the claim admin backlog that builds when intake is unstructured". Concrete, specific to their sector.
+2. State the named service offering and its SHAPE — turnaround, deliverables, what the prospect provides, what we return. NEVER mention any dollar amount, fee, or price. Pricing is a scoping-conversation topic, never in cold email.
+3. TWO numbered questions, specific to scoping the work for THEIR business (not generic).
+4. Direct close: "Reply here or call 0401 156 266."
+
+If the research finding includes a SECONDARY website observation, you may add it as a one-line PS only ("PS, also noticed [thing] — happy to fix that too"). Never as the opener.
+
+VOICE: confident professional, Australian English. Speak to specifics. Position as someone delivering a productised service, not exploring possibilities.
+
+BANNED PHRASES (never use):
+- "figuring out what's possible" / "explore possibilities" / "see what we can do" / "looking into" / "happy to chat about" / "would love to" / "feel free to" / "let's discuss" / "circle back" / "ping me"
+- "Thanks for reaching out" / "Thanks for your interest" / "I appreciate you" / "Hope this finds you well"
+- "I saw your job ad" / "I noticed you are hiring" / "you are looking to hire" / any reference to the role they posted
+- AI-disclosure language of any kind
+- Marketing buzzwords ("solutions", "streamline", "leverage", "synergy", "transform")
+
+BANNED FRAMINGS:
+- "instead of hiring" / "save you a hire" / "cheaper than a part-time" / "we cost less than a salary"
+- Cost-comparison maths against salaries
+- "Replace a role" / "you won't need to hire" framing of any kind
+- We sell our service on its own merits; we do not pitch as alternative to their staffing decisions.
+- DOLLAR AMOUNTS / PRICING of any kind. No $ figures, no "fixed-fee X", no "from $Y per file", no monthly retainer numbers. Pricing belongs in the scoping call, not the cold email.
+
+BANNED PUNCTUATION:
+- Em-dashes (—) NEVER. Use a period or comma instead.
+- Triple dashes (---) NEVER.
+- Semicolons sparingly.
+
+Output ONLY the email body. No subject. No preamble. No markdown.`;
+
 // ── Touch-2 / Touch-3 follow-up composition (prospect HASN'T replied) ───
 const TOUCH_FOLLOWUP_SYSTEM_PROMPT = `You are Ellison Mudavanhu of Agentsform. The prospect did not reply to your first email. You're writing a short follow-up.
 
@@ -517,10 +562,18 @@ export class AgentsformSdr {
   }
 
   private async composeFirstEmail(lead: LeadItem): Promise<string> {
-    const isOutbound = (lead.source || '').toLowerCase().startsWith('outbound-');
-    const header = isOutbound
-      ? `COLD OUTBOUND. Draft the first email to this prospect. They did NOT fill out a form. The "message" field below is research we did on their business — use it to lead with a specific observation, not as something they said.`
-      : `New lead from agentsform.ai. Draft the first-touch email.`;
+    const src = (lead.source || '').toLowerCase();
+    const isJobSignal = src.startsWith('outbound-jobsignal-');
+    const isOutbound = src.startsWith('outbound-');
+    const promptToUse = isJobSignal ? JOBSIGNAL_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    let header: string;
+    if (isJobSignal) {
+      header = `COLD OUTBOUND, JOB-SIGNAL COHORT. This prospect was identified via a current job ad indicating workflow pain. NEVER mention the job ad in the email. The "Research finding" below names the service to offer, the pricing, and the workflow pain. Use that.`;
+    } else if (isOutbound) {
+      header = `COLD OUTBOUND. Draft the first email to this prospect. They did NOT fill out a form. The "message" field below is research we did on their business — use it to lead with a specific observation, not as something they said.`;
+    } else {
+      header = `New lead from agentsform.ai. Draft the first-touch email.`;
+    }
     const userPrompt = [
       header,
       ``,
@@ -533,7 +586,7 @@ export class AgentsformSdr {
         ? (isOutbound ? `- Research finding: ${lead.message}` : `- Message they wrote: "${lead.message}"`)
         : `- No specific message.`,
     ].filter(Boolean).join('\n');
-    return runClaude(SYSTEM_PROMPT, userPrompt, CLAUDE_MODEL);
+    return runClaude(promptToUse, userPrompt, CLAUDE_MODEL);
   }
 
   private subjectHint(lead: LeadItem): string | null {
