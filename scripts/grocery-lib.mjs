@@ -62,6 +62,9 @@ export async function connectChrome() {
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
+    // Strip the automation tells (navigator.webdriver / "controlled by
+    // automated software") that Imperva & co. fingerprint on.
+    '--disable-blink-features=AutomationControlled',
     'https://www.woolworths.com.au',
     'https://www.coles.com.au',
   ], detachedSpawnOptions()).unref();
@@ -89,6 +92,63 @@ export async function clearBrowserCache(browser, enabled = true) {
   }
 }
 
+// ── Anti-bot interstitial handling ───────────────────────────────────
+
+/** Signatures of the JS-challenge / "are you a bot" interstitials the
+ *  retailers sit behind. Coles uses Imperva ("Pardon Our Interruption");
+ *  the others are here so this works for both stores and survives a vendor
+ *  swap. Matched case-insensitively against the page title + body text. */
+const CHALLENGE_SIGNATURES = [
+  'pardon our interruption',   // Imperva / Distil
+  'request unsuccessful',      // Incapsula
+  '_incapsula_resource',
+  'distil',
+  'verifying you are human',
+  'are you a human',
+  'just a moment',             // Cloudflare
+  'attention required',        // Cloudflare
+];
+
+/** Detect and ride out an anti-bot interstitial. These pages run a JS
+ *  challenge that sets a clearance cookie and then self-redirects in a real
+ *  browser — but our scraper parses the DOM immediately and just sees zero
+ *  products. Spot the interstitial, give the challenge time to complete,
+ *  reload (now carrying the cookie), and retry with growing backoff.
+ *
+ *  Returns true once the real page is showing (or there's nothing to ride
+ *  out), false if still blocked after `maxAttempts` so the caller can back
+ *  off / alert instead of silently logging an empty result. Safe no-op on a
+ *  normal page — the probe is one cheap evaluate(). */
+export async function passChallenge(page, { label = '', maxAttempts = 4 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let text;
+    try {
+      text = await page.evaluate(
+        () => `${document.title}\n${document.body ? document.body.innerText : ''}`,
+      );
+    } catch {
+      return true; // page navigated/closed mid-probe — nothing to ride out
+    }
+    const lc = text.slice(0, 800).toLowerCase();
+    if (!CHALLENGE_SIGNATURES.some((s) => lc.includes(s))) return true;
+
+    const backoff = 3000 + attempt * 2500 + Math.floor(Math.random() * 1500);
+    console.log(
+      `  ⚠️  anti-bot interstitial${label ? ` on ${label}` : ''} ` +
+      `(attempt ${attempt}/${maxAttempts}) — riding out JS challenge (~${Math.round(backoff / 1000)}s)…`,
+    );
+    await wait(backoff);
+    try {
+      await page.reload({ waitUntil: 'networkidle2', timeout: 20000 });
+    } catch { /* reload timed out — re-probe on next iteration */ }
+  }
+  console.warn(
+    `  ⚠️  still blocked by anti-bot check${label ? ` on ${label}` : ''} ` +
+    `after ${maxAttempts} attempts — backing off.`,
+  );
+  return false;
+}
+
 export async function getPage(browser, domain) {
   const pages = await browser.pages();
   let page = pages.find(p => p.url().includes(domain));
@@ -97,6 +157,7 @@ export async function getPage(browser, domain) {
     await page.goto(`https://www.${domain}`, { waitUntil: 'networkidle2', timeout: 15000 });
     await wait(3000);
   }
+  await passChallenge(page, { label: domain });
   return page;
 }
 
@@ -138,6 +199,10 @@ export async function assertLoggedIn(page, store) {
   try {
     await page.goto(cartUrl, { waitUntil: 'networkidle2', timeout: 12000 });
   } catch { /* navigation timeout still tells us via final URL */ }
+
+  // Clear any bot interstitial first, else it reads as a non-login page and
+  // we'd wrongly trust (or, on some flows, wrongly fail) the auth check.
+  await passChallenge(page, { label: `${store} cart` });
 
   if (looksLikeLoginWall(page)) {
     const msg = [
@@ -279,6 +344,7 @@ export async function discoverColesApi(page) {
   } catch { /* nav timeout still leaves responses captured */ }
   await wait(2500);
   page.off('response', onResp);
+  await passChallenge(page, { label: 'coles discovery' });
 
   candidates.sort((a, b) => {
     const score = (u) => (u.includes('search') ? 2 : 0) + (u.includes('product') ? 2 : 0) + (u.includes('graphql') ? 1 : 0);
@@ -311,6 +377,7 @@ export async function colesSearchViaNextData(page, query) {
       waitUntil: 'domcontentloaded', timeout: 20000,
     });
   } catch { return []; }
+  if (!(await passChallenge(page, { label: 'coles search' }))) return [];
   return page.evaluate(() => {
     const nd = document.querySelector('#__NEXT_DATA__');
     if (!nd) return [];
@@ -479,6 +546,7 @@ export async function colesSearch(page, query, apiPattern = null) {
       waitUntil: 'domcontentloaded', timeout: 20000,
     });
   } catch { return []; }
+  if (!(await passChallenge(page, { label: 'coles search' }))) return [];
   try {
     await page.waitForSelector('[data-testid="product-tile"]', { timeout: 8000 });
   } catch { /* tiles never appeared — captcha or zero results */ }
