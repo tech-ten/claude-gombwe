@@ -53,7 +53,17 @@ export class DiscordChannel implements ChannelAdapter {
 
   async start(): Promise<void> {
     console.log('[discord] Starting bot...');
+    // login() resolves before the gateway delivers GUILD_CREATE, so the
+    // channel caches are empty right after it. Wait for ClientReady (with a
+    // timeout so a slow/never ready can't block boot) before snapshotting —
+    // otherwise namedChannels/channelMap stay empty and cron/notify routing,
+    // which has no incoming message to learn a channel from, silently fails.
+    const ready = new Promise<void>((resolve) => {
+      this.client.once(Events.ClientReady, () => resolve());
+      setTimeout(resolve, 10_000);
+    });
     await this.client.login(this.botToken);
+    await ready;
     console.log(`[discord] Bot is running as ${this.client.user?.tag}`);
 
     // Auto-discover all text channels and register them by name
@@ -119,12 +129,16 @@ export class DiscordChannel implements ChannelAdapter {
       return;
     }
 
-    const channel = await this.client.channels.fetch(channelId);
-    if (!channel || !(channel instanceof TextChannel || channel instanceof DMChannel)) return;
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !(channel instanceof TextChannel || channel instanceof DMChannel)) return;
 
-    const chunks = this.chunkMessage(message, 2000);
-    for (const chunk of chunks) {
-      await channel.send(chunk);
+      const chunks = this.chunkMessage(message, 2000);
+      for (const chunk of chunks) {
+        await channel.send(chunk);
+      }
+    } catch (err) {
+      console.warn(`[discord] Failed to send to ${sessionKey} (channel ${channelId}): ${(err as Error)?.message ?? err}`);
     }
   }
 
