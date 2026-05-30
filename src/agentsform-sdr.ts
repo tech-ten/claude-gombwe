@@ -243,6 +243,26 @@ function jitteredDelayMs(): number {
   return Math.floor(BASE_DELAY_MIN_MS + Math.random() * (BASE_DELAY_MAX_MS - BASE_DELAY_MIN_MS));
 }
 
+/** Classify obvious form-spam BEFORE the SDR cold-emails the address.
+ *  The "Robertgaw" bot floods contact forms with a generic price-enquiry
+ *  message in random languages, and the email field is sometimes a junk
+ *  gmail and sometimes a real victim's address (joe-job — cold-emailing
+ *  that victim damages our SES reputation worse than a bounce). Returns
+ *  null for legit-looking leads; a short reason string for spam.
+ *  Keep this tight — false-positive cost is a missed lead; false-negative
+ *  cost is a victim email or a bounce hit. */
+function spamReason(lead: { name?: string | null; email?: string | null }): string | null {
+  const name = (lead.name || '').trim();
+  const email = (lead.email || '').trim().toLowerCase();
+  if (/^Robert(gaw|sok|kal|bup|tom|kak|hes)$/i.test(name)) {
+    return `name='${name}' matches Robertgaw-family form-spam bot`;
+  }
+  if (/^[a-z]{6,}\d{2,}@gmail\.com$/.test(email)) {
+    return `email='${email}' matches throwaway-gmail pattern`;
+  }
+  return null;
+}
+
 /** True if the current wall time falls within Melbourne business hours
  *  (Mon-Fri 9-17 by default). Outbound sends are gated to avoid overnight
  *  / weekend prospect inboxes. */
@@ -329,6 +349,17 @@ export class AgentsformSdr {
       const items = (res.Items || []) as LeadItem[];
 
       for (const lead of items) {
+        const spam = spamReason(lead);
+        if (spam) {
+          await this.ddb.send(new UpdateCommand({
+            TableName: TABLE,
+            Key: { lead_id: lead.lead_id },
+            UpdateExpression: 'SET ai_status = :s, ai_closed_reason = :r, ai_closed_at = :now REMOVE ai_send_after',
+            ExpressionAttributeValues: { ':s': 'closed', ':r': `spam: ${spam}`, ':now': new Date().toISOString() },
+          }));
+          console.warn(`[sdr] skipped spam lead ${lead.lead_id} (${lead.name} <${lead.email}>): ${spam}`);
+          continue;
+        }
         if (!lead.email) {
           await this.markStatus(lead.lead_id, 'no-email');
           continue;
