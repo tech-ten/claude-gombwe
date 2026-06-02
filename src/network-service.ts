@@ -428,13 +428,180 @@ export class NetworkService {
   /** Recent flags within the window (hours), newest last. */
   recentFlags(hours = 48): Array<Record<string, unknown>> {
     const cutoff = Date.now() - hours * 3600_000;
+    return this.allFlags().filter(r => new Date(r.time as string).getTime() >= cutoff);
+  }
+
+  /** Every flag ever recorded (the permanent breach record), oldest first. */
+  allFlags(): Array<Record<string, unknown>> {
     try {
       const text = readFileSync(FLAGS_PATH, 'utf-8');
       return text.trim().split('\n')
         .map(l => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
-        .filter((r): r is Record<string, unknown> =>
-          !!r && new Date(r.time as string).getTime() >= cutoff);
+        .filter((r): r is Record<string, unknown> => !!r && !!r.time);
     } catch { return []; }
+  }
+
+  /**
+   * Breach dossier — the full flag history grouped per device into a case file.
+   * Append-only and independent of banner dismissal: this is the permanent
+   * record. Each device lists its flagged hostnames (count + first/last seen +
+   * worst severity), plus per-category and per-severity tallies.
+   */
+  dossier(): {
+    generatedAt: string;
+    totalFlags: number;
+    devices: Array<{
+      mac: string; name: string; total: number;
+      firstSeen: string; lastSeen: string;
+      bySeverity: Record<string, number>;
+      byCategory: Record<string, number>;
+      hosts: Array<{ hostname: string; category: string | null; severity: string; count: number; firstSeen: string; lastSeen: string; reason: string }>;
+    }>;
+  } {
+    const flags = this.allFlags();
+    const sevWeight = (s: unknown) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[String(s || '').toLowerCase()] || 0;
+    const byDevice = new Map<string, Record<string, unknown>[]>();
+    for (const f of flags) {
+      const mac = String(f.mac || f.ip || 'unknown').toUpperCase();
+      if (!byDevice.has(mac)) byDevice.set(mac, []);
+      byDevice.get(mac)!.push(f);
+    }
+    const devices = [...byDevice.entries()].map(([mac, fs]) => {
+      const bySeverity: Record<string, number> = {};
+      const byCategory: Record<string, number> = {};
+      const hostMap = new Map<string, { hostname: string; category: string | null; severity: string; count: number; firstSeen: string; lastSeen: string; reason: string }>();
+      let firstSeen = '', lastSeen = '', name = mac;
+      for (const f of fs) {
+        const sev = String(f.severity || 'low').toLowerCase();
+        const cat = (f.category as string) ?? 'uncategorized';
+        bySeverity[sev] = (bySeverity[sev] || 0) + 1;
+        byCategory[cat] = (byCategory[cat] || 0) + 1;
+        const t = String(f.time || '');
+        if (!firstSeen || t < firstSeen) firstSeen = t;
+        if (!lastSeen || t > lastSeen) lastSeen = t;
+        if (f.name) name = String(f.name);
+        const h = String(f.hostname || '?');
+        const ex = hostMap.get(h);
+        if (ex) {
+          ex.count++;
+          if (t < ex.firstSeen) ex.firstSeen = t;
+          if (t > ex.lastSeen) ex.lastSeen = t;
+          if (sevWeight(sev) > sevWeight(ex.severity)) ex.severity = sev;
+        } else {
+          hostMap.set(h, { hostname: h, category: (f.category as string) ?? null, severity: sev, count: 1, firstSeen: t, lastSeen: t, reason: String(f.reason || '') });
+        }
+      }
+      const hosts = [...hostMap.values()].sort((a, b) => sevWeight(b.severity) - sevWeight(a.severity) || (b.lastSeen).localeCompare(a.lastSeen));
+      return { mac, name, total: fs.length, firstSeen, lastSeen, bySeverity, byCategory, hosts };
+    });
+    // worst-offender first: by highest-severity count, then total
+    devices.sort((a, b) => (b.bySeverity.high || 0) - (a.bySeverity.high || 0) || b.total - a.total);
+    return { generatedAt: new Date().toISOString(), totalFlags: flags.length, devices };
+  }
+
+  // ── Usage dossier (per-device session/byte ledger) ────────────
+  /**
+   * Per-device usage dossier from connection records. Source per day:
+   *   B (preferred): flows-YYYY-MM-DD.jsonl from the NetFlow collector — exact.
+   *   A (fallback):  reconstructed from the 60s conntrack snapshots (DAY.jsonl)
+   *                  for days before NetFlow was enabled (coarser, 60s grain).
+   * Aggregates each LAN device's sessions + bytes, with its top destinations.
+   * Destinations are by IP for now (human-readable names need DNS-answer
+   * capture — a separate enhancement).
+   */
+  usageDossier(days = 7): {
+    generatedAt: string; days: number; source: string;
+    devices: Array<{
+      ip: string; name: string; totalBytes: number; sessions: number;
+      firstSeen: string; lastSeen: string;
+      destinations: Array<{ remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string }>;
+    }>;
+  } {
+    const LAN = '192.168.88.';
+    // Names are attached later from live DHCP leases (nameUsageDevices); until
+    // then a device is keyed/labelled by its IP.
+
+    // device aggregation: lanIp -> { name, bytes, sessions, first, last, dests: Map }
+    type Dest = { remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string };
+    const devs = new Map<string, { name: string; bytes: number; sessions: number; firstSeen: string; lastSeen: string; dests: Map<string, Dest> }>();
+    const srcUsed = new Set<string>();
+
+    const addFlow = (lanIp: string, remote: string, bytes: number, durS: number, start: string, end: string) => {
+      let d = devs.get(lanIp);
+      if (!d) { d = { name: lanIp, bytes: 0, sessions: 0, firstSeen: start, lastSeen: end, dests: new Map() }; devs.set(lanIp, d); }
+      d.bytes += bytes; d.sessions++;
+      if (start < d.firstSeen) d.firstSeen = start;
+      if (end > d.lastSeen) d.lastSeen = end;
+      let de = d.dests.get(remote);
+      if (!de) { de = { remote, bytes: 0, sessions: 0, dur_s: 0, firstSeen: start, lastSeen: end }; d.dests.set(remote, de); }
+      de.bytes += bytes; de.sessions++; de.dur_s += durS;
+      if (start < de.firstSeen) de.firstSeen = start;
+      if (end > de.lastSeen) de.lastSeen = end;
+    };
+    const ipOnly = (s: string) => (s || '').split(':')[0];
+
+    let usedNetflow = false, usedSnapshots = false;
+    for (let i = 0; i < days; i++) {
+      const day = new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10);
+      const flowPath = join(DATA_DIR, `flows-${day}.jsonl`);
+      if (existsSync(flowPath)) {
+        usedNetflow = true;
+        for (const line of readFileSync(flowPath, 'utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+          const src = String(f.src || ''), dst = String(f.dst || '');
+          const bytes = Number(f.bytes || 0), dur = Number(f.dur_s || 0);
+          const start = String(f.start || f.ts || ''), end = String(f.end || f.ts || '');
+          if (src.startsWith(LAN)) { addFlow(src, dst, bytes, dur, start, end); srcUsed.add(src); }
+          else if (dst.startsWith(LAN)) { addFlow(dst, src, bytes, dur, start, end); srcUsed.add(dst); }
+        }
+      } else {
+        // A: reconstruct from conntrack snapshots
+        const snapPath = join(DATA_DIR, `${day}.jsonl`);
+        if (!existsSync(snapPath)) continue;
+        usedSnapshots = true;
+        const conns = new Map<string, { src: string; dst: string; bytes: number; first: string; last: string }>();
+        for (const line of readFileSync(snapPath, 'utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          let s: { ts?: string; connections?: Array<Record<string, unknown>> };
+          try { s = JSON.parse(line); } catch { continue; }
+          const ts = s.ts || '';
+          for (const c of s.connections || []) {
+            const src = ipOnly(String(c['src-address'] || '')), dst = ipOnly(String(c['dst-address'] || ''));
+            if (!src || !dst) continue;
+            const tot = Number(c['orig-bytes'] || 0) + Number(c['repl-bytes'] || 0);
+            const key = `${c['src-address']}|${c['dst-address']}|${c.protocol}`;
+            const ex = conns.get(key);
+            if (ex) { ex.bytes = Math.max(ex.bytes, tot); ex.last = ts; }
+            else conns.set(key, { src, dst, bytes: tot, first: ts, last: ts });
+          }
+        }
+        for (const c of conns.values()) {
+          const dur = Math.max(0, Math.round((new Date(c.last).getTime() - new Date(c.first).getTime()) / 1000));
+          if (c.src.startsWith(LAN)) addFlow(c.src, c.dst, c.bytes, dur, c.first, c.last);
+          else if (c.dst.startsWith(LAN)) addFlow(c.dst, c.src, c.bytes, dur, c.first, c.last);
+        }
+      }
+    }
+    // name the devices from current leases (best-effort)
+    const result = [...devs.entries()].map(([ip, d]) => ({
+      ip, name: d.name, totalBytes: d.bytes, sessions: d.sessions,
+      firstSeen: d.firstSeen, lastSeen: d.lastSeen,
+      destinations: [...d.dests.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 20),
+    })).sort((a, b) => b.totalBytes - a.totalBytes);
+    const source = usedNetflow && usedSnapshots ? 'netflow+snapshots' : usedNetflow ? 'netflow' : usedSnapshots ? 'snapshots' : 'none';
+    return { generatedAt: new Date().toISOString(), days, source, devices: result };
+  }
+
+  /** Attach friendly device names to a usage dossier using current DHCP leases. */
+  async nameUsageDevices(dossier: ReturnType<NetworkService['usageDossier']>): Promise<ReturnType<NetworkService['usageDossier']>> {
+    try {
+      const leases = await mikrotik.dhcpLeases();
+      const m = new Map<string, string>();
+      for (const l of leases) if (l.address) m.set(l.address, l['host-name'] || l.comment || l.address);
+      for (const d of dossier.devices) d.name = m.get(d.ip) || d.name;
+    } catch { /* leave IPs */ }
+    return dossier;
   }
 
   // ── Per-device category policy ────────────────────────────────

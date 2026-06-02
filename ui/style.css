@@ -2651,3 +2651,11 @@ body {
     -webkit-overflow-scrolling: touch;
   }
 }
+
+/* Session dossier (Network → Usage) */
+.dossier-device { border-top: 1px solid var(--border, #2a2a2a); padding: 6px 0; }
+.dossier-device > summary { cursor: pointer; display: flex; justify-content: space-between; gap: 12px; padding: 8px 4px; list-style: revert; }
+.dossier-device > summary:hover { background: rgba(255,255,255,0.03); }
+.dossier-name { font-weight: 600; }
+.dossier-meta { color: var(--muted, #9aa); font-size: 12px; white-space: nowrap; }
+.dossier-device table { margin: 6px 0 12px; }

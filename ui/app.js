@@ -2995,6 +2995,67 @@ function populateUsageTargetDropdown() {
   if (prev) sel.value = prev;
 }
 
+// Per-device session dossier — every connection the NetFlow collector recorded,
+// rolled up per device with its top destinations (bytes / sessions / duration).
+function fmtBytes(b) {
+  b = Number(b) || 0;
+  if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(0) + ' KB';
+  return b + ' B';
+}
+function fmtDur(s) {
+  s = Number(s) || 0;
+  if (s >= 3600) return (s / 3600).toFixed(1) + 'h';
+  if (s >= 60) return Math.round(s / 60) + 'm';
+  return Math.round(s) + 's';
+}
+async function renderUsageDossier() {
+  const box = document.getElementById('usageDossier');
+  if (!box) return;
+  const days = document.getElementById('eeroUsageRange')?.value || '7';
+  box.innerHTML = '<div class="muted small" style="padding:16px">Loading session dossier…</div>';
+  let d;
+  try {
+    const res = await fetch(`${API}/api/network/usage?days=${encodeURIComponent(days)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    d = await res.json();
+  } catch (err) {
+    box.innerHTML = `<div class="muted small" style="padding:16px">Couldn't load dossier: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (!d.devices || !d.devices.length) {
+    box.innerHTML = '<div class="muted small" style="padding:16px">No sessions recorded yet. The NetFlow collector logs connections as they expire (~1 min).</div>';
+    return;
+  }
+  const rows = d.devices.map(dev => `
+    <details class="dossier-device">
+      <summary>
+        <span class="dossier-name">${esc(dev.name || dev.ip)}</span>
+        <span class="dossier-meta">${fmtBytes(dev.totalBytes)} · ${dev.sessions.toLocaleString()} sessions · last ${esc((dev.lastSeen || '').slice(5, 16).replace('T', ' '))}</span>
+      </summary>
+      <table class="eero-table audit-table">
+        <thead><tr><th>Destination</th><th>Data</th><th>Sessions</th><th>Total time</th><th>Last seen</th></tr></thead>
+        <tbody>
+          ${dev.destinations.map(t => `
+            <tr>
+              <td><code>${esc(t.remote)}</code></td>
+              <td>${fmtBytes(t.bytes)}</td>
+              <td>${t.sessions}</td>
+              <td>${fmtDur(t.dur_s)}</td>
+              <td><span title="${esc(t.lastSeen)}">${esc((t.lastSeen || '').slice(5, 16).replace('T', ' '))}</span></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </details>`).join('');
+  box.innerHTML = `
+    <div class="eero-card-header">
+      <span>Session dossier — per device (last ${esc(String(d.days))}d)</span>
+      <span class="muted small">source: ${esc(d.source)} · destinations shown by IP (names = next enhancement)</span>
+    </div>
+    ${rows}`;
+}
+
 async function renderEeroUsageChart() {
   const chart = document.getElementById('eeroUsageChart');
   const legend = document.getElementById('eeroUsageLegend');
@@ -5125,7 +5186,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     b.classList.add('active');
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
-    if (eeroActiveSubtab === 'usage') renderEeroUsageChart();
+    if (eeroActiveSubtab === 'usage') { renderEeroUsageChart(); renderUsageDossier(); }
     if (eeroActiveSubtab === 'audit') renderEeroAudit();   // refresh from /api/network/policy/actions
     if (eeroActiveSubtab === 'profiles') {
       // Profile list = unique owners + family.members. Refresh both so
@@ -5233,7 +5294,7 @@ document.getElementById('eeroNewProfileForm')?.addEventListener('submit', async 
   }
 });
 
-document.getElementById('eeroUsageRange')?.addEventListener('change', renderEeroUsageChart);
+document.getElementById('eeroUsageRange')?.addEventListener('change', () => { renderEeroUsageChart(); renderUsageDossier(); });
 document.getElementById('eeroUsageTarget')?.addEventListener('change', renderEeroUsageChart);
 
 // ── Raw MikroTik REST console (step 9) ────────────────────────
