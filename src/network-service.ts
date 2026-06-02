@@ -29,6 +29,7 @@ const BLOCKS_PATH = join(homedir(), '.claude-gombwe', 'network-blocks.json');
 const KIDLIST_PATH = join(homedir(), '.claude-gombwe', 'network-kid-list.json');
 const DEVICE_POLICY_PATH = join(homedir(), '.claude-gombwe', 'network-device-policy.json');
 const POLICY_ACTIONS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-actions.jsonl');
+const FLAGS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-flags.jsonl');
 
 // Per-device blocked-category map. Default for adults: none.
 // Default applied automatically when a device is added to the kid list:
@@ -399,6 +400,43 @@ export class NetworkService {
     }
   }
 
+  // ── Policy flags (detected, NOT blocked) ──────────────────────
+  /**
+   * Persist a policy *flag* from the scanner. Universal — works for any device,
+   * kid-list or not. Surfaced by alerts() so the dashboard shows it and the user
+   * can choose to block. Also mirrored into the policy-actions audit log so the
+   * paper trail is in one place ("they can't say they never did it").
+   */
+  recordFlag(
+    mac: string, name: string, hostname: string,
+    severity: 'low' | 'med' | 'high', reason: string,
+    category?: string, ip?: string,
+  ): void {
+    const rec = {
+      time: new Date().toISOString(),
+      action: 'flagged',
+      mac: mac.toUpperCase(),
+      name, hostname, severity, reason,
+      category: category ?? null,
+      ip: ip ?? null,
+    };
+    try { appendFileSync(FLAGS_PATH, JSON.stringify(rec) + '\n', { mode: 0o600 }); }
+    catch (err) { console.warn('[network] recordFlag failed:', err); }
+    this.writePolicyAction(rec);
+  }
+
+  /** Recent flags within the window (hours), newest last. */
+  recentFlags(hours = 48): Array<Record<string, unknown>> {
+    const cutoff = Date.now() - hours * 3600_000;
+    try {
+      const text = readFileSync(FLAGS_PATH, 'utf-8');
+      return text.trim().split('\n')
+        .map(l => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
+        .filter((r): r is Record<string, unknown> =>
+          !!r && new Date(r.time as string).getTime() >= cutoff);
+    } catch { return []; }
+  }
+
   // ── Per-device category policy ────────────────────────────────
   getDevicePolicy(mac: string): { blockedCategories: string[]; updatedAt: string | null } {
     const key = mac.toUpperCase();
@@ -669,6 +707,38 @@ export class NetworkService {
                                      // in normal use; only flag truly bad ones
     const out: ReturnType<NetworkService['alerts']> = [];
     out.push(...this.detectFlappingFromSnapshots(FLAPPING_THRESHOLD));
+    out.push(...this.flagsAsAlerts());
+    return out;
+  }
+
+  /** Turn recent policy flags into dashboard alert banners. Grouped per
+   *  device+hostname so repeated lookups collapse into one actionable alert. */
+  private flagsAsAlerts(): ReturnType<NetworkService['alerts']> {
+    // Breaches are a paper trail — keep them on the banner for 14 days, not just
+    // the 24h a transient alert gets. (The full history lives in the audit log.)
+    const FLAG_ALERT_WINDOW_HOURS = 24 * 14;
+    const grouped = new Map<string, { count: number; first: string; last: string; rec: Record<string, unknown> }>();
+    for (const f of this.recentFlags(FLAG_ALERT_WINDOW_HOURS)) {
+      const key = `${f.mac}|${f.hostname}`;
+      const g = grouped.get(key);
+      if (g) { g.count++; g.last = f.time as string; }
+      else grouped.set(key, { count: 1, first: f.time as string, last: f.time as string, rec: f });
+    }
+    const out: ReturnType<NetworkService['alerts']> = [];
+    for (const [key, g] of grouped) {
+      const r = g.rec;
+      out.push({
+        id: `flag:${key}`,
+        type: 'policy-flag',
+        severity: r.severity === 'high' ? 'error' : 'warning',
+        title: `Flagged: ${r.hostname} on ${r.name}`,
+        detail: `${r.reason}${r.category ? ` (${r.category})` : ''} — ${g.count}×, last seen ${(g.last || '').slice(0, 16).replace('T', ' ')} UTC`,
+        suggestion: 'Review and block this host/device if it’s inappropriate.',
+        firstSeen: g.first,
+        lastSeen: g.last,
+        data: { mac: r.mac, hostname: r.hostname, severity: r.severity, category: r.category, ip: r.ip },
+      });
+    }
     return out;
   }
 

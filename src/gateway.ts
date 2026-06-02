@@ -3030,9 +3030,9 @@ The ingredients should be grocery item names with quantities scaled for ${family
         console.warn(`[gombwe] log compactor failed to start:`, err);
       }
 
-      // Start the AI policy scanner. Has zero impact on devices not on the
-      // kid list — it strictly filters input by kid-list membership before
-      // sending anything to Claude or acting on the result.
+      // Start the AI policy scanner. Universal + flag-only: it scans EVERY
+      // device with DNS activity, records flags for the dashboard, and never
+      // auto-blocks or depends on kid-list membership.
       try {
         const scanner = policyScanner();
         scanner.on('flagged', evt => this.broadcast({

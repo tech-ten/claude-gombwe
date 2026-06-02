@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- gombwe — macOS LaunchDaemon (installer template).
+     Native autostart for macOS hosts. One hop: launchd -> gombwe (no pm2).
+
+     This is a LaunchDaemon (system domain), NOT a LaunchAgent, so it starts at
+     BOOT without anyone logging in (headless mini, no auto-login). It runs AS
+     the user via <UserName> so it can read ~/.claude-gombwe and the `claude`
+     CLI. Same model your cloudflared tunnel uses.
+       KeepAlive = crash recovery; RunAtLoad = start at boot.
+
+     Install (installer substitutes @PLACEHOLDERS@ then runs, needs root):
+       sudo install -o root -g wheel -m 644 com.gombwe.daemon.plist /Library/LaunchDaemons/
+       sudo launchctl bootstrap system /Library/LaunchDaemons/com.gombwe.daemon.plist
+
+     Note: a LaunchDaemon running as a user starts before login, so it cannot
+     read the user's *login keychain* (locked until first login). gombwe's
+     secrets are file-based (~/.claude-gombwe/*.json), so this is fine; only a
+     keychain-backed `claude` token would wait until first login. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.gombwe.daemon</string>
+    <key>UserName</key>
+    <string>@USER@</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>@NODE_BIN@</string>
+      <string>@GOMBWE_DIST@/index.js</string>
+      <string>start</string>
+      <string>--headless</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>WorkingDirectory</key>
+    <string>@GOMBWE_REPO@</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>NODE_ENV</key><string>production</string>
+      <key>HOME</key><string>@HOME@</string>
+      <key>PATH</key><string>@HOME@/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key><string>@HOME@/.claude-gombwe/gombwe.out.log</string>
+    <key>StandardErrorPath</key><string>@HOME@/.claude-gombwe/gombwe.err.log</string>
+  </dict>
+</plist>
