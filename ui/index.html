@@ -258,6 +258,7 @@
           <!-- Sub-tab nav -->
           <div class="eero-subnav" id="eeroSubnav">
             <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
+            <button class="eero-subtab" data-eero-tab="strands">Strands</button>
             <button class="eero-subtab" data-eero-tab="kids">Access Control</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
@@ -272,8 +273,23 @@
           <!-- Alerts banner — visible across all panes when any are active -->
           <div class="eero-alerts hidden" id="eeroAlerts"></div>
 
+          <!-- Strands — live router visualization (every session as a filament) -->
+          <div class="eero-pane" data-eero-pane="strands">
+            <div class="strands-stage" id="strandsStage">
+              <canvas id="strandsCanvas"></canvas>
+              <div class="strands-hud" id="strandsHud">
+                <div class="strands-hud-row">
+                  <span class="strands-live"><span class="strands-pulse"></span> LIVE</span>
+                  <span id="strandsCount" class="strands-count">—</span>
+                </div>
+                <div id="strandsLegend" class="strands-legend"></div>
+              </div>
+              <div class="strands-inspect hidden" id="strandsInspect"></div>
+            </div>
+          </div>
+
           <!-- Overview (MikroTik vitals, replaces eero-snapshot rollups) -->
-          <div class="eero-pane active" data-eero-pane="overview">
+          <div class="eero-pane" data-eero-pane="overview">
             <div class="eero-stat-grid" id="overviewStats"></div>
             <div class="eero-two-col">
               <div class="card eero-card">
