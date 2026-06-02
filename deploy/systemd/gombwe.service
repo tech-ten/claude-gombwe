@@ -1,0 +1,34 @@
+# gombwe — Linux service unit (installer template)
+#
+# Robust native autostart for Linux hosts, the systemd counterpart of the
+# macOS launchd agent in deploy/launchd/. No pm2 dependency: systemd is the
+# supervisor (Restart=always = crash recovery; WantedBy=multi-user.target =
+# start on boot).
+#
+# Install (the gombwe installer does this; shown for reference):
+#   1. Substitute the @PLACEHOLDERS@ below for the target user/paths.
+#   2. cp gombwe.service ~/.config/systemd/user/gombwe.service   (user unit)
+#   3. systemctl --user daemon-reload
+#   4. systemctl --user enable --now gombwe.service
+#   5. loginctl enable-linger @USER@   # so it runs without an active login
+#
+# (For a system-wide unit instead, drop into /etc/systemd/system/ and remove
+#  the --user flags; set User=@USER@.)
+
+[Unit]
+Description=gombwe home agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@NODE_BIN@ @GOMBWE_DIST@/index.js start
+Environment=NODE_ENV=production
+# Ensure the policy scanner's `claude` subprocess resolves.
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=@GOMBWE_REPO@
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

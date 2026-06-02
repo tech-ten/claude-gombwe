@@ -714,8 +714,11 @@ export class NetworkService {
   /** Turn recent policy flags into dashboard alert banners. Grouped per
    *  device+hostname so repeated lookups collapse into one actionable alert. */
   private flagsAsAlerts(): ReturnType<NetworkService['alerts']> {
+    // Breaches are a paper trail — keep them on the banner for 14 days, not just
+    // the 24h a transient alert gets. (The full history lives in the audit log.)
+    const FLAG_ALERT_WINDOW_HOURS = 24 * 14;
     const grouped = new Map<string, { count: number; first: string; last: string; rec: Record<string, unknown> }>();
-    for (const f of this.recentFlags(48)) {
+    for (const f of this.recentFlags(FLAG_ALERT_WINDOW_HOURS)) {
       const key = `${f.mac}|${f.hostname}`;
       const g = grouped.get(key);
       if (g) { g.count++; g.last = f.time as string; }
@@ -729,7 +732,7 @@ export class NetworkService {
         type: 'policy-flag',
         severity: r.severity === 'high' ? 'error' : 'warning',
         title: `Flagged: ${r.hostname} on ${r.name}`,
-        detail: `${r.reason}${r.category ? ` (${r.category})` : ''} — ${g.count}× in last 48h`,
+        detail: `${r.reason}${r.category ? ` (${r.category})` : ''} — ${g.count}×, last seen ${(g.last || '').slice(0, 16).replace('T', ' ')} UTC`,
         suggestion: 'Review and block this host/device if it’s inappropriate.',
         firstSeen: g.first,
         lastSeen: g.last,
