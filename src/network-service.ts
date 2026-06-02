@@ -513,29 +513,35 @@ export class NetworkService {
   usageDossier(days = 7): {
     generatedAt: string; days: number; source: string;
     devices: Array<{
-      ip: string; name: string; totalBytes: number; sessions: number;
-      firstSeen: string; lastSeen: string;
-      destinations: Array<{ remote: string; host?: string | null; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string }>;
+      ip: string; name: string; totalBytes: number; bytesUp: number; bytesDown: number;
+      sessions: number; firstSeen: string; lastSeen: string; auditFlags?: number;
+      destinations: Array<{ remote: string; host?: string | null; bytes: number; bytesUp: number; bytesDown: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string; flagged?: string | null }>;
     }>;
   } {
     const LAN = '192.168.88.';
-    // Names are attached later from live DHCP leases (nameUsageDevices); until
-    // then a device is keyed/labelled by its IP.
 
-    // device aggregation: lanIp -> { name, bytes, sessions, first, last, dests: Map }
-    type Dest = { remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string };
-    const devs = new Map<string, { name: string; bytes: number; sessions: number; firstSeen: string; lastSeen: string; dests: Map<string, Dest> }>();
-    const srcUsed = new Set<string>();
+    // Flagged-hostname set from the audit journal — to icon "bad" destinations.
+    const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
+    const flaggedHosts = new Map<string, string>();
+    for (const f of this.allFlags()) {
+      const h = String(f.hostname || '').toLowerCase(); if (!h) continue;
+      const sev = String(f.severity || 'low').toLowerCase();
+      if (sevRank(sev) > sevRank(flaggedHosts.get(h) || '')) flaggedHosts.set(h, sev);
+    }
 
-    const addFlow = (lanIp: string, remote: string, bytes: number, durS: number, start: string, end: string) => {
+    type Dest = { remote: string; up: number; down: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string };
+    const devs = new Map<string, { name: string; up: number; down: number; sessions: number; firstSeen: string; lastSeen: string; dests: Map<string, Dest> }>();
+
+    // up = bytes the LAN device SENT, down = bytes it RECEIVED.
+    const addFlow = (lanIp: string, remote: string, up: number, down: number, durS: number, start: string, end: string) => {
       let d = devs.get(lanIp);
-      if (!d) { d = { name: lanIp, bytes: 0, sessions: 0, firstSeen: start, lastSeen: end, dests: new Map() }; devs.set(lanIp, d); }
-      d.bytes += bytes; d.sessions++;
+      if (!d) { d = { name: lanIp, up: 0, down: 0, sessions: 0, firstSeen: start, lastSeen: end, dests: new Map() }; devs.set(lanIp, d); }
+      d.up += up; d.down += down; d.sessions++;
       if (start < d.firstSeen) d.firstSeen = start;
       if (end > d.lastSeen) d.lastSeen = end;
       let de = d.dests.get(remote);
-      if (!de) { de = { remote, bytes: 0, sessions: 0, dur_s: 0, firstSeen: start, lastSeen: end }; d.dests.set(remote, de); }
-      de.bytes += bytes; de.sessions++; de.dur_s += durS;
+      if (!de) { de = { remote, up: 0, down: 0, sessions: 0, dur_s: 0, firstSeen: start, lastSeen: end }; d.dests.set(remote, de); }
+      de.up += up; de.down += down; de.sessions++; de.dur_s += durS;
       if (start < de.firstSeen) de.firstSeen = start;
       if (end > de.lastSeen) de.lastSeen = end;
     };
@@ -553,15 +559,16 @@ export class NetworkService {
           const src = String(f.src || ''), dst = String(f.dst || '');
           const bytes = Number(f.bytes || 0), dur = Number(f.dur_s || 0);
           const start = String(f.start || f.ts || ''), end = String(f.end || f.ts || '');
-          if (src.startsWith(LAN)) { addFlow(src, dst, bytes, dur, start, end); srcUsed.add(src); }
-          else if (dst.startsWith(LAN)) { addFlow(dst, src, bytes, dur, start, end); srcUsed.add(dst); }
+          // NetFlow flows are unidirectional: src->dst with `bytes`.
+          if (src.startsWith(LAN)) addFlow(src, dst, bytes, 0, dur, start, end);        // device sent
+          else if (dst.startsWith(LAN)) addFlow(dst, src, 0, bytes, dur, start, end);   // device received
         }
       } else {
-        // A: reconstruct from conntrack snapshots
+        // A: reconstruct from conntrack snapshots (orig=src->dst, repl=dst->src).
         const snapPath = join(DATA_DIR, `${day}.jsonl`);
         if (!existsSync(snapPath)) continue;
         usedSnapshots = true;
-        const conns = new Map<string, { src: string; dst: string; bytes: number; first: string; last: string }>();
+        const conns = new Map<string, { src: string; dst: string; orig: number; repl: number; first: string; last: string }>();
         for (const line of readFileSync(snapPath, 'utf-8').split('\n')) {
           if (!line.trim()) continue;
           let s: { ts?: string; connections?: Array<Record<string, unknown>> };
@@ -570,39 +577,66 @@ export class NetworkService {
           for (const c of s.connections || []) {
             const src = ipOnly(String(c['src-address'] || '')), dst = ipOnly(String(c['dst-address'] || ''));
             if (!src || !dst) continue;
-            const tot = Number(c['orig-bytes'] || 0) + Number(c['repl-bytes'] || 0);
+            const orig = Number(c['orig-bytes'] || 0), repl = Number(c['repl-bytes'] || 0);
             const key = `${c['src-address']}|${c['dst-address']}|${c.protocol}`;
             const ex = conns.get(key);
-            if (ex) { ex.bytes = Math.max(ex.bytes, tot); ex.last = ts; }
-            else conns.set(key, { src, dst, bytes: tot, first: ts, last: ts });
+            if (ex) { ex.orig = Math.max(ex.orig, orig); ex.repl = Math.max(ex.repl, repl); ex.last = ts; }
+            else conns.set(key, { src, dst, orig, repl, first: ts, last: ts });
           }
         }
         for (const c of conns.values()) {
           const dur = Math.max(0, Math.round((new Date(c.last).getTime() - new Date(c.first).getTime()) / 1000));
-          if (c.src.startsWith(LAN)) addFlow(c.src, c.dst, c.bytes, dur, c.first, c.last);
-          else if (c.dst.startsWith(LAN)) addFlow(c.dst, c.src, c.bytes, dur, c.first, c.last);
+          // conntrack src initiated: orig = its upload, repl = its download.
+          if (c.src.startsWith(LAN)) addFlow(c.src, c.dst, c.orig, c.repl, dur, c.first, c.last);
+          else if (c.dst.startsWith(LAN)) addFlow(c.dst, c.src, c.repl, c.orig, dur, c.first, c.last);
         }
       }
     }
-    // name the devices from current leases (best-effort)
+
     const result = [...devs.entries()].map(([ip, d]) => ({
-      ip, name: d.name, totalBytes: d.bytes, sessions: d.sessions,
-      firstSeen: d.firstSeen, lastSeen: d.lastSeen,
+      ip, name: d.name, totalBytes: d.up + d.down, bytesUp: d.up, bytesDown: d.down,
+      sessions: d.sessions, firstSeen: d.firstSeen, lastSeen: d.lastSeen,
       destinations: [...d.dests.values()]
-        .sort((a, b) => b.bytes - a.bytes).slice(0, 20)
-        .map(de => ({ ...de, host: dnsIndex().lookup(de.remote) })),
+        .sort((a, b) => (b.up + b.down) - (a.up + a.down)).slice(0, 20)
+        .map(de => {
+          const host = dnsIndex().lookup(de.remote);
+          return {
+            remote: de.remote, host,
+            bytes: de.up + de.down, bytesUp: de.up, bytesDown: de.down,
+            sessions: de.sessions, dur_s: de.dur_s, firstSeen: de.firstSeen, lastSeen: de.lastSeen,
+            flagged: host ? (flaggedHosts.get(host.toLowerCase()) ?? null) : null,
+          };
+        }),
     })).sort((a, b) => b.totalBytes - a.totalBytes);
     const source = usedNetflow && usedSnapshots ? 'netflow+snapshots' : usedNetflow ? 'netflow' : usedSnapshots ? 'snapshots' : 'none';
     return { generatedAt: new Date().toISOString(), days, source, devices: result };
   }
 
-  /** Attach friendly device names to a usage dossier using current DHCP leases. */
+  /** Attach friendly device names to a usage dossier using the SAME precedence
+   *  as the device list (user alias → DHCP host-name → IP), so names are
+   *  consistent everywhere (e.g. "Liam-Chromebook", not the serial). */
   async nameUsageDevices(dossier: ReturnType<NetworkService['usageDossier']>): Promise<ReturnType<NetworkService['usageDossier']>> {
     try {
       const leases = await mikrotik.dhcpLeases();
-      const m = new Map<string, string>();
-      for (const l of leases) if (l.address) m.set(l.address, l['host-name'] || l.comment || l.address);
-      for (const d of dossier.devices) d.name = m.get(d.ip) || d.name;
+      const ipToMac = new Map<string, string>();
+      const ipToHost = new Map<string, string>();
+      for (const l of leases) {
+        if (!l.address) continue;
+        if (l['mac-address']) ipToMac.set(l.address, l['mac-address'].toUpperCase());
+        ipToHost.set(l.address, l['host-name'] || l.comment || '');
+      }
+      // count audit flags per MAC so a device with ANY flagged activity is
+      // marked, even when the specific (historical) destination IP can't be named.
+      const flagsByMac = new Map<string, number>();
+      for (const f of this.allFlags()) {
+        const m = String(f.mac || '').toUpperCase(); if (!m) continue;
+        flagsByMac.set(m, (flagsByMac.get(m) || 0) + 1);
+      }
+      for (const d of dossier.devices) {
+        const mac = ipToMac.get(d.ip);
+        d.name = (mac && this.aliases[mac]) || ipToHost.get(d.ip) || d.name;
+        if (mac && flagsByMac.has(mac)) d.auditFlags = flagsByMac.get(mac);
+      }
     } catch { /* leave IPs */ }
     return dossier;
   }

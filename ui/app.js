@@ -3028,30 +3028,38 @@ async function renderUsageDossier() {
     box.innerHTML = '<div class="muted small" style="padding:16px">No sessions recorded yet. The NetFlow collector logs connections as they expire (~1 min).</div>';
     return;
   }
-  const rows = d.devices.map(dev => `
+  const flagIcon = (sev) => sev === 'high' ? '🚩' : (sev === 'med' || sev === 'medium') ? '⚠️' : sev === 'low' ? '⚑' : '';
+  const tspan = (t) => `<span title="${esc(t)}">${esc((t || '').slice(5, 16).replace('T', ' '))}</span>`;
+  const rows = d.devices.map(dev => {
+    const flaggedCount = dev.destinations.filter(t => t.flagged).length;
+    const audit = dev.auditFlags || 0;
+    const showFlag = flaggedCount || audit;
+    return `
     <details class="dossier-device">
       <summary>
-        <span class="dossier-name">${esc(dev.name || dev.ip)}</span>
-        <span class="dossier-meta">${fmtBytes(dev.totalBytes)} · ${dev.sessions.toLocaleString()} sessions · last ${esc((dev.lastSeen || '').slice(5, 16).replace('T', ' '))}</span>
+        <span class="dossier-name">${showFlag ? '🚩 ' : ''}${esc(dev.name || dev.ip)}</span>
+        <span class="dossier-meta">↓${fmtBytes(dev.bytesDown)} ↑${fmtBytes(dev.bytesUp)} · ${dev.sessions.toLocaleString()} sessions · ${tspan(dev.firstSeen)}–${tspan(dev.lastSeen)}${audit ? ` · <span class="flag-text">${audit} in audit</span>` : ''}</span>
       </summary>
       <table class="eero-table audit-table">
-        <thead><tr><th>Destination</th><th>Data</th><th>Sessions</th><th>Total time</th><th>Last seen</th></tr></thead>
+        <thead><tr><th>Destination</th><th>↓ Down</th><th>↑ Up</th><th>Sessions</th><th>Active time</th><th>First seen</th><th>Last seen</th></tr></thead>
         <tbody>
           ${dev.destinations.map(t => `
-            <tr>
-              <td>${t.host ? `${esc(t.host)} <span class="muted small">${esc(t.remote)}</span>` : `<code>${esc(t.remote)}</code>`}</td>
-              <td>${fmtBytes(t.bytes)}</td>
+            <tr class="${t.flagged ? 'dossier-flagged' : ''}">
+              <td>${t.flagged ? `<span class="flag-text" title="flagged (${esc(t.flagged)}) — in audit">${flagIcon(t.flagged)}</span> ` : ''}${t.host ? `${esc(t.host)} <span class="muted small">${esc(t.remote)}</span>` : `<code>${esc(t.remote)}</code>`}</td>
+              <td>${fmtBytes(t.bytesDown)}</td>
+              <td>${fmtBytes(t.bytesUp)}</td>
               <td>${t.sessions}</td>
               <td>${fmtDur(t.dur_s)}</td>
-              <td><span title="${esc(t.lastSeen)}">${esc((t.lastSeen || '').slice(5, 16).replace('T', ' '))}</span></td>
+              <td>${tspan(t.firstSeen)}</td>
+              <td>${tspan(t.lastSeen)}</td>
             </tr>`).join('')}
         </tbody>
       </table>
-    </details>`).join('');
+    </details>`; }).join('');
   box.innerHTML = `
     <div class="eero-card-header">
       <span>Session dossier — per device (last ${esc(String(d.days))}d)</span>
-      <span class="muted small">source: ${esc(d.source)} · destinations shown by IP (names = next enhancement)</span>
+      <span class="muted small">source: ${esc(d.source)} · 🚩/⚠️ = destination also flagged in Audit</span>
     </div>
     ${rows}`;
 }
