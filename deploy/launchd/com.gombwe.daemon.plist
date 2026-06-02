@@ -28,6 +28,7 @@
       <string>@NODE_BIN@</string>
       <string>@GOMBWE_DIST@/index.js</string>
       <string>start</string>
+      <string>--headless</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

@@ -22,7 +22,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=@NODE_BIN@ @GOMBWE_DIST@/index.js start
+ExecStart=@NODE_BIN@ @GOMBWE_DIST@/index.js start --headless
 Environment=NODE_ENV=production
 # Ensure the policy scanner's `claude` subprocess resolves.
 Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
