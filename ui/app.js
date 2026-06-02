@@ -3039,7 +3039,7 @@ async function renderUsageDossier() {
         <tbody>
           ${dev.destinations.map(t => `
             <tr>
-              <td><code>${esc(t.remote)}</code></td>
+              <td>${t.host ? `${esc(t.host)} <span class="muted small">${esc(t.remote)}</span>` : `<code>${esc(t.remote)}</code>`}</td>
               <td>${fmtBytes(t.bytes)}</td>
               <td>${t.sessions}</td>
               <td>${fmtDur(t.dur_s)}</td>

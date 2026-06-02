@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
 import { createRequire } from 'node:module';
 import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry } from './mikrotik-client.js';
+import { dnsIndex } from './dns-index.js';
 import { ipResolver } from './ip-name-resolver.js';
 import { mdnsListener } from './mdns-listener.js';
 // IEEE OUI registry, ~37k vendors keyed by 6-hex-digit prefix (no separators).
@@ -514,7 +515,7 @@ export class NetworkService {
     devices: Array<{
       ip: string; name: string; totalBytes: number; sessions: number;
       firstSeen: string; lastSeen: string;
-      destinations: Array<{ remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string }>;
+      destinations: Array<{ remote: string; host?: string | null; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string }>;
     }>;
   } {
     const LAN = '192.168.88.';
@@ -587,7 +588,9 @@ export class NetworkService {
     const result = [...devs.entries()].map(([ip, d]) => ({
       ip, name: d.name, totalBytes: d.bytes, sessions: d.sessions,
       firstSeen: d.firstSeen, lastSeen: d.lastSeen,
-      destinations: [...d.dests.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 20),
+      destinations: [...d.dests.values()]
+        .sort((a, b) => b.bytes - a.bytes).slice(0, 20)
+        .map(de => ({ ...de, host: dnsIndex().lookup(de.remote) })),
     })).sort((a, b) => b.totalBytes - a.totalBytes);
     const source = usedNetflow && usedSnapshots ? 'netflow+snapshots' : usedNetflow ? 'netflow' : usedSnapshots ? 'snapshots' : 'none';
     return { generatedAt: new Date().toISOString(), days, source, devices: result };
