@@ -1,28 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- gombwe — macOS LaunchDaemon (installer template).
+<!-- gombwe — macOS LaunchAgent (installer template).
      Native autostart for macOS hosts. One hop: launchd -> gombwe (no pm2).
 
-     This is a LaunchDaemon (system domain), NOT a LaunchAgent, so it starts at
-     BOOT without anyone logging in (headless mini, no auto-login). It runs AS
-     the user via <UserName> so it can read ~/.claude-gombwe and the `claude`
-     CLI. Same model your cloudflared tunnel uses.
-       KeepAlive = crash recovery; RunAtLoad = start at boot.
+     This is a LaunchAgent (per-user GUI session), NOT a LaunchDaemon, ON PURPOSE:
+     the policy scanner spawns `claude -p`, whose Claude SUBSCRIPTION token lives
+     in the user's LOGIN KEYCHAIN. Only a process inside the user's login (Aqua)
+     session can read that keychain — a system LaunchDaemon runs in a different
+     security session and CANNOT reach it, even after the user logs in. So a
+     LaunchDaemon breaks AI classification unless you switch to a billed
+     ANTHROPIC_API_KEY. LaunchAgent keeps it on the subscription, free.
+       KeepAlive = crash recovery; RunAtLoad = start at login.
+       MUST run `start --headless` — plain `start` opens a REPL that dies with no
+       TTY and triggers a KeepAlive restart loop.
 
-     Install (installer substitutes @PLACEHOLDERS@ then runs, needs root):
-       sudo install -o root -g wheel -m 644 com.gombwe.daemon.plist /Library/LaunchDaemons/
-       sudo launchctl bootstrap system /Library/LaunchDaemons/com.gombwe.daemon.plist
+     Trade-off: an Agent starts at login, not at boot. On a FileVault host that's
+     moot — a human must unlock at the console each boot anyway, and that unlock
+     logs them in, which fires the Agent. If a user truly needs pre-login start
+     AND AI classification, that requires an API key + a LaunchDaemon instead.
 
-     Note: a LaunchDaemon running as a user starts before login, so it cannot
-     read the user's *login keychain* (locked until first login). gombwe's
-     secrets are file-based (~/.claude-gombwe/*.json), so this is fine; only a
-     keychain-backed `claude` token would wait until first login. -->
+     Install (no sudo needed for a user agent):
+       cp com.gombwe.daemon.plist ~/Library/LaunchAgents/
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gombwe.daemon.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
     <key>Label</key>
     <string>com.gombwe.daemon</string>
-    <key>UserName</key>
-    <string>@USER@</string>
     <key>ProgramArguments</key>
     <array>
       <string>@NODE_BIN@</string>
