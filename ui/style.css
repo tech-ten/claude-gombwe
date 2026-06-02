@@ -2659,3 +2659,7 @@ body {
 .dossier-name { font-weight: 600; }
 .dossier-meta { color: var(--muted, #9aa); font-size: 12px; white-space: nowrap; }
 .dossier-device table { margin: 6px 0 12px; }
+
+/* Dossier flagged destinations */
+.dossier-flagged { background: rgba(220, 60, 60, 0.10); }
+.flag-text { color: #e0584f; font-weight: 600; }
