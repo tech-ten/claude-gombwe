@@ -17,6 +17,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { mikrotik } from './mikrotik-client.js';
+import { dnsIndex } from './dns-index.js';
 
 const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
 const POLL_MS = 60_000;
@@ -72,6 +73,13 @@ async function tick(): Promise<void> {
     lastSuccessTs = ts;
     // Quiet on success — log only the first one and recoveries.
     if (!lastSuccessTs) console.log(`[collector] first snapshot ok devices=${onlineCount} connections=${conns.length}`);
+
+    // Fold the router's DNS cache into the reverse IP->hostname index so the
+    // usage dossier can name flow destinations. Separate try: a cache hiccup
+    // must not cost us the snapshot we just wrote.
+    try {
+      dnsIndex().merge(await mikrotik.dnsCache());
+    } catch { /* tolerate — index just won't update this tick */ }
   } catch (err: any) {
     consecutiveErrors++;
     const msg = err?.message ?? String(err);
