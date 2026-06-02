@@ -1583,6 +1583,31 @@ export class Gateway {
       res.json(getNetworkService().policyActions(500));
     });
 
+    // Breach dossier — permanent per-device flag history (independent of banner
+    // dismissal). The case file the dashboard renders + can export.
+    this.app.get('/api/network/dossier', (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      res.json(getNetworkService().dossier());
+    });
+
+    // Download the full flag record as a file (JSON or CSV) for an offline dossier.
+    this.app.get('/api/network/dossier/export', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const flags = getNetworkService().allFlags();
+      if (String(req.query.format) === 'csv') {
+        const cols = ['time', 'name', 'mac', 'ip', 'category', 'severity', 'hostname', 'reason'];
+        const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const csv = [cols.join(','), ...flags.map(f => cols.map(c => esc(f[c])).join(','))].join('\n');
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="gombwe-breach-dossier.csv"');
+        res.send(csv);
+      } else {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', 'attachment; filename="gombwe-breach-dossier.json"');
+        res.send(JSON.stringify(flags, null, 2));
+      }
+    });
+
     // Active alerts (MikroTik-driven). Currently: flapping-device. Returns
     // the same shape as the legacy eero alerts so the dashboard banner can
     // render both through one code path during the migration.

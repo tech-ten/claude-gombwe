@@ -428,13 +428,75 @@ export class NetworkService {
   /** Recent flags within the window (hours), newest last. */
   recentFlags(hours = 48): Array<Record<string, unknown>> {
     const cutoff = Date.now() - hours * 3600_000;
+    return this.allFlags().filter(r => new Date(r.time as string).getTime() >= cutoff);
+  }
+
+  /** Every flag ever recorded (the permanent breach record), oldest first. */
+  allFlags(): Array<Record<string, unknown>> {
     try {
       const text = readFileSync(FLAGS_PATH, 'utf-8');
       return text.trim().split('\n')
         .map(l => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } })
-        .filter((r): r is Record<string, unknown> =>
-          !!r && new Date(r.time as string).getTime() >= cutoff);
+        .filter((r): r is Record<string, unknown> => !!r && !!r.time);
     } catch { return []; }
+  }
+
+  /**
+   * Breach dossier — the full flag history grouped per device into a case file.
+   * Append-only and independent of banner dismissal: this is the permanent
+   * record. Each device lists its flagged hostnames (count + first/last seen +
+   * worst severity), plus per-category and per-severity tallies.
+   */
+  dossier(): {
+    generatedAt: string;
+    totalFlags: number;
+    devices: Array<{
+      mac: string; name: string; total: number;
+      firstSeen: string; lastSeen: string;
+      bySeverity: Record<string, number>;
+      byCategory: Record<string, number>;
+      hosts: Array<{ hostname: string; category: string | null; severity: string; count: number; firstSeen: string; lastSeen: string; reason: string }>;
+    }>;
+  } {
+    const flags = this.allFlags();
+    const sevWeight = (s: unknown) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[String(s || '').toLowerCase()] || 0;
+    const byDevice = new Map<string, Record<string, unknown>[]>();
+    for (const f of flags) {
+      const mac = String(f.mac || f.ip || 'unknown').toUpperCase();
+      if (!byDevice.has(mac)) byDevice.set(mac, []);
+      byDevice.get(mac)!.push(f);
+    }
+    const devices = [...byDevice.entries()].map(([mac, fs]) => {
+      const bySeverity: Record<string, number> = {};
+      const byCategory: Record<string, number> = {};
+      const hostMap = new Map<string, { hostname: string; category: string | null; severity: string; count: number; firstSeen: string; lastSeen: string; reason: string }>();
+      let firstSeen = '', lastSeen = '', name = mac;
+      for (const f of fs) {
+        const sev = String(f.severity || 'low').toLowerCase();
+        const cat = (f.category as string) ?? 'uncategorized';
+        bySeverity[sev] = (bySeverity[sev] || 0) + 1;
+        byCategory[cat] = (byCategory[cat] || 0) + 1;
+        const t = String(f.time || '');
+        if (!firstSeen || t < firstSeen) firstSeen = t;
+        if (!lastSeen || t > lastSeen) lastSeen = t;
+        if (f.name) name = String(f.name);
+        const h = String(f.hostname || '?');
+        const ex = hostMap.get(h);
+        if (ex) {
+          ex.count++;
+          if (t < ex.firstSeen) ex.firstSeen = t;
+          if (t > ex.lastSeen) ex.lastSeen = t;
+          if (sevWeight(sev) > sevWeight(ex.severity)) ex.severity = sev;
+        } else {
+          hostMap.set(h, { hostname: h, category: (f.category as string) ?? null, severity: sev, count: 1, firstSeen: t, lastSeen: t, reason: String(f.reason || '') });
+        }
+      }
+      const hosts = [...hostMap.values()].sort((a, b) => sevWeight(b.severity) - sevWeight(a.severity) || (b.lastSeen).localeCompare(a.lastSeen));
+      return { mac, name, total: fs.length, firstSeen, lastSeen, bySeverity, byCategory, hosts };
+    });
+    // worst-offender first: by highest-severity count, then total
+    devices.sort((a, b) => (b.bySeverity.high || 0) - (a.bySeverity.high || 0) || b.total - a.total);
+    return { generatedAt: new Date().toISOString(), totalFlags: flags.length, devices };
   }
 
   // ── Per-device category policy ────────────────────────────────
