@@ -499,6 +499,111 @@ export class NetworkService {
     return { generatedAt: new Date().toISOString(), totalFlags: flags.length, devices };
   }
 
+  // ── Usage dossier (per-device session/byte ledger) ────────────
+  /**
+   * Per-device usage dossier from connection records. Source per day:
+   *   B (preferred): flows-YYYY-MM-DD.jsonl from the NetFlow collector — exact.
+   *   A (fallback):  reconstructed from the 60s conntrack snapshots (DAY.jsonl)
+   *                  for days before NetFlow was enabled (coarser, 60s grain).
+   * Aggregates each LAN device's sessions + bytes, with its top destinations.
+   * Destinations are by IP for now (human-readable names need DNS-answer
+   * capture — a separate enhancement).
+   */
+  usageDossier(days = 7): {
+    generatedAt: string; days: number; source: string;
+    devices: Array<{
+      ip: string; name: string; totalBytes: number; sessions: number;
+      firstSeen: string; lastSeen: string;
+      destinations: Array<{ remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string }>;
+    }>;
+  } {
+    const LAN = '192.168.88.';
+    // Names are attached later from live DHCP leases (nameUsageDevices); until
+    // then a device is keyed/labelled by its IP.
+
+    // device aggregation: lanIp -> { name, bytes, sessions, first, last, dests: Map }
+    type Dest = { remote: string; bytes: number; sessions: number; dur_s: number; firstSeen: string; lastSeen: string };
+    const devs = new Map<string, { name: string; bytes: number; sessions: number; firstSeen: string; lastSeen: string; dests: Map<string, Dest> }>();
+    const srcUsed = new Set<string>();
+
+    const addFlow = (lanIp: string, remote: string, bytes: number, durS: number, start: string, end: string) => {
+      let d = devs.get(lanIp);
+      if (!d) { d = { name: lanIp, bytes: 0, sessions: 0, firstSeen: start, lastSeen: end, dests: new Map() }; devs.set(lanIp, d); }
+      d.bytes += bytes; d.sessions++;
+      if (start < d.firstSeen) d.firstSeen = start;
+      if (end > d.lastSeen) d.lastSeen = end;
+      let de = d.dests.get(remote);
+      if (!de) { de = { remote, bytes: 0, sessions: 0, dur_s: 0, firstSeen: start, lastSeen: end }; d.dests.set(remote, de); }
+      de.bytes += bytes; de.sessions++; de.dur_s += durS;
+      if (start < de.firstSeen) de.firstSeen = start;
+      if (end > de.lastSeen) de.lastSeen = end;
+    };
+    const ipOnly = (s: string) => (s || '').split(':')[0];
+
+    let usedNetflow = false, usedSnapshots = false;
+    for (let i = 0; i < days; i++) {
+      const day = new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10);
+      const flowPath = join(DATA_DIR, `flows-${day}.jsonl`);
+      if (existsSync(flowPath)) {
+        usedNetflow = true;
+        for (const line of readFileSync(flowPath, 'utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+          const src = String(f.src || ''), dst = String(f.dst || '');
+          const bytes = Number(f.bytes || 0), dur = Number(f.dur_s || 0);
+          const start = String(f.start || f.ts || ''), end = String(f.end || f.ts || '');
+          if (src.startsWith(LAN)) { addFlow(src, dst, bytes, dur, start, end); srcUsed.add(src); }
+          else if (dst.startsWith(LAN)) { addFlow(dst, src, bytes, dur, start, end); srcUsed.add(dst); }
+        }
+      } else {
+        // A: reconstruct from conntrack snapshots
+        const snapPath = join(DATA_DIR, `${day}.jsonl`);
+        if (!existsSync(snapPath)) continue;
+        usedSnapshots = true;
+        const conns = new Map<string, { src: string; dst: string; bytes: number; first: string; last: string }>();
+        for (const line of readFileSync(snapPath, 'utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          let s: { ts?: string; connections?: Array<Record<string, unknown>> };
+          try { s = JSON.parse(line); } catch { continue; }
+          const ts = s.ts || '';
+          for (const c of s.connections || []) {
+            const src = ipOnly(String(c['src-address'] || '')), dst = ipOnly(String(c['dst-address'] || ''));
+            if (!src || !dst) continue;
+            const tot = Number(c['orig-bytes'] || 0) + Number(c['repl-bytes'] || 0);
+            const key = `${c['src-address']}|${c['dst-address']}|${c.protocol}`;
+            const ex = conns.get(key);
+            if (ex) { ex.bytes = Math.max(ex.bytes, tot); ex.last = ts; }
+            else conns.set(key, { src, dst, bytes: tot, first: ts, last: ts });
+          }
+        }
+        for (const c of conns.values()) {
+          const dur = Math.max(0, Math.round((new Date(c.last).getTime() - new Date(c.first).getTime()) / 1000));
+          if (c.src.startsWith(LAN)) addFlow(c.src, c.dst, c.bytes, dur, c.first, c.last);
+          else if (c.dst.startsWith(LAN)) addFlow(c.dst, c.src, c.bytes, dur, c.first, c.last);
+        }
+      }
+    }
+    // name the devices from current leases (best-effort)
+    const result = [...devs.entries()].map(([ip, d]) => ({
+      ip, name: d.name, totalBytes: d.bytes, sessions: d.sessions,
+      firstSeen: d.firstSeen, lastSeen: d.lastSeen,
+      destinations: [...d.dests.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 20),
+    })).sort((a, b) => b.totalBytes - a.totalBytes);
+    const source = usedNetflow && usedSnapshots ? 'netflow+snapshots' : usedNetflow ? 'netflow' : usedSnapshots ? 'snapshots' : 'none';
+    return { generatedAt: new Date().toISOString(), days, source, devices: result };
+  }
+
+  /** Attach friendly device names to a usage dossier using current DHCP leases. */
+  async nameUsageDevices(dossier: ReturnType<NetworkService['usageDossier']>): Promise<ReturnType<NetworkService['usageDossier']>> {
+    try {
+      const leases = await mikrotik.dhcpLeases();
+      const m = new Map<string, string>();
+      for (const l of leases) if (l.address) m.set(l.address, l['host-name'] || l.comment || l.address);
+      for (const d of dossier.devices) d.name = m.get(d.ip) || d.name;
+    } catch { /* leave IPs */ }
+    return dossier;
+  }
+
   // ── Per-device category policy ────────────────────────────────
   getDevicePolicy(mac: string): { blockedCategories: string[]; updatedAt: string | null } {
     const key = mac.toUpperCase();

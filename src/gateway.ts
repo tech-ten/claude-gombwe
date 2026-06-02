@@ -1591,6 +1591,16 @@ export class Gateway {
       res.json(getNetworkService().dossier());
     });
 
+    // Usage dossier — per-device session/byte ledger from recorded NetFlow
+    // (+ snapshot fallback). ?days=N (default 7).
+    this.app.get('/api/network/usage', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '7'), 10) || 7));
+      const svc = getNetworkService();
+      try { res.json(await svc.nameUsageDevices(svc.usageDossier(days))); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
     // Download the full flag record as a file (JSON or CSV) for an offline dossier.
     this.app.get('/api/network/dossier/export', (req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
