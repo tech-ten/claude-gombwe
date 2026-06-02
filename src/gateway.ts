@@ -24,6 +24,7 @@ import { mikrotik } from './mikrotik-client.js';
 import { getNetworkService } from './network-service.js';
 import { dnsReceiver } from './dns-log-receiver.js';
 import { policyScanner } from './policy-scanner.js';
+import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 
 function localMacAddresses(): string[] {
@@ -3073,6 +3074,14 @@ The ingredients should be grocery item names with quantities scaled for ${family
         scanner.start();
       } catch (err) {
         console.warn(`[gombwe] policy scanner failed to start:`, err);
+      }
+
+      // Start the NetFlow collector — records every connection (session) the
+      // MikroTik exports (bytes + start/end/duration) for the usage dossier.
+      try {
+        netflowCollector().start();
+      } catch (err) {
+        console.warn(`[gombwe] netflow collector failed to start:`, err);
       }
     } else {
       console.log(`[gombwe] MikroTik not configured (no ~/.claude-gombwe/mikrotik.json) — network features disabled`);
