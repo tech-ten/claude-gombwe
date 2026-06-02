@@ -146,6 +146,8 @@ export class NetworkService {
   private blocks: BlockState = readJsonOrEmpty(BLOCKS_PATH, {});
   private kidList: KidList = readJsonOrEmpty(KIDLIST_PATH, { macs: [] });
   private devicePolicy: DevicePolicyMap = readJsonOrEmpty(DEVICE_POLICY_PATH, {});
+  // first-seen wall-clock per active connection key, for live strand "since".
+  private strandSeen = new Map<string, number>();
   // Per-kid auto-block rules added by the policy scanner: mac → hostname → ruleId(s)
   private kidAutoBlocks: Map<string, Map<string, string[]>> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
@@ -639,6 +641,109 @@ export class NetworkService {
       }
     } catch { /* leave IPs */ }
     return dossier;
+  }
+
+  // ── Live strands (every active session as an inspectable thread) ──
+  /**
+   * Every currently-active connection as a "strand": which device, to where
+   * (named), bytes up/down, how long it's been open (since), protocol, state,
+   * whether it's flagged, and whether it's currently cut (blocked). This is the
+   * data behind the coloured-strands router view.
+   */
+  async liveStrands(): Promise<{
+    generatedAt: string;
+    devices: Array<{ ip: string; mac: string; name: string }>;
+    strands: Array<{
+      id: string; deviceIp: string; deviceMac: string; deviceName: string;
+      dst: string; dstHost: string | null; proto: string; dport: number;
+      up: number; down: number; total: number; state: string;
+      since: string; flagged: string | null; cut: boolean;
+    }>;
+  }> {
+    const LAN = '192.168.88.';
+    const [conns, leases, rules] = await Promise.all([
+      mikrotik.connections(), mikrotik.dhcpLeases(), mikrotik.filterRules().catch(() => []),
+    ]);
+    const ipToMac = new Map<string, string>(), ipToName = new Map<string, string>();
+    for (const l of leases) {
+      if (!l.address) continue;
+      const mac = (l['mac-address'] || '').toUpperCase();
+      ipToMac.set(l.address, mac);
+      ipToName.set(l.address, (mac && this.aliases[mac]) || l['host-name'] || l.comment || l.address);
+    }
+    // which (mac,dstIp) pairs are currently cut by a strand-cut rule
+    const cutSet = new Set<string>();
+    for (const r of rules) {
+      const m = /gombwe-strand-cut mac=([0-9A-Fa-f:]+) dst=([0-9.a-fA-F:]+)/.exec(r.comment || '');
+      if (m && r.disabled !== 'true') cutSet.add(`${m[1].toUpperCase()}|${m[2]}`);
+    }
+    const flaggedHosts = new Map<string, string>();
+    const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
+    for (const f of this.allFlags()) {
+      const h = String(f.hostname || '').toLowerCase(); if (!h) continue;
+      const sev = String(f.severity || 'low').toLowerCase();
+      if (sevRank(sev) > sevRank(flaggedHosts.get(h) || '')) flaggedHosts.set(h, sev);
+    }
+    const ipOnly = (s: string) => (s || '').split(':')[0];
+    const portOf = (s: string) => parseInt((s || '').split(':')[1] || '0', 10);
+    const now = Date.now();
+    const seenKeys = new Set<string>();
+    const devices = new Map<string, { ip: string; mac: string; name: string }>();
+    const strands: Awaited<ReturnType<NetworkService['liveStrands']>>['strands'] = [];
+
+    for (const c of conns) {
+      const srcIp = ipOnly(c['src-address'] || ''), dstIp = ipOnly(c['dst-address'] || '');
+      let devIp = '', remote = '', up = 0, down = 0;
+      if (srcIp.startsWith(LAN)) { devIp = srcIp; remote = dstIp; up = Number(c['orig-bytes'] || 0); down = Number(c['repl-bytes'] || 0); }
+      else if (dstIp.startsWith(LAN)) { devIp = dstIp; remote = srcIp; up = Number(c['repl-bytes'] || 0); down = Number(c['orig-bytes'] || 0); }
+      else continue;
+      if (!remote || remote.startsWith(LAN)) continue;          // skip LAN-internal
+      const key = `${c['src-address']}|${c['dst-address']}|${c.protocol}`;
+      seenKeys.add(key);
+      let since = this.strandSeen.get(key);
+      if (!since) { since = now; this.strandSeen.set(key, since); }
+      const mac = ipToMac.get(devIp) || '';
+      const name = ipToName.get(devIp) || devIp;
+      if (!devices.has(devIp)) devices.set(devIp, { ip: devIp, mac, name });
+      const host = dnsIndex().lookup(remote);
+      strands.push({
+        id: key, deviceIp: devIp, deviceMac: mac, deviceName: name,
+        dst: remote, dstHost: host, proto: c.protocol || '', dport: portOf(c['dst-address'] || ''),
+        up, down, total: up + down, state: c['tcp-state'] || '',
+        since: new Date(since).toISOString(),
+        flagged: host ? (flaggedHosts.get(host.toLowerCase()) ?? null) : null,
+        cut: cutSet.has(`${mac}|${remote}`),
+      });
+    }
+    // prune first-seen entries for connections that closed
+    for (const k of this.strandSeen.keys()) if (!seenKeys.has(k)) this.strandSeen.delete(k);
+    strands.sort((a, b) => b.total - a.total);
+    return { generatedAt: new Date().toISOString(), devices: [...devices.values()], strands };
+  }
+
+  /** Cut a strand: block this device→destination and kill the live connection. */
+  async cutStrand(deviceIp: string, dstIp: string): Promise<{ ruleId: string; killed: number }> {
+    const leases = await mikrotik.dhcpLeases();
+    const lease = leases.find(l => l.address === deviceIp);
+    const mac = (lease?.['mac-address'] || '').toUpperCase();
+    if (!mac) throw new Error(`no MAC for ${deviceIp}`);
+    const ruleId = await mikrotik.addDstBlockForMac(mac, dstIp, `gombwe-strand-cut mac=${mac} dst=${dstIp}`);
+    const killed = await mikrotik.killConnectionsBetween(deviceIp, dstIp);
+    return { ruleId, killed };
+  }
+
+  /** Reconnect a strand: remove the strand-cut rule for this device→destination. */
+  async reconnectStrand(deviceIp: string, dstIp: string): Promise<{ removed: number }> {
+    const leases = await mikrotik.dhcpLeases();
+    const mac = (leases.find(l => l.address === deviceIp)?.['mac-address'] || '').toUpperCase();
+    const rules = await mikrotik.filterRules();
+    let removed = 0;
+    for (const r of rules) {
+      if ((r.comment || '').includes(`gombwe-strand-cut mac=${mac} dst=${dstIp}`)) {
+        await mikrotik.removeRule(r['.id']); removed++;
+      }
+    }
+    return { removed };
   }
 
   // ── Per-device category policy ────────────────────────────────

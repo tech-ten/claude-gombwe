@@ -1601,6 +1601,27 @@ export class Gateway {
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
+    // Live strands — every active session as an inspectable thread.
+    this.app.get('/api/network/strands', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().liveStrands()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+    this.app.post('/api/network/strands/cut', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const { deviceIp, dst } = req.body || {};
+      if (!deviceIp || !dst) { res.status(400).json({ error: 'deviceIp and dst required' }); return; }
+      try { res.json({ ok: true, ...(await getNetworkService().cutStrand(String(deviceIp), String(dst))) }); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+    this.app.post('/api/network/strands/reconnect', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const { deviceIp, dst } = req.body || {};
+      if (!deviceIp || !dst) { res.status(400).json({ error: 'deviceIp and dst required' }); return; }
+      try { res.json({ ok: true, ...(await getNetworkService().reconnectStrand(String(deviceIp), String(dst))) }); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
     // Download the full flag record as a file (JSON or CSV) for an offline dossier.
     this.app.get('/api/network/dossier/export', (req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
