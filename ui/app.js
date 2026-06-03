@@ -3010,6 +3010,10 @@ function fmtDur(s) {
   if (s >= 60) return Math.round(s / 60) + 'm';
   return Math.round(s) + 's';
 }
+// All network timestamps display in Melbourne time (24h), regardless of where
+// the dashboard is opened. Data is stored UTC; we convert at render.
+function melDateTime(iso) { try { return new Date(iso).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); } catch { return ''; } }
+function melTime(iso) { try { return new Date(iso).toLocaleTimeString('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false }); } catch { return ''; } }
 async function renderUsageDossier() {
   const box = document.getElementById('usageDossier');
   if (!box) return;
@@ -3029,7 +3033,7 @@ async function renderUsageDossier() {
     return;
   }
   const flagIcon = (sev) => sev === 'high' ? '🚩' : (sev === 'med' || sev === 'medium') ? '⚠️' : sev === 'low' ? '⚑' : '';
-  const tspan = (t) => `<span title="${esc(t)}">${esc((t || '').slice(5, 16).replace('T', ' '))}</span>`;
+  const tspan = (t) => `<span title="${esc(t)}">${esc(melDateTime(t))}</span>`;
   const rows = d.devices.map(dev => {
     const flaggedCount = dev.destinations.filter(t => t.flagged).length;
     const audit = dev.auditFlags || 0;
@@ -3068,7 +3072,8 @@ async function renderUsageDossier() {
 //  ACTIVITY — per-device online behaviour log (what / when / category).
 //  Answers "precisely what is this child doing online", from DNS history.
 // ════════════════════════════════════════════════════════════════════
-const ACT_COLOURS = { adult:'#ff3b54','proxy/vpn':'#ff7a3b','ai-helper':'#ffb454',gambling:'#ff3b54','dating/strangers':'#ff3b54',social:'#9d8cff',gaming:'#7cf86a',video:'#4ad6ff',search:'#8aa0c8',other:'#5b6b86' };
+// Darker, readable on the warm light theme (colour = category meaning).
+const ACT_COLOURS = { adult:'#c4564b','proxy/vpn':'#bf5a2a','ai-helper':'#a8791c',gambling:'#c4564b','dating/strangers':'#c4564b',social:'#6b54c0',gaming:'#3a8f53',video:'#2f7bc0',search:'#7a6f60',other:'#9c9389' };
 const activity = { days:7, mac:'', flaggedOnly:false, filter:'', devices:[] };
 
 async function startActivity() {
@@ -3108,8 +3113,8 @@ async function renderActivity() {
   const cnt = document.getElementById('actCount');
   if (cnt) cnt.textContent = `${d.totalVisits} visits · ${d.concerning} flagged · ${d.days}d`;
   if (!rows.length) { box.innerHTML = '<div class="sc-empty">No matching activity in this window.</div>'; return; }
-  const when = t => new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-  const hm = t => new Date(t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+  const when = t => melDateTime(t);
+  const hm = t => melTime(t);
   box.innerHTML = `
     <table class="strands-table act-table">
       <thead><tr><th>When</th><th>Site</th><th>Category</th><th class="num">↓ Down</th><th class="num">↑ Up</th><th class="num">Lookups</th></tr></thead>

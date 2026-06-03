@@ -543,11 +543,16 @@ export class NetworkService {
     const LAN = '192.168.88.';
 
     // Flagged-hostname set from the audit journal — to icon "bad" destinations.
+    // Only genuine concerns (severity med+) within the window: the AI scanner's
+    // low-severity "youtube is social media" notes must not paint the dossier red.
     const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
+    const flagCutoffMs = Date.now() - days * 86400_000;
     const flaggedHosts = new Map<string, string>();
     for (const f of this.allFlags()) {
-      const h = String(f.hostname || '').toLowerCase(); if (!h) continue;
       const sev = String(f.severity || 'low').toLowerCase();
+      if (sevRank(sev) < 2) continue;
+      if (new Date(String(f.time || '')).getTime() < flagCutoffMs) continue;
+      const h = String(f.hostname || '').toLowerCase(); if (!h) continue;
       if (sevRank(sev) > sevRank(flaggedHosts.get(h) || '')) flaggedHosts.set(h, sev);
     }
 
@@ -647,11 +652,16 @@ export class NetworkService {
         if (l['mac-address']) ipToMac.set(l.address, l['mac-address'].toUpperCase());
         ipToHost.set(l.address, l['host-name'] || l.comment || '');
       }
-      // count audit flags per MAC so a device with ANY flagged activity is
-      // marked, even when the specific (historical) destination IP can't be named.
+      // count GENUINE audit flags per MAC (severity med+, within the dossier
+      // window) — so "X in audit" reflects real concerns and matches the
+      // activity view, not the scanner's low-severity social/video noise.
+      const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
+      const cutoffMs = Date.now() - (dossier.days || 7) * 86400_000;
       const flagsByMac = new Map<string, number>();
       for (const f of this.allFlags()) {
         const m = String(f.mac || '').toUpperCase(); if (!m) continue;
+        if (sevRank(String(f.severity || 'low').toLowerCase()) < 2) continue;
+        if (new Date(String(f.time || '')).getTime() < cutoffMs) continue;
         flagsByMac.set(m, (flagsByMac.get(m) || 0) + 1);
       }
       for (const d of dossier.devices) {
@@ -681,8 +691,14 @@ export class NetworkService {
     // 1. MAC → IP intervals from snapshots (change-points), for time-accurate attribution
     const changes: Array<[string, string]> = [];  // [ts, ip]
     let lastIp: string | null = null;
+    // Rolling window by absolute time (not calendar day). DNS files are named
+    // by UTC date, but the window is Melbourne-relative wall-clock, so read one
+    // EXTRA day of files and filter records to >= cutoff. This stops the
+    // day-boundary bug where "today" (AEST morning) hides in yesterday's UTC file.
+    const cutoffMs = Date.now() - days * 86400_000;
+    const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
     const dayStrs: string[] = [];
-    for (let i = days - 1; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
+    for (let i = days; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
     for (const day of dayStrs) {
       const snap = join(DATA_DIR, `${day}.jsonl`);
       if (!existsSync(snap)) continue;
@@ -708,6 +724,8 @@ export class NetworkService {
     const reg = (h: string) => { const p = h.split('.'); return p.length >= 2 ? p.slice(-2).join('.') : h; };
     for (const f of this.allFlags()) {
       if (String(f.mac || '').toUpperCase() !== target) continue;
+      if (sevRank(String(f.severity || 'low').toLowerCase()) < 2) continue;       // med+ only — no scanner noise
+      if (new Date(String(f.time || '')).getTime() < cutoffMs) continue;          // within window
       const h = String(f.hostname || ''); if (h) auditDomains.add(reg(h).toLowerCase());
     }
 
@@ -726,7 +744,7 @@ export class NetworkService {
         if (!line.trim()) continue;
         let r: { ts?: string; client_ip?: string; hostname?: string };
         try { r = JSON.parse(line); } catch { continue; }
-        if (!r.hostname || !r.ts || r.client_ip !== ipAt(r.ts)) continue;
+        if (!r.hostname || !r.ts || new Date(r.ts).getTime() < cutoffMs || r.client_ip !== ipAt(r.ts)) continue;
         const dom = reg(r.hostname).toLowerCase();
         if (!byDomain.has(dom)) byDomain.set(dom, []);
         byDomain.get(dom)!.push(r.ts);
