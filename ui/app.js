@@ -3112,16 +3112,19 @@ async function renderActivity() {
   const hm = t => new Date(t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
   box.innerHTML = `
     <table class="strands-table act-table">
-      <thead><tr><th>When</th><th>Site</th><th>Category</th><th class="num">Lookups</th></tr></thead>
+      <thead><tr><th>When</th><th>Site</th><th>Category</th><th class="num">↓ Down</th><th class="num">↑ Up</th><th class="num">Lookups</th></tr></thead>
       <tbody>
         ${rows.map(v => {
           const col = ACT_COLOURS[v.category] || '#5b6b86';
           const win = v.first !== v.last ? `<span class="sc-ip">${when(v.first)} – ${hm(v.last)}</span>` : '';
+          const vol = b => b > 0 ? fmtBytes(b) : '<span class="dim">—</span>';
           return `<tr class="${(v.concern||v.inAudit)?'sc-flagged':''}">
             <td class="mono dim act-when">${when(v.last)}</td>
             <td class="sc-dst"><span class="sc-host">${esc(v.domain)}</span>${win}</td>
             <td><span class="act-cat" style="color:${col};border-color:${col}55">${esc(v.category)}</span>${v.inAudit?' <span class="sc-flag" title="recorded in audit">🚩</span>':''}</td>
-            <td class="mono num">${v.count}</td>
+            <td class="mono num">${vol(v.down)}</td>
+            <td class="mono num">${vol(v.up)}</td>
+            <td class="mono num dim">${v.count}</td>
           </tr>`;
         }).join('')}
       </tbody>

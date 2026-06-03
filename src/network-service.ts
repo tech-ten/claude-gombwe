@@ -674,7 +674,7 @@ export class NetworkService {
    */
   activityLog(mac: string, days = 7, flaggedOnly = false): {
     device: string; days: number; totalVisits: number; concerning: number;
-    visits: Array<{ domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number }>;
+    visits: Array<{ domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number; down: number; up: number }>;
   } {
     const target = mac.toUpperCase();
     const name = this.aliases[target] || target;
@@ -712,7 +712,7 @@ export class NetworkService {
     }
 
     // 2. read DNS day files, attribute, collect (domain, ts)
-    type Visit = { domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number };
+    type Visit = { domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number; down: number; up: number };
     const byDomain = new Map<string, Array<string>>();  // domain -> sorted ts list
     for (const day of dayStrs) {
       let raw: string | null = null;
@@ -741,12 +741,71 @@ export class NetworkService {
       const inAudit = auditDomains.has(dom);
       let vs = tsList[0], prev = tsList[0], cnt = 0;
       const push = (first: string, last: string, count: number) =>
-        visits.push({ domain: dom, category: cat.category, concern: cat.concern, inAudit, first, last, count });
+        visits.push({ domain: dom, category: cat.category, concern: cat.concern, inAudit, first, last, count, down: 0, up: 0 });
       for (const t of tsList) {
         if (new Date(t).getTime() - new Date(prev).getTime() > GAP) { push(vs, prev, cnt); vs = t; cnt = 0; }
         prev = t; cnt++;
       }
       push(vs, prev, cnt);
+    }
+
+    // 3b. Attach data volume (↓/↑) to each visit by correlating flow records
+    //     (NetFlow + snapshot bytes) to the domain (via dns-index) within the
+    //     visit's time window. Byte coverage is best for recent days; older /
+    //     unnamed-IP traffic stays 0 (shown as "—" in the UI).
+    const domFlows = new Map<string, Array<{ up: number; down: number; t0: number; t1: number }>>();
+    const remoteDom = (ip: string): string | null => { const h = dnsIndex().lookup(ip); return h ? reg(h).toLowerCase() : null; };
+    const addDF = (dom: string | null, up: number, down: number, t0: string, t1: string) => {
+      if (!dom) return;
+      if (!domFlows.has(dom)) domFlows.set(dom, []);
+      domFlows.get(dom)!.push({ up, down, t0: new Date(t0).getTime(), t1: new Date(t1).getTime() });
+    };
+    for (const day of dayStrs) {
+      const fp = join(DATA_DIR, `flows-${day}.jsonl`);
+      if (existsSync(fp)) {
+        for (const line of readFileSync(fp, 'utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+          const s = String(f.src || ''), dd = String(f.dst || ''), b = Number(f.bytes || 0);
+          const st = String(f.start || f.ts || ''), en = String(f.end || f.ts || '');
+          if (s === ipAt(st)) addDF(remoteDom(dd), b, 0, st, en);
+          else if (dd === ipAt(st)) addDF(remoteDom(s), 0, b, st, en);
+        }
+      } else {
+        const sp = join(DATA_DIR, `${day}.jsonl`);
+        let raw: string | null = null;
+        try {
+          if (existsSync(sp)) raw = readFileSync(sp, 'utf-8');
+          else if (existsSync(sp + '.gz')) raw = gunzipSync(readFileSync(sp + '.gz')).toString('utf-8');
+        } catch { raw = null; }
+        if (!raw) continue;
+        const conns = new Map<string, { src: string; dst: string; orig: number; repl: number; first: string; last: string }>();
+        for (const line of raw.split('\n')) {
+          if (!line.trim()) continue;
+          let s: { ts?: string; connections?: Array<Record<string, unknown>> };
+          try { s = JSON.parse(line); } catch { continue; }
+          const ts = s.ts || '';
+          for (const c of s.connections || []) {
+            const src = String(c['src-address'] || '').split(':')[0], dst = String(c['dst-address'] || '').split(':')[0];
+            if (!src || !dst) continue;
+            const key = `${c['src-address']}|${c['dst-address']}|${c.protocol}`;
+            const orig = Number(c['orig-bytes'] || 0), repl = Number(c['repl-bytes'] || 0);
+            const ex = conns.get(key);
+            if (ex) { ex.orig = Math.max(ex.orig, orig); ex.repl = Math.max(ex.repl, repl); ex.last = ts; }
+            else conns.set(key, { src, dst, orig, repl, first: ts, last: ts });
+          }
+        }
+        for (const c of conns.values()) {
+          if (c.src === ipAt(c.first)) addDF(remoteDom(c.dst), c.orig, c.repl, c.first, c.last);
+          else if (c.dst === ipAt(c.first)) addDF(remoteDom(c.src), c.repl, c.orig, c.first, c.last);
+        }
+      }
+    }
+    for (const v of visits) {
+      const fs = domFlows.get(v.domain);
+      if (!fs) continue;
+      const vf = new Date(v.first).getTime() - GAP, vl = new Date(v.last).getTime() + GAP;
+      for (const f of fs) if (f.t1 >= vf && f.t0 <= vl) { v.up += f.up; v.down += f.down; }
     }
     // "Flagged" = a genuinely-concerning category (adult/proxy-vpn/ai-helper/
     // gambling/dating). inAudit stays as a marker but doesn't drive the filter,
