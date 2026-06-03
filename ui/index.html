@@ -258,7 +258,7 @@
           <!-- Sub-tab nav -->
           <div class="eero-subnav" id="eeroSubnav">
             <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
-            <button class="eero-subtab" data-eero-tab="strands">Strands</button>
+            <button class="eero-subtab" data-eero-tab="strands">Activity</button>
             <button class="eero-subtab" data-eero-tab="kids">Access Control</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
@@ -273,24 +273,22 @@
           <!-- Alerts banner — visible across all panes when any are active -->
           <div class="eero-alerts hidden" id="eeroAlerts"></div>
 
-          <!-- Strands — live sessions (console by default, optional flow view) -->
+          <!-- Activity — per-device online behaviour log (what / when / category) -->
           <div class="eero-pane" data-eero-pane="strands">
             <div class="strands-toolbar">
-              <div class="strands-modes">
-                <button class="strands-mode active" data-strand-mode="console">Console</button>
-                <button class="strands-mode" data-strand-mode="flow">Flow</button>
-              </div>
-              <span class="strands-live"><span class="strands-pulse"></span> LIVE</span>
-              <span id="strandsCount" class="strands-count">—</span>
+              <select id="actDevice" class="strands-select" title="Device"></select>
+              <select id="actDays" class="strands-select" title="Time window">
+                <option value="1">Today</option>
+                <option value="7" selected>Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+              <label class="act-check"><input type="checkbox" id="actFlagged"> Flagged only</label>
+              <span id="actCount" class="strands-count">—</span>
               <span class="strands-spacer"></span>
-              <input id="strandsFilter" class="strands-filter" placeholder="filter device / host…" autocomplete="off" />
+              <input id="actFilter" class="strands-filter" placeholder="filter site / category…" autocomplete="off" />
             </div>
-            <div id="strandsConsole" class="strands-console"></div>
-            <div class="strands-stage hidden" id="strandsStage">
-              <canvas id="strandsCanvas"></canvas>
-              <div class="strands-hud" id="strandsHud"><div id="strandsLegend" class="strands-legend"></div></div>
-              <div class="strands-inspect hidden" id="strandsInspect"></div>
-            </div>
+            <div id="actLog" class="strands-console"></div>
           </div>
 
           <!-- Overview (MikroTik vitals, replaces eero-snapshot rollups) -->

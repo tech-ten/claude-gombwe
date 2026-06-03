@@ -11,8 +11,28 @@
  * file is the data layer.
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
+
+// Domain → category for the per-child activity log. Order matters: the
+// "concerning" categories (concern=true) are tested first. These let a parent
+// see WHAT a child did, grouped meaningfully, with risky activity surfaced.
+const ACTIVITY_CATS: Array<[string, RegExp, boolean]> = [
+  ['adult', /porn|xvid|xnxx|xham|brazz|onlyfans|nsfw|hentai|chaturb|redtube|youporn|spankbang|fapell|rule34|\bnude/i, true],
+  ['proxy/vpn', /protonvpn|nordvpn|expressvpn|psiphon|unblock|croxyproxy|hidester|torproject|windscribe|mullvad|tunnelbear|hide\.me|\bvpn\b/i, true],
+  ['ai-helper', /quillbot|prowritingaid|chegg|coursehero|chatgpt|character\.ai|janitorai|gauthmath|photomath|brainly|paraphras/i, true],
+  ['gambling', /casino|bet365|pokerstars|sportsbet|roulette|gambl/i, true],
+  ['dating/strangers', /omegle|ome\.tv|chatroulette|tinder|grindr|yubo|monkey\.app/i, true],
+  ['social', /tiktok|instagram|snapchat|facebook|fbcdn|discord|reddit|twitter|x\.com|pinterest|threads|whatsapp/i, false],
+  ['gaming', /roblox|rbxcdn|minecraft|epicgames|steampowered|fortnite|supercell|brawlstars|riotgames/i, false],
+  ['video', /youtube|googlevideo|ytimg|netflix|nflxvideo|twitch|disney|primevideo|hulu|vimeo|dailymotion/i, false],
+  ['search', /^google\.|bing\.com|duckduckgo|yahoo\.com/i, false],
+];
+function categorizeActivity(host: string): { category: string; concern: boolean } {
+  for (const [name, rx, concern] of ACTIVITY_CATS) if (rx.test(host)) return { category: name, concern };
+  return { category: 'other', concern: false };
+}
 import { createRequire } from 'node:module';
 import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry } from './mikrotik-client.js';
 import { dnsIndex } from './dns-index.js';
@@ -641,6 +661,106 @@ export class NetworkService {
       }
     } catch { /* leave IPs */ }
     return dossier;
+  }
+
+  // ── Activity log (what a device did online, over time) ────────
+  /**
+   * Per-device online-activity log from the DNS history (names + times), up to
+   * `days` back. Attribution is MAC-accurate over time (the device's IP changes
+   * across the window — reconstructed from snapshots). Lookups are grouped into
+   * domain "visits" (same registrable domain within a 10-min gap), categorised,
+   * and risky categories (adult/proxy-vpn/ai-helper/gambling/dating) flagged.
+   * This is the "precisely what is this child doing online" view.
+   */
+  activityLog(mac: string, days = 7, flaggedOnly = false): {
+    device: string; days: number; totalVisits: number; concerning: number;
+    visits: Array<{ domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number }>;
+  } {
+    const target = mac.toUpperCase();
+    const name = this.aliases[target] || target;
+    // 1. MAC → IP intervals from snapshots (change-points), for time-accurate attribution
+    const changes: Array<[string, string]> = [];  // [ts, ip]
+    let lastIp: string | null = null;
+    const dayStrs: string[] = [];
+    for (let i = days - 1; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
+    for (const day of dayStrs) {
+      const snap = join(DATA_DIR, `${day}.jsonl`);
+      if (!existsSync(snap)) continue;
+      for (const line of readFileSync(snap, 'utf-8').split('\n')) {
+        if (!line.trim()) continue;
+        let s: { ts?: string; devices?: Array<Record<string, unknown>> };
+        try { s = JSON.parse(line); } catch { continue; }
+        for (const d of s.devices || []) {
+          if (String(d['mac-address'] || '').toUpperCase() === target && d.address && d.address !== lastIp) {
+            changes.push([s.ts || '', String(d.address)]); lastIp = String(d.address);
+          }
+        }
+      }
+    }
+    const ipAt = (ts: string): string | null => {
+      if (!changes.length) return null;
+      let ip = changes[0][1];
+      for (const [t, p] of changes) { if (t <= ts) ip = p; else break; }
+      return ip;
+    };
+    // flagged-domain set from the audit journal — for THIS device only
+    const auditDomains = new Set<string>();
+    const reg = (h: string) => { const p = h.split('.'); return p.length >= 2 ? p.slice(-2).join('.') : h; };
+    for (const f of this.allFlags()) {
+      if (String(f.mac || '').toUpperCase() !== target) continue;
+      const h = String(f.hostname || ''); if (h) auditDomains.add(reg(h).toLowerCase());
+    }
+
+    // 2. read DNS day files, attribute, collect (domain, ts)
+    type Visit = { domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number };
+    const byDomain = new Map<string, Array<string>>();  // domain -> sorted ts list
+    for (const day of dayStrs) {
+      let raw: string | null = null;
+      const plain = join(DATA_DIR, `dns-${day}.jsonl`), gz = join(DATA_DIR, `dns-${day}.jsonl.gz`);
+      try {
+        if (existsSync(plain)) raw = readFileSync(plain, 'utf-8');
+        else if (existsSync(gz)) raw = gunzipSync(readFileSync(gz)).toString('utf-8');
+      } catch { raw = null; }
+      if (!raw) continue;
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let r: { ts?: string; client_ip?: string; hostname?: string };
+        try { r = JSON.parse(line); } catch { continue; }
+        if (!r.hostname || !r.ts || r.client_ip !== ipAt(r.ts)) continue;
+        const dom = reg(r.hostname).toLowerCase();
+        if (!byDomain.has(dom)) byDomain.set(dom, []);
+        byDomain.get(dom)!.push(r.ts);
+      }
+    }
+    // 3. aggregate into visits (10-min gap splits a visit)
+    const GAP = 10 * 60 * 1000;
+    const visits: Visit[] = [];
+    for (const [dom, tsList] of byDomain) {
+      tsList.sort();
+      const cat = categorizeActivity(dom);
+      const inAudit = auditDomains.has(dom);
+      let vs = tsList[0], prev = tsList[0], cnt = 0;
+      const push = (first: string, last: string, count: number) =>
+        visits.push({ domain: dom, category: cat.category, concern: cat.concern, inAudit, first, last, count });
+      for (const t of tsList) {
+        if (new Date(t).getTime() - new Date(prev).getTime() > GAP) { push(vs, prev, cnt); vs = t; cnt = 0; }
+        prev = t; cnt++;
+      }
+      push(vs, prev, cnt);
+    }
+    // "Flagged" = a genuinely-concerning category (adult/proxy-vpn/ai-helper/
+    // gambling/dating). inAudit stays as a marker but doesn't drive the filter,
+    // so the scanner's low-severity "youtube is social media" notes don't bury
+    // the real risks.
+    let out = visits;
+    if (flaggedOnly) out = out.filter(v => v.concern);
+    out.sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+    return {
+      device: name, days,
+      totalVisits: visits.length,
+      concerning: visits.filter(v => v.concern).length,
+      visits: out.slice(0, 500),
+    };
   }
 
   // ── Live strands (every active session as an inspectable thread) ──

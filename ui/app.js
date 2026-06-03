@@ -3065,288 +3065,67 @@ async function renderUsageDossier() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  LIVE STRANDS — the router as flowing coloured fibre. Every active
-//  session is a luminous filament from its device to its destination.
+//  ACTIVITY — per-device online behaviour log (what / when / category).
+//  Answers "precisely what is this child doing online", from DNS history.
 // ════════════════════════════════════════════════════════════════════
-const STRAND_PALETTE = ['#38e1c6','#ff5d8f','#7cf86a','#ffb454','#9d8cff','#4ad6ff','#ff7a59','#f5d020','#ff9ad5','#6affc2','#c0a3ff','#ff6b6b'];
-const strands = {
-  raf: null, poll: null, canvas: null, ctx: null, dpr: 1, w: 0, h: 0,
-  data: null, paths: [], colourOf: new Map(), prevTotal: new Map(),
-  selected: null, hover: null, pointer: { x: -1, y: -1 },
-  mode: 'console', filter: '', sort: { key: 'total', dir: -1 },
-};
+const ACT_COLOURS = { adult:'#ff3b54','proxy/vpn':'#ff7a3b','ai-helper':'#ffb454',gambling:'#ff3b54','dating/strangers':'#ff3b54',social:'#9d8cff',gaming:'#7cf86a',video:'#4ad6ff',search:'#8aa0c8',other:'#5b6b86' };
+const activity = { days:7, mac:'', flaggedOnly:false, filter:'', devices:[] };
 
-function strandHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
-
-async function fetchStrands() {
+async function startActivity() {
   try {
-    const d = await (await fetch(`${API}/api/network/strands`)).json();
-    strands.data = d;
-    // stable colour per device (sorted for determinism)
-    const macs = [...new Set(d.devices.map(x => x.mac || x.ip))].sort();
-    strands.colourOf = new Map(macs.map((m, i) => [m, STRAND_PALETTE[i % STRAND_PALETTE.length]]));
-    const c = document.getElementById('strandsCount');
-    if (c) c.textContent = `${d.strands.length} sessions · ${d.devices.length} devices`;
-    if (strands.mode === 'flow') { strandLayout(); strandLegend(); }
-    else renderStrandsConsole();
-  } catch (e) { /* keep last frame */ }
+    const devs = await (await fetch(`${API}/api/network/devices`)).json();
+    activity.devices = (devs||[]).filter(d=>d.mac).map(d=>({mac:d.mac, name:d.name||d.hostname||d.ip||d.mac}))
+      .sort((a,b)=>a.name.localeCompare(b.name));
+  } catch { activity.devices = []; }
+  const sel = document.getElementById('actDevice');
+  if (sel) {
+    sel.innerHTML = activity.devices.map(d=>`<option value="${esc(d.mac)}">${esc(d.name)}</option>`).join('');
+    if (!activity.mac) {
+      const liam = activity.devices.find(d=>/liam.*chrome/i.test(d.name)) || activity.devices.find(d=>/liam/i.test(d.name));
+      activity.mac = (liam||activity.devices[0]||{}).mac || '';
+    }
+    sel.value = activity.mac;
+    sel.onchange = () => { activity.mac = sel.value; renderActivity(); };
+  }
+  const dd=document.getElementById('actDays'); if(dd) dd.onchange = e => { activity.days = +e.target.value; renderActivity(); };
+  const fl=document.getElementById('actFlagged'); if(fl) fl.onchange = e => { activity.flaggedOnly = e.target.checked; renderActivity(); };
+  const ft=document.getElementById('actFilter'); if(ft) ft.oninput = e => { activity.filter = e.target.value.toLowerCase(); renderActivity(); };
+  renderActivity();
 }
+function stopActivity() { /* no polling — historical view, loads on demand */ }
 
-// Clean engineering console — every live session as a dense, sortable row
-// with inline cut/reconnect. The default Strands view.
-function renderStrandsConsole() {
-  const box = document.getElementById('strandsConsole');
-  if (!box || !strands.data) return;
-  const f = strands.filter.toLowerCase();
-  const sort = strands.sort;
-  const dur = (s) => Date.now() - new Date(s.since).getTime();
-  const val = (s, k) => k === 'device' ? s.deviceName.toLowerCase()
-    : k === 'dst' ? (s.dstHost || s.dst)
-    : k === 'dur' ? dur(s) : (s[k] ?? 0);
-  const rows = strands.data.strands
-    .filter(s => !f || `${s.deviceName} ${s.dstHost || ''} ${s.dst}`.toLowerCase().includes(f))
-    .sort((a, b) => { const x = val(a, sort.key), y = val(b, sort.key); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
-  const caret = (k) => sort.key === k ? (sort.dir < 0 ? ' ▾' : ' ▴') : '';
-  const th = (k, label, cls = '') => `<th class="${cls} ${sort.key === k ? 'sorted' : ''}" data-sort="${k}">${label}${caret(k)}</th>`;
+async function renderActivity() {
+  const box = document.getElementById('actLog');
+  if (!box) return;
+  if (!activity.mac) { box.innerHTML = '<div class="sc-empty">No device selected.</div>'; return; }
+  box.innerHTML = '<div class="sc-empty">Reading activity…</div>';
+  let d;
+  try {
+    d = await (await fetch(`${API}/api/network/activity?mac=${encodeURIComponent(activity.mac)}&days=${activity.days}&flaggedOnly=${activity.flaggedOnly}`)).json();
+  } catch (e) { box.innerHTML = `<div class="sc-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  const f = activity.filter;
+  const rows = (d.visits||[]).filter(v => !f || v.domain.includes(f) || v.category.includes(f));
+  const cnt = document.getElementById('actCount');
+  if (cnt) cnt.textContent = `${d.totalVisits} visits · ${d.concerning} flagged · ${d.days}d`;
+  if (!rows.length) { box.innerHTML = '<div class="sc-empty">No matching activity in this window.</div>'; return; }
+  const when = t => new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  const hm = t => new Date(t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
   box.innerHTML = `
-    <table class="strands-table">
-      <thead><tr>
-        ${th('device', 'Device')}
-        ${th('dst', 'Destination')}
-        ${th('down', '↓ Down', 'num')}
-        ${th('up', '↑ Up', 'num')}
-        ${th('dur', 'Open', 'num')}
-        <th class="act-col"></th>
-      </tr></thead>
+    <table class="strands-table act-table">
+      <thead><tr><th>When</th><th>Site</th><th>Category</th><th class="num">Lookups</th></tr></thead>
       <tbody>
-        ${rows.map(s => {
-          const col = strands.colourOf.get(s.deviceMac || s.deviceIp) || '#6cf';
-          const flag = s.flagged ? `<span class="sc-flag" title="flagged: ${esc(s.flagged)} (in audit)">${s.flagged === 'high' ? '🚩' : '⚠'}</span>` : '';
-          const sub = `${esc(s.dst)}:${s.dport} · ${esc(s.proto)}${s.state ? ' · ' + esc(s.state) : ''}`;
-          return `<tr class="${s.flagged ? 'sc-flagged' : ''} ${s.cut ? 'sc-cut' : ''}">
-            <td class="sc-device"><span class="sc-tick" style="background:${col}"></span>${esc(s.deviceName)}</td>
-            <td class="sc-dst">${flag}<span class="sc-host">${s.dstHost ? esc(s.dstHost) : esc(s.dst)}</span><span class="sc-ip">${sub}</span></td>
-            <td class="mono num">${fmtBytes(s.down)}</td>
-            <td class="mono num">${fmtBytes(s.up)}</td>
-            <td class="mono num">${fmtDur(dur(s) / 1000)}</td>
-            <td class="act-col"><button class="sc-act ${s.cut ? 'reconn' : 'cut'}" data-ip="${esc(s.deviceIp)}" data-dst="${esc(s.dst)}">${s.cut ? 'Reconnect' : 'Cut'}</button></td>
+        ${rows.map(v => {
+          const col = ACT_COLOURS[v.category] || '#5b6b86';
+          const win = v.first !== v.last ? `<span class="sc-ip">${when(v.first)} – ${hm(v.last)}</span>` : '';
+          return `<tr class="${(v.concern||v.inAudit)?'sc-flagged':''}">
+            <td class="mono dim act-when">${when(v.last)}</td>
+            <td class="sc-dst"><span class="sc-host">${esc(v.domain)}</span>${win}</td>
+            <td><span class="act-cat" style="color:${col};border-color:${col}55">${esc(v.category)}</span>${v.inAudit?' <span class="sc-flag" title="recorded in audit">🚩</span>':''}</td>
+            <td class="mono num">${v.count}</td>
           </tr>`;
         }).join('')}
       </tbody>
-    </table>
-    ${rows.length === 0 ? '<div class="sc-empty">No live sessions match.</div>' : ''}`;
-  box.querySelectorAll('th[data-sort]').forEach(h => h.onclick = () => {
-    const k = h.dataset.sort;
-    strands.sort = strands.sort.key === k ? { key: k, dir: -strands.sort.dir } : { key: k, dir: (k === 'device' || k === 'dst') ? 1 : -1 };
-    renderStrandsConsole();
-  });
-  box.querySelectorAll('.sc-act').forEach(b => b.onclick = async () => {
-    const ip = b.dataset.ip, dst = b.dataset.dst, path = b.classList.contains('cut') ? 'cut' : 'reconnect';
-    b.disabled = true; b.textContent = '…';
-    try { await fetch(`${API}/api/network/strands/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIp: ip, dst }) }); await fetchStrands(); }
-    catch (e) { b.disabled = false; b.textContent = 'retry'; }
-  });
-}
-
-function setStrandMode(m) {
-  strands.mode = m;
-  document.querySelectorAll('.strands-mode').forEach(b => b.classList.toggle('active', b.dataset.strandMode === m));
-  document.getElementById('strandsConsole')?.classList.toggle('hidden', m !== 'console');
-  document.getElementById('strandsStage')?.classList.toggle('hidden', m !== 'flow');
-  if (m === 'flow') { strandResize(); strandLegend(); if (!strands.raf) strands.raf = requestAnimationFrame(strandDraw); }
-  else { if (strands.raf) { cancelAnimationFrame(strands.raf); strands.raf = null; } renderStrandsConsole(); }
-}
-
-function strandLayout() {
-  if (!strands.data || !strands.w) return;
-  const { w, h } = strands, d = strands.data;
-  const devs = d.devices;
-  const dy = (i) => 70 + (h - 140) * (devs.length <= 1 ? 0.5 : i / (devs.length - 1));
-  const devPos = new Map(devs.map((dev, i) => [dev.ip, { x: 130, y: dy(i), dev }]));
-  const leftX = 130, rightX = w - 56;
-  strands.paths = d.strands.map(s => {
-    const a = devPos.get(s.deviceIp) || { x: leftX, y: h / 2 };
-    const ry = 60 + ((strandHash(s.dst) % 1000) / 1000) * (h - 120);
-    const c1 = { x: leftX + (rightX - leftX) * 0.42, y: a.y };
-    const c2 = { x: leftX + (rightX - leftX) * 0.58, y: ry };
-    const rate = Math.max(0, s.total - (strands.prevTotal.get(s.id) || s.total));
-    strands.prevTotal.set(s.id, s.total);
-    const thick = Math.min(5, 0.6 + Math.log10(Math.max(1, s.total)) * 0.55);
-    const speed = 0.0009 + Math.min(0.011, Math.log10(Math.max(1, rate)) * 0.0016);
-    const colour = s.flagged ? '#ff3b54' : (strands.colourOf.get(s.deviceMac || s.deviceIp) || '#6cf');
-    const samples = [];
-    for (let t = 0; t <= 1.0001; t += 0.05) {
-      const mt = 1 - t;
-      const x = mt*mt*mt*a.x + 3*mt*mt*t*c1.x + 3*mt*t*t*c2.x + t*t*t*rightX;
-      const y = mt*mt*mt*a.y + 3*mt*mt*t*c1.y + 3*mt*t*t*c2.y + t*t*t*ry;
-      samples.push({ x, y });
-    }
-    return { s, a, c1, c2, end: { x: rightX, y: ry }, samples, thick, speed,
-      colour, flagged: !!s.flagged, cut: !!s.cut, phase: Math.random() };
-  });
-  strands.devPos = devPos;
-}
-
-function strandLegend() {
-  const el = document.getElementById('strandsLegend');
-  if (!el || !strands.data) return;
-  el.innerHTML = strands.data.devices
-    .slice().sort((a, b) => a.name.localeCompare(b.name))
-    .map(dev => `<span class="strand-chip"><i style="background:${strands.colourOf.get(dev.mac || dev.ip)}"></i>${esc(dev.name)}</span>`).join('');
-}
-
-function strandResize() {
-  const stage = document.getElementById('strandsStage');
-  if (!stage || !strands.canvas) return;
-  strands.dpr = window.devicePixelRatio || 1;
-  strands.w = stage.clientWidth; strands.h = stage.clientHeight;
-  strands.canvas.width = strands.w * strands.dpr;
-  strands.canvas.height = strands.h * strands.dpr;
-  strands.canvas.style.width = strands.w + 'px';
-  strands.canvas.style.height = strands.h + 'px';
-  strands.ctx.setTransform(strands.dpr, 0, 0, strands.dpr, 0, 0);
-  strandLayout();
-}
-
-function strandDraw(ts) {
-  const { ctx, w, h } = strands;
-  if (!ctx) return;
-  // abyssal background
-  const bg = ctx.createRadialGradient(w * 0.2, h * 0.5, 0, w * 0.2, h * 0.5, w);
-  bg.addColorStop(0, '#0a1020'); bg.addColorStop(1, '#04060c');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
-
-  const sel = strands.selected, hov = strands.hover;
-  ctx.lineCap = 'round';
-  for (const p of strands.paths) {
-    const active = !sel || sel === p.s.id;
-    const focus = sel === p.s.id || hov === p.s.id;
-    const dim = sel && sel !== p.s.id;
-    ctx.globalAlpha = p.cut ? 0.12 : dim ? 0.10 : 0.85;
-    // glow halo
-    ctx.beginPath();
-    ctx.moveTo(p.a.x, p.a.y);
-    ctx.bezierCurveTo(p.c1.x, p.c1.y, p.c2.x, p.c2.y, p.end.x, p.end.y);
-    ctx.strokeStyle = p.colour;
-    ctx.shadowColor = p.colour; ctx.shadowBlur = focus ? 22 : 10;
-    ctx.lineWidth = (focus ? p.thick + 1.5 : p.thick) * (p.cut ? 0.5 : 1);
-    if (p.cut) ctx.setLineDash([2, 7]); else ctx.setLineDash([]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // flowing light particles (skip if cut)
-    if (!p.cut && active) {
-      const pulse = p.flagged ? (0.5 + 0.5 * Math.sin(ts / 180)) : 1;
-      const n = focus ? 5 : 3;
-      for (let k = 0; k < n; k++) {
-        let t = (p.phase + ts * p.speed + k / n) % 1;
-        const idx = t * (p.samples.length - 1);
-        const i0 = Math.floor(idx), f = idx - i0;
-        const s0 = p.samples[i0], s1 = p.samples[Math.min(i0 + 1, p.samples.length - 1)];
-        const x = s0.x + (s1.x - s0.x) * f, y = s0.y + (s1.y - s0.y) * f;
-        ctx.beginPath();
-        ctx.globalAlpha = (dim ? 0.15 : 0.95) * pulse;
-        ctx.fillStyle = p.flagged ? '#ff8095' : '#ffffff';
-        ctx.shadowBlur = 12; ctx.shadowColor = p.colour;
-        ctx.arc(x, y, focus ? 2.6 : 1.8, 0, 7);
-        ctx.fill();
-      }
-    }
-  }
-  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-
-  // device nodes (left) — glowing orbs
-  if (strands.devPos) for (const { x, y, dev } of strands.devPos.values()) {
-    const col = strands.colourOf.get(dev.mac || dev.ip) || '#6cf';
-    ctx.beginPath(); ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 16;
-    ctx.arc(x, y, 6, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(232,240,255,0.92)'; ctx.font = '600 12px ui-sans-serif,system-ui';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(dev.name.length > 18 ? dev.name.slice(0, 17) + '…' : dev.name, x - 12, y);
-  }
-  strands.raf = requestAnimationFrame(strandDraw);
-}
-
-function strandPick(mx, my) {
-  let best = null, bestD = 14;
-  for (const p of strands.paths) {
-    for (const s of p.samples) {
-      const d = Math.hypot(s.x - mx, s.y - my);
-      if (d < bestD) { bestD = d; best = p; }
-    }
-  }
-  return best;
-}
-
-function strandInspect(p) {
-  const el = document.getElementById('strandsInspect');
-  if (!el) return;
-  if (!p) { el.classList.add('hidden'); strands.selected = null; return; }
-  strands.selected = p.s.id;
-  const s = p.s;
-  const since = s.since ? Math.round((Date.now() - new Date(s.since).getTime()) / 1000) : 0;
-  el.classList.remove('hidden');
-  el.style.borderColor = p.colour;
-  el.innerHTML = `
-    <div class="si-head">
-      <span class="si-dot" style="background:${p.colour}"></span>
-      <span class="si-dev">${esc(s.deviceName)}</span>
-      ${s.flagged ? `<span class="si-flag">🚩 ${esc(s.flagged)}</span>` : ''}
-      <button class="si-x" id="siClose">✕</button>
-    </div>
-    <div class="si-dest">${s.dstHost ? esc(s.dstHost) : ''}<span class="si-ip">${esc(s.dst)}:${s.dport} · ${esc(s.proto)}</span></div>
-    <div class="si-grid">
-      <div><label>Down</label><b>${fmtBytes(s.down)}</b></div>
-      <div><label>Up</label><b>${fmtBytes(s.up)}</b></div>
-      <div><label>Open for</label><b>${fmtDur(since)}</b></div>
-      <div><label>State</label><b>${esc(s.state || p.s.proto)}</b></div>
-      <div class="si-since"><label>Since</label><b>${esc((s.since||'').slice(11,19))}</b></div>
-    </div>
-    <div class="si-actions">
-      ${s.cut
-        ? `<button class="si-btn si-reconnect" id="siAct">⟲ Reconnect strand</button>`
-        : `<button class="si-btn si-cut" id="siAct">✂ Cut strand</button>`}
-    </div>`;
-  document.getElementById('siClose').onclick = () => strandInspect(null);
-  document.getElementById('siAct').onclick = async () => {
-    const btn = document.getElementById('siAct'); btn.disabled = true; btn.textContent = '…';
-    const path = s.cut ? 'reconnect' : 'cut';
-    try {
-      await fetch(`${API}/api/network/strands/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIp: s.deviceIp, dst: s.dst }) });
-      await fetchStrands();
-      strandInspect(null);
-    } catch (e) { btn.disabled = false; btn.textContent = 'failed — retry'; }
-  };
-}
-
-function startStrands() {
-  const canvas = document.getElementById('strandsCanvas');
-  if (canvas) {
-    strands.canvas = canvas; strands.ctx = canvas.getContext('2d');
-    canvas.onmousemove = (e) => {
-      const r = canvas.getBoundingClientRect();
-      const p = strandPick(e.clientX - r.left, e.clientY - r.top);
-      strands.hover = p ? p.s.id : null;
-      canvas.style.cursor = p ? 'pointer' : 'default';
-    };
-    canvas.onclick = (e) => {
-      const r = canvas.getBoundingClientRect();
-      strandInspect(strandPick(e.clientX - r.left, e.clientY - r.top));
-    };
-  }
-  document.querySelectorAll('.strands-mode').forEach(b => b.onclick = () => setStrandMode(b.dataset.strandMode));
-  const filt = document.getElementById('strandsFilter');
-  if (filt) filt.oninput = (e) => { strands.filter = e.target.value; if (strands.mode === 'console') renderStrandsConsole(); };
-  window.addEventListener('resize', strandResize);
-  setStrandMode(strands.mode);           // console by default — no animation
-  fetchStrands();
-  if (strands.poll) clearInterval(strands.poll);
-  strands.poll = setInterval(fetchStrands, 3500);
-}
-
-function stopStrands() {
-  if (strands.raf) { cancelAnimationFrame(strands.raf); strands.raf = null; }
-  if (strands.poll) { clearInterval(strands.poll); strands.poll = null; }
-  window.removeEventListener('resize', strandResize);
+    </table>`;
 }
 
 async function renderEeroUsageChart() {
@@ -5479,7 +5258,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     b.classList.add('active');
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
-    if (eeroActiveSubtab === 'strands') startStrands(); else stopStrands();
+    if (eeroActiveSubtab === 'strands') startActivity(); else stopActivity();
     if (eeroActiveSubtab === 'usage') { renderEeroUsageChart(); renderUsageDossier(); }
     if (eeroActiveSubtab === 'audit') renderEeroAudit();   // refresh from /api/network/policy/actions
     if (eeroActiveSubtab === 'profiles') {
