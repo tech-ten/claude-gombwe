@@ -273,17 +273,22 @@
           <!-- Alerts banner — visible across all panes when any are active -->
           <div class="eero-alerts hidden" id="eeroAlerts"></div>
 
-          <!-- Strands — live router visualization (every session as a filament) -->
+          <!-- Strands — live sessions (console by default, optional flow view) -->
           <div class="eero-pane" data-eero-pane="strands">
-            <div class="strands-stage" id="strandsStage">
-              <canvas id="strandsCanvas"></canvas>
-              <div class="strands-hud" id="strandsHud">
-                <div class="strands-hud-row">
-                  <span class="strands-live"><span class="strands-pulse"></span> LIVE</span>
-                  <span id="strandsCount" class="strands-count">—</span>
-                </div>
-                <div id="strandsLegend" class="strands-legend"></div>
+            <div class="strands-toolbar">
+              <div class="strands-modes">
+                <button class="strands-mode active" data-strand-mode="console">Console</button>
+                <button class="strands-mode" data-strand-mode="flow">Flow</button>
               </div>
+              <span class="strands-live"><span class="strands-pulse"></span> LIVE</span>
+              <span id="strandsCount" class="strands-count">—</span>
+              <span class="strands-spacer"></span>
+              <input id="strandsFilter" class="strands-filter" placeholder="filter device / host…" autocomplete="off" />
+            </div>
+            <div id="strandsConsole" class="strands-console"></div>
+            <div class="strands-stage hidden" id="strandsStage">
+              <canvas id="strandsCanvas"></canvas>
+              <div class="strands-hud" id="strandsHud"><div id="strandsLegend" class="strands-legend"></div></div>
               <div class="strands-inspect hidden" id="strandsInspect"></div>
             </div>
           </div>
