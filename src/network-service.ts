@@ -657,17 +657,21 @@ export class NetworkService {
       // activity view, not the scanner's low-severity social/video noise.
       const sevRank = (s: string) => ({ high: 3, med: 2, medium: 2, low: 1 } as Record<string, number>)[s] || 0;
       const cutoffMs = Date.now() - (dossier.days || 7) * 86400_000;
-      const flagsByMac = new Map<string, number>();
+      // distinct flagged hostnames per MAC — the scanner re-flags the same site
+      // every cycle, so count unique concerns, not raw flag lines.
+      const flaggedSitesByMac = new Map<string, Set<string>>();
       for (const f of this.allFlags()) {
         const m = String(f.mac || '').toUpperCase(); if (!m) continue;
         if (sevRank(String(f.severity || 'low').toLowerCase()) < 2) continue;
         if (new Date(String(f.time || '')).getTime() < cutoffMs) continue;
-        flagsByMac.set(m, (flagsByMac.get(m) || 0) + 1);
+        const h = String(f.hostname || '').toLowerCase(); if (!h) continue;
+        if (!flaggedSitesByMac.has(m)) flaggedSitesByMac.set(m, new Set());
+        flaggedSitesByMac.get(m)!.add(h);
       }
       for (const d of dossier.devices) {
         const mac = ipToMac.get(d.ip);
         d.name = (mac && this.aliases[mac]) || ipToHost.get(d.ip) || d.name;
-        if (mac && flagsByMac.has(mac)) d.auditFlags = flagsByMac.get(mac);
+        if (mac && flaggedSitesByMac.has(mac)) d.auditFlags = flaggedSitesByMac.get(mac)!.size;
       }
     } catch { /* leave IPs */ }
     return dossier;
