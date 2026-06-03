@@ -3073,6 +3073,7 @@ const strands = {
   raf: null, poll: null, canvas: null, ctx: null, dpr: 1, w: 0, h: 0,
   data: null, paths: [], colourOf: new Map(), prevTotal: new Map(),
   selected: null, hover: null, pointer: { x: -1, y: -1 },
+  mode: 'console', filter: '', sort: { key: 'total', dir: -1 },
 };
 
 function strandHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
@@ -3084,11 +3085,76 @@ async function fetchStrands() {
     // stable colour per device (sorted for determinism)
     const macs = [...new Set(d.devices.map(x => x.mac || x.ip))].sort();
     strands.colourOf = new Map(macs.map((m, i) => [m, STRAND_PALETTE[i % STRAND_PALETTE.length]]));
-    strandLayout();
-    strandLegend();
     const c = document.getElementById('strandsCount');
-    if (c) c.textContent = `${d.strands.length} strands · ${d.devices.length} devices`;
+    if (c) c.textContent = `${d.strands.length} sessions · ${d.devices.length} devices`;
+    if (strands.mode === 'flow') { strandLayout(); strandLegend(); }
+    else renderStrandsConsole();
   } catch (e) { /* keep last frame */ }
+}
+
+// Clean engineering console — every live session as a dense, sortable row
+// with inline cut/reconnect. The default Strands view.
+function renderStrandsConsole() {
+  const box = document.getElementById('strandsConsole');
+  if (!box || !strands.data) return;
+  const f = strands.filter.toLowerCase();
+  const sort = strands.sort;
+  const dur = (s) => Date.now() - new Date(s.since).getTime();
+  const val = (s, k) => k === 'device' ? s.deviceName.toLowerCase()
+    : k === 'dst' ? (s.dstHost || s.dst)
+    : k === 'dur' ? dur(s) : (s[k] ?? 0);
+  const rows = strands.data.strands
+    .filter(s => !f || `${s.deviceName} ${s.dstHost || ''} ${s.dst}`.toLowerCase().includes(f))
+    .sort((a, b) => { const x = val(a, sort.key), y = val(b, sort.key); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+  const caret = (k) => sort.key === k ? (sort.dir < 0 ? ' ▾' : ' ▴') : '';
+  const th = (k, label, cls = '') => `<th class="${cls} ${sort.key === k ? 'sorted' : ''}" data-sort="${k}">${label}${caret(k)}</th>`;
+  box.innerHTML = `
+    <table class="strands-table">
+      <thead><tr>
+        ${th('device', 'Device')}
+        ${th('dst', 'Destination')}
+        ${th('down', '↓ Down', 'num')}
+        ${th('up', '↑ Up', 'num')}
+        ${th('dur', 'Open', 'num')}
+        <th class="act-col"></th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(s => {
+          const col = strands.colourOf.get(s.deviceMac || s.deviceIp) || '#6cf';
+          const flag = s.flagged ? `<span class="sc-flag" title="flagged: ${esc(s.flagged)} (in audit)">${s.flagged === 'high' ? '🚩' : '⚠'}</span>` : '';
+          const sub = `${esc(s.dst)}:${s.dport} · ${esc(s.proto)}${s.state ? ' · ' + esc(s.state) : ''}`;
+          return `<tr class="${s.flagged ? 'sc-flagged' : ''} ${s.cut ? 'sc-cut' : ''}">
+            <td class="sc-device"><span class="sc-tick" style="background:${col}"></span>${esc(s.deviceName)}</td>
+            <td class="sc-dst">${flag}<span class="sc-host">${s.dstHost ? esc(s.dstHost) : esc(s.dst)}</span><span class="sc-ip">${sub}</span></td>
+            <td class="mono num">${fmtBytes(s.down)}</td>
+            <td class="mono num">${fmtBytes(s.up)}</td>
+            <td class="mono num">${fmtDur(dur(s) / 1000)}</td>
+            <td class="act-col"><button class="sc-act ${s.cut ? 'reconn' : 'cut'}" data-ip="${esc(s.deviceIp)}" data-dst="${esc(s.dst)}">${s.cut ? 'Reconnect' : 'Cut'}</button></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    ${rows.length === 0 ? '<div class="sc-empty">No live sessions match.</div>' : ''}`;
+  box.querySelectorAll('th[data-sort]').forEach(h => h.onclick = () => {
+    const k = h.dataset.sort;
+    strands.sort = strands.sort.key === k ? { key: k, dir: -strands.sort.dir } : { key: k, dir: (k === 'device' || k === 'dst') ? 1 : -1 };
+    renderStrandsConsole();
+  });
+  box.querySelectorAll('.sc-act').forEach(b => b.onclick = async () => {
+    const ip = b.dataset.ip, dst = b.dataset.dst, path = b.classList.contains('cut') ? 'cut' : 'reconnect';
+    b.disabled = true; b.textContent = '…';
+    try { await fetch(`${API}/api/network/strands/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIp: ip, dst }) }); await fetchStrands(); }
+    catch (e) { b.disabled = false; b.textContent = 'retry'; }
+  });
+}
+
+function setStrandMode(m) {
+  strands.mode = m;
+  document.querySelectorAll('.strands-mode').forEach(b => b.classList.toggle('active', b.dataset.strandMode === m));
+  document.getElementById('strandsConsole')?.classList.toggle('hidden', m !== 'console');
+  document.getElementById('strandsStage')?.classList.toggle('hidden', m !== 'flow');
+  if (m === 'flow') { strandResize(); strandLegend(); if (!strands.raf) strands.raf = requestAnimationFrame(strandDraw); }
+  else { if (strands.raf) { cancelAnimationFrame(strands.raf); strands.raf = null; } renderStrandsConsole(); }
 }
 
 function strandLayout() {
@@ -3254,24 +3320,27 @@ function strandInspect(p) {
 
 function startStrands() {
   const canvas = document.getElementById('strandsCanvas');
-  if (!canvas) return;
-  strands.canvas = canvas; strands.ctx = canvas.getContext('2d');
-  canvas.onmousemove = (e) => {
-    const r = canvas.getBoundingClientRect();
-    const p = strandPick(e.clientX - r.left, e.clientY - r.top);
-    strands.hover = p ? p.s.id : null;
-    canvas.style.cursor = p ? 'pointer' : 'default';
-  };
-  canvas.onclick = (e) => {
-    const r = canvas.getBoundingClientRect();
-    strandInspect(strandPick(e.clientX - r.left, e.clientY - r.top));
-  };
+  if (canvas) {
+    strands.canvas = canvas; strands.ctx = canvas.getContext('2d');
+    canvas.onmousemove = (e) => {
+      const r = canvas.getBoundingClientRect();
+      const p = strandPick(e.clientX - r.left, e.clientY - r.top);
+      strands.hover = p ? p.s.id : null;
+      canvas.style.cursor = p ? 'pointer' : 'default';
+    };
+    canvas.onclick = (e) => {
+      const r = canvas.getBoundingClientRect();
+      strandInspect(strandPick(e.clientX - r.left, e.clientY - r.top));
+    };
+  }
+  document.querySelectorAll('.strands-mode').forEach(b => b.onclick = () => setStrandMode(b.dataset.strandMode));
+  const filt = document.getElementById('strandsFilter');
+  if (filt) filt.oninput = (e) => { strands.filter = e.target.value; if (strands.mode === 'console') renderStrandsConsole(); };
   window.addEventListener('resize', strandResize);
-  strandResize();
+  setStrandMode(strands.mode);           // console by default — no animation
   fetchStrands();
   if (strands.poll) clearInterval(strands.poll);
   strands.poll = setInterval(fetchStrands, 3500);
-  if (!strands.raf) strands.raf = requestAnimationFrame(strandDraw);
 }
 
 function stopStrands() {
