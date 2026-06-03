@@ -2796,8 +2796,10 @@ body {
 .act-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8a95ad); font: 13px ui-sans-serif, system-ui; cursor: pointer; user-select: none; }
 .act-cat { display: inline-block; padding: 2px 9px; border-radius: 20px; border: 1px solid; font: 600 11px ui-sans-serif, system-ui; text-transform: capitalize; }
 .act-table { table-layout: fixed; }
-.act-table th:nth-child(1), .act-table td:nth-child(1) { width: 138px; }
+.act-table th:nth-child(1), .act-table td:nth-child(1) { width: 124px; }
 .act-table th:nth-child(2), .act-table td:nth-child(2) { width: auto; }
-.act-table th:nth-child(3), .act-table td:nth-child(3) { width: 172px; }
-.act-table th:nth-child(4), .act-table td:nth-child(4) { width: 84px; }
+.act-table th:nth-child(3), .act-table td:nth-child(3) { width: 132px; }
+.act-table th:nth-child(4), .act-table td:nth-child(4) { width: 88px; }
+.act-table th:nth-child(5), .act-table td:nth-child(5) { width: 88px; }
+.act-table th:nth-child(6), .act-table td:nth-child(6) { width: 72px; }
 .act-when { white-space: nowrap; }
