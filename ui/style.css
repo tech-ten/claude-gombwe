@@ -2789,3 +2789,15 @@ body {
 .sc-act.reconn:hover { background: rgba(31,175,120,0.28); }
 .sc-act:disabled { opacity: .6; cursor: default; }
 .sc-empty { padding: 28px; text-align: center; color: var(--muted, #8a95ad); }
+
+/* ── Activity log (per-device behaviour, replaces strands) ─────── */
+.strands-select { background: rgba(255,255,255,0.04); border: 1px solid var(--border, #2a3142); border-radius: 8px; padding: 7px 11px; color: #e8f0ff; font: 13px ui-sans-serif, system-ui; cursor: pointer; }
+.strands-select:focus { outline: none; border-color: rgba(120,160,255,0.5); }
+.act-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8a95ad); font: 13px ui-sans-serif, system-ui; cursor: pointer; user-select: none; }
+.act-cat { display: inline-block; padding: 2px 9px; border-radius: 20px; border: 1px solid; font: 600 11px ui-sans-serif, system-ui; text-transform: capitalize; }
+.act-table { table-layout: fixed; }
+.act-table th:nth-child(1), .act-table td:nth-child(1) { width: 138px; }
+.act-table th:nth-child(2), .act-table td:nth-child(2) { width: auto; }
+.act-table th:nth-child(3), .act-table td:nth-child(3) { width: 172px; }
+.act-table th:nth-child(4), .act-table td:nth-child(4) { width: 84px; }
+.act-when { white-space: nowrap; }
