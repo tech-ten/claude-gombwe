@@ -3074,7 +3074,7 @@ async function renderUsageDossier() {
 // ════════════════════════════════════════════════════════════════════
 // Darker, readable on the warm light theme (colour = category meaning).
 const ACT_COLOURS = { adult:'#c4564b','proxy/vpn':'#bf5a2a','ai-helper':'#a8791c',gambling:'#c4564b','dating/strangers':'#c4564b',social:'#6b54c0',gaming:'#3a8f53',video:'#2f7bc0',search:'#7a6f60',other:'#9c9389' };
-const activity = { days:7, mac:'', flaggedOnly:false, filter:'', devices:[] };
+const activity = { days:7, mac:'', flaggedOnly:false, filter:'', devices:[], data:null, selected:null };
 
 async function startActivity() {
   try {
@@ -3104,7 +3104,9 @@ function stopActivity() { /* no polling — historical view, loads on demand */ 
 //  Built to be screenshot-able: per device, chronological, Melbourne time,
 //  with session duration + data downloaded, VPN attempts marked inline.
 // ════════════════════════════════════════════════════════════════════
-const dossier = { mac: '', days: 14, devices: [] };
+const DOS_LABEL = { 'adult': 'ADULT', 'proxy/vpn': 'VPN', 'gambling': 'GAMBLING', 'dating/strangers': 'DATING' };
+const dossier = { mac: '', days: 14, devices: [], data: null, filter: 'all', selected: null };
+const fmtDurLong = sec => sec >= 60 ? `${Math.round(sec/60)} min` : (sec ? `${sec}s` : '<1 min');
 async function startDossier() {
   if (!dossier.devices.length) {
     try { const devs = await (await fetch(`${API}/api/network/devices`)).json();
@@ -3115,84 +3117,141 @@ async function startDossier() {
   if (sel) {
     sel.innerHTML = dossier.devices.map(d=>`<option value="${esc(d.mac)}">${esc(d.name)}</option>`).join('');
     if (!dossier.mac) { const liam = dossier.devices.find(d=>/liam.*chrome/i.test(d.name)) || dossier.devices.find(d=>/liam/i.test(d.name)); dossier.mac = (liam||dossier.devices[0]||{}).mac || ''; }
-    sel.value = dossier.mac; sel.onchange = () => { dossier.mac = sel.value; renderDossier(); };
+    sel.value = dossier.mac; sel.onchange = () => { dossier.mac = sel.value; dossier.selected = null; renderDossier(); };
   }
-  const dd = document.getElementById('dosDays'); if (dd) dd.onchange = e => { dossier.days = +e.target.value; renderDossier(); };
+  const dd = document.getElementById('dosDays'); if (dd) dd.onchange = e => { dossier.days = +e.target.value; dossier.selected = null; renderDossier(); };
   renderDossier();
 }
 function stopDossier() {}
 async function renderDossier() {
-  const box = document.getElementById('dosLog'); if (!box) return;
-  if (!dossier.mac) { box.innerHTML = '<div class="sc-empty">No device selected.</div>'; return; }
-  box.innerHTML = '<div class="sc-empty">Building dossier…</div>';
+  const list = document.getElementById('dosList'), detail = document.getElementById('dosDetail');
+  if (!list || !dossier.mac) return;
+  list.innerHTML = '<div class="md-empty">Building dossier…</div>';
   let d;
   try { d = await (await fetch(`${API}/api/network/forensics?mac=${encodeURIComponent(dossier.mac)}&days=${dossier.days}`)).json(); }
-  catch (e) { box.innerHTML = `<div class="sc-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  catch (e) { list.innerHTML = `<div class="md-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  dossier.data = d;
   const cnt = document.getElementById('dosCount');
   const adult = d.sessions.filter(s=>s.category==='adult').length, vpn = d.sessions.filter(s=>s.category==='proxy/vpn').length;
-  if (cnt) cnt.textContent = `${d.sessions.length} sessions · ${adult} adult · ${vpn} VPN · ${d.days}d`;
-  if (!d.sessions.length) { box.innerHTML = '<div class="sc-empty">No concerning sessions in this window — clean.</div>'; return; }
-  const LABEL = {'adult':'ADULT','proxy/vpn':'VPN','gambling':'GAMBLING','dating/strangers':'DATING'};
+  if (cnt) cnt.textContent = `${d.sessions.length} sessions · ${adult} adult · ${vpn} VPN`;
+  // filter pills (All + categories present)
+  const cats = [...new Set(d.sessions.map(s=>s.category))];
+  const pills = document.getElementById('dosPills');
+  if (pills) {
+    const opts = ['all', ...cats];
+    pills.innerHTML = opts.map(c => `<button class="md-pill ${dossier.filter===c?'active':''}" data-cat="${esc(c)}">${c==='all'?'All':esc(DOS_LABEL[c]||c)}</button>`).join('');
+    pills.querySelectorAll('.md-pill').forEach(b => b.onclick = () => { dossier.filter = b.dataset.cat; dossier.selected = null; renderDossier(); });
+  }
+  const shown = d.sessions.filter(s => dossier.filter==='all' || s.category===dossier.filter);
+  if (!shown.length) { list.innerHTML = '<div class="md-empty">No sessions in this window — clean.</div>'; if (detail) detail.innerHTML = '<div class="md-empty">Nothing to show.</div>'; return; }
+  // build list grouped by Melbourne day
   const dayName = iso => new Date(iso).toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',weekday:'long',day:'numeric',month:'long'});
-  const byday = {};
-  for (const s of d.sessions) { const k = dayName(s.start); (byday[k] = byday[k] || []).push(s); }
-  box.innerHTML = `<div class="dos-head">${esc(d.device)} — concerning activity (${esc(String(d.days))} days, Melbourne time)</div>` +
-    Object.entries(byday).map(([day, ss]) => `
-      <div class="dos-day">${esc(day)}</div>
-      ${ss.map(s => {
-        const isVpn = s.category === 'proxy/vpn';
-        const dur = s.durationSec >= 60 ? `${Math.round(s.durationSec/60)} min` : (s.durationSec ? `${s.durationSec}s` : '');
-        const vol = s.bytesDown > 0 ? '↓ ' + fmtBytes(s.bytesDown) : '';
-        const meta = [dur, vol, (!isVpn && s.topSource) ? s.topSource : ''].filter(Boolean).join('  ·  ');
-        return `<div class="dos-row sev-${s.severity}">
-          <span class="dos-time">${esc(melTime(s.start))}</span>
-          <span class="dos-cat dos-${s.severity}">${LABEL[s.category]||esc(s.category)}</span>
-          <span class="dos-detail">
-            <span class="dos-dom">${esc(s.domains.slice(0,3).join(', '))}</span>
-            ${isVpn ? '<span class="dos-note">VPN client engaged — bypass attempt</span>' : ''}
-            ${meta ? `<span class="dos-meta">${esc(meta)}</span>` : ''}
-          </span>
-        </div>`;
-      }).join('')}
-    `).join('');
+  let html = '', lastDay = '';
+  shown.forEach((s, i) => {
+    const day = dayName(s.start); if (day !== lastDay) { html += `<div class="md-dgroup">${esc(day)}</div>`; lastDay = day; }
+    const id = s.start + '|' + s.category;
+    const isVpn = s.category === 'proxy/vpn';
+    const prev = isVpn ? 'VPN bypass attempt' : [s.bytesDown>0?'↓ '+fmtBytes(s.bytesDown):'', s.durationSec?fmtDurLong(s.durationSec):''].filter(Boolean).join(' · ');
+    html += `<div class="md-item ${dossier.selected===id?'active':''}" data-id="${esc(id)}">
+      <div class="md-item-top"><span class="md-tag sev-${s.severity}">${esc(DOS_LABEL[s.category]||s.category)}</span><span class="md-item-date">${esc(melTime(s.start))}</span></div>
+      <div class="md-item-title">${esc(s.domains[0]||s.category)}</div>
+      <div class="md-item-preview">${esc(prev)}</div></div>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.md-item').forEach(el => el.onclick = () => { dossier.selected = el.dataset.id; list.querySelectorAll('.md-item').forEach(x=>x.classList.toggle('active', x===el)); renderDossierDetail(); });
+  if (!dossier.selected || !shown.find(s => s.start+'|'+s.category===dossier.selected)) dossier.selected = shown[0].start+'|'+shown[0].category;
+  list.querySelectorAll('.md-item').forEach(x => x.classList.toggle('active', x.dataset.id===dossier.selected));
+  renderDossierDetail();
+}
+function renderDossierDetail() {
+  const detail = document.getElementById('dosDetail'); if (!detail || !dossier.data) return;
+  const s = dossier.data.sessions.find(x => x.start+'|'+x.category===dossier.selected);
+  if (!s) { detail.innerHTML = '<div class="md-empty">Select a session.</div>'; return; }
+  const isVpn = s.category === 'proxy/vpn';
+  const when = new Date(s.start).toLocaleString('en-AU',{timeZone:'Australia/Melbourne',weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit',hour12:false});
+  const dur = fmtDurLong(s.durationSec);
+  let lead, callout = '';
+  if (isVpn) {
+    lead = `${esc(dossier.data.device)} engaged the <b>ProtonVPN</b> client — an attempt to tunnel traffic and bypass on-network monitoring/filtering. These attempts cluster around the adult sessions.`;
+    callout = `<div class="md-callout med"><b>Why it matters:</b> a working VPN would make all browsing invisible to this dashboard. Worth watching as an escalation signal.</div>`;
+  } else if (s.category === 'adult') {
+    const big = s.bytesDown >= 100*1048576;
+    lead = big
+      ? `${esc(dossier.data.device)} accessed <b>${esc(s.domains[0])}</b> and downloaded <b>${fmtBytes(s.bytesDown)}</b> over about <b>${dur}</b> — consistent with watching video, not a glance.`
+      : `${esc(dossier.data.device)} accessed <b>${esc(s.domains[0])}</b> but only <b>${fmtBytes(s.bytesDown)}</b> transferred — a brief load or a blocked attempt, not sustained viewing.`;
+    callout = big ? `<div class="md-callout high"><b>Sustained adult-video consumption.</b></div>` : '';
+  } else {
+    lead = `${esc(dossier.data.device)} accessed <b>${esc(s.domains[0])}</b> (${esc(s.category)}).`;
+  }
+  detail.innerHTML = `
+    <div class="md-meta">
+      <span class="k">Device</span><span class="v">${esc(dossier.data.device)}</span>
+      <span class="k">When</span><span class="v">${esc(when)} AEST</span>
+      <span class="k">Category</span><span class="v"><span class="md-tag sev-${s.severity}">${esc(DOS_LABEL[s.category]||s.category)}</span></span>
+      <span class="k">Duration</span><span class="v">${esc(dur)}</span>
+      ${!isVpn ? `<span class="k">Downloaded</span><span class="v">${s.bytesDown>0?fmtBytes(s.bytesDown):'—'}</span>` : ''}
+      ${!isVpn && s.topSource ? `<span class="k">Biggest source</span><span class="v" style="font:600 13px ui-monospace,monospace">${esc(s.topSource)}</span>` : ''}
+      <span class="k">DNS lookups</span><span class="v">${s.lookups}</span>
+    </div>
+    <div class="md-rule"></div>
+    <div class="md-dtitle">${esc(DOS_LABEL[s.category]||s.category)} — ${esc(s.domains[0]||'')}</div>
+    <div class="md-body"><p class="lead">${lead}</p>
+      ${callout}
+      <div class="md-domlist"><div class="k">Domains contacted (${s.domains.length})</div>${s.domains.map(x=>`<code>${esc(x)}</code>`).join('')}</div>
+    </div>`;
 }
 
 
 async function renderActivity() {
-  const box = document.getElementById('actLog');
-  if (!box) return;
-  if (!activity.mac) { box.innerHTML = '<div class="sc-empty">No device selected.</div>'; return; }
-  box.innerHTML = '<div class="sc-empty">Reading activity…</div>';
+  const list = document.getElementById('actList'), detail = document.getElementById('actDetail');
+  if (!list) return;
+  if (!activity.mac) { list.innerHTML = '<div class="md-empty">No device selected.</div>'; return; }
+  list.innerHTML = '<div class="md-empty">Reading activity…</div>';
   let d;
   try {
     d = await (await fetch(`${API}/api/network/activity?mac=${encodeURIComponent(activity.mac)}&days=${activity.days}&flaggedOnly=${activity.flaggedOnly}`)).json();
-  } catch (e) { box.innerHTML = `<div class="sc-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  } catch (e) { list.innerHTML = `<div class="md-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  activity.data = d;
   const f = activity.filter;
   const rows = (d.visits||[]).filter(v => !f || v.domain.includes(f) || v.category.includes(f));
   const cnt = document.getElementById('actCount');
-  if (cnt) cnt.textContent = `${d.totalVisits} visits · ${d.concerning} flagged · ${d.days}d`;
-  if (!rows.length) { box.innerHTML = '<div class="sc-empty">No matching activity in this window.</div>'; return; }
-  const when = t => melDateTime(t);
-  const hm = t => melTime(t);
-  box.innerHTML = `
-    <table class="strands-table act-table">
-      <thead><tr><th>When</th><th>Site</th><th>Category</th><th class="num">↓ Down</th><th class="num">↑ Up</th><th class="num">Lookups</th></tr></thead>
-      <tbody>
-        ${rows.map(v => {
-          const col = ACT_COLOURS[v.category] || '#5b6b86';
-          const win = v.first !== v.last ? `<span class="sc-ip">${when(v.first)} – ${hm(v.last)}</span>` : '';
-          const vol = b => b > 0 ? fmtBytes(b) : '<span class="dim">—</span>';
-          return `<tr class="${(v.concern||v.inAudit)?'sc-flagged':''}">
-            <td class="mono dim act-when">${when(v.last)}</td>
-            <td class="sc-dst"><span class="sc-host">${esc(v.domain)}</span>${win}</td>
-            <td><span class="act-cat" style="color:${col};border-color:${col}55">${esc(v.category)}</span>${v.inAudit?' <span class="sc-flag" title="recorded in audit">🚩</span>':''}</td>
-            <td class="mono num">${vol(v.down)}</td>
-            <td class="mono num">${vol(v.up)}</td>
-            <td class="mono num dim">${v.count}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>`;
+  if (cnt) cnt.textContent = `${d.totalVisits} visits · ${d.concerning} flagged`;
+  if (!rows.length) { list.innerHTML = '<div class="md-empty">No matching activity in this window.</div>'; if (detail) detail.innerHTML = '<div class="md-empty">Nothing to show.</div>'; return; }
+  const sevTag = v => v.concern ? 'sev-high' : (v.inAudit ? 'sev-med' : 'sev-low');
+  let html = '', lastDay = '';
+  rows.forEach(v => {
+    const day = new Date(v.last).toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',weekday:'long',day:'numeric',month:'long'});
+    if (day !== lastDay) { html += `<div class="md-dgroup">${esc(day)}</div>`; lastDay = day; }
+    const prev = [v.down>0?'↓ '+fmtBytes(v.down):'', v.up>0?'↑ '+fmtBytes(v.up):'', v.count+'×'].filter(Boolean).join(' · ');
+    html += `<div class="md-item ${activity.selected===v.domain+v.last?'active':''}" data-id="${esc(v.domain+v.last)}">
+      <div class="md-item-top"><span class="md-tag ${sevTag(v)}">${esc(v.category)}</span><span class="md-item-date">${esc(melTime(v.last))}</span></div>
+      <div class="md-item-title">${v.inAudit?'🚩 ':''}${esc(v.domain)}</div>
+      <div class="md-item-preview">${esc(prev)}</div></div>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.md-item').forEach(el => el.onclick = () => { activity.selected = el.dataset.id; list.querySelectorAll('.md-item').forEach(x=>x.classList.toggle('active',x===el)); renderActivityDetail(rows); });
+  if (!activity.selected || !rows.find(v=>v.domain+v.last===activity.selected)) activity.selected = rows[0].domain+rows[0].last;
+  list.querySelectorAll('.md-item').forEach(x => x.classList.toggle('active', x.dataset.id===activity.selected));
+  renderActivityDetail(rows);
+}
+function renderActivityDetail(rows) {
+  const detail = document.getElementById('actDetail'); if (!detail) return;
+  const v = rows.find(x => x.domain+x.last===activity.selected); if (!v) { detail.innerHTML = '<div class="md-empty">Select a site.</div>'; return; }
+  const sev = v.concern ? 'sev-high' : (v.inAudit ? 'sev-med' : 'sev-low');
+  const win = v.first!==v.last ? `${melDateTime(v.first)} – ${melTime(v.last)} AEST` : `${melDateTime(v.last)} AEST`;
+  detail.innerHTML = `
+    <div class="md-meta">
+      <span class="k">Device</span><span class="v">${esc(activity.data.device)}</span>
+      <span class="k">Site</span><span class="v">${esc(v.domain)}</span>
+      <span class="k">Category</span><span class="v"><span class="md-tag ${sev}">${esc(v.category)}</span>${v.inAudit?' <span style="color:var(--red);font-weight:600">🚩 in audit</span>':''}</span>
+      <span class="k">When</span><span class="v">${esc(win)}</span>
+      <span class="k">Downloaded</span><span class="v">${v.down>0?fmtBytes(v.down):'—'}</span>
+      <span class="k">Uploaded</span><span class="v">${v.up>0?fmtBytes(v.up):'—'}</span>
+      <span class="k">DNS lookups</span><span class="v">${v.count}</span>
+    </div>
+    <div class="md-rule"></div>
+    <div class="md-dtitle">${esc(v.domain)}</div>
+    <div class="md-body"><p class="lead">${esc(activity.data.device)} accessed <b>${esc(v.domain)}</b> (${esc(v.category)})${v.down>0?` and downloaded <b>${fmtBytes(v.down)}</b>`:''}, ${v.count} lookup${v.count===1?'':'s'} ${v.first!==v.last?'over '+esc(win.split(' AEST')[0]):'at '+esc(melTime(v.last))+' AEST'}.</p></div>`;
 }
 
 async function renderEeroUsageChart() {
