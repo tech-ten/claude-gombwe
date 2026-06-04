@@ -2803,3 +2803,19 @@ body {
 .act-table th:nth-child(5), .act-table td:nth-child(5) { width: 88px; }
 .act-table th:nth-child(6), .act-table td:nth-child(6) { width: 72px; }
 .act-when { white-space: nowrap; }
+
+/* ── Dossier (evidence timeline) ───────────────────────────────── */
+.dossier-log { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.dos-head { padding: 14px 16px; font: 600 14px ui-sans-serif, system-ui; color: var(--text); border-bottom: 1px solid var(--border); background: var(--bg-deep); }
+.dos-day { padding: 10px 16px 6px; font: 700 11px ui-sans-serif, system-ui; letter-spacing: .6px; text-transform: uppercase; color: var(--text-3); background: var(--surface-alt); border-top: 1px solid var(--border-light); }
+.dos-row { display: flex; align-items: baseline; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--border-light); }
+.dos-row.sev-high { box-shadow: inset 3px 0 0 var(--red); }
+.dos-row.sev-med  { box-shadow: inset 3px 0 0 var(--amber); }
+.dos-time { font: 600 13px ui-monospace, monospace; color: var(--text-2); width: 52px; flex: none; }
+.dos-cat { font: 700 10px ui-sans-serif, system-ui; letter-spacing: .5px; padding: 2px 8px; border-radius: 20px; flex: none; }
+.dos-high { background: var(--red-bg); color: var(--red); }
+.dos-med  { background: rgba(196,158,75,0.12); color: var(--amber); }
+.dos-detail { display: flex; flex-direction: column; gap: 2px; }
+.dos-dom { font-size: 13px; color: var(--text); font-weight: 600; }
+.dos-note { font-size: 12px; color: var(--amber); font-weight: 600; }
+.dos-meta { font: 12px ui-monospace, monospace; color: var(--text-2); }

@@ -863,6 +863,106 @@ export class NetworkService {
     };
   }
 
+  // ── Forensic dossier (sequenced concerning sessions, evidence-grade) ──
+  /**
+   * A clean, chronological evidence timeline for one device: only the
+   * CONCERNING categories (adult / proxy-vpn / gambling / dating / ai-helper),
+   * grouped into sessions (>30-min gap = new session), each with its duration,
+   * data downloaded (correlated from flow/snapshot bytes), and the biggest
+   * source. MAC-accurate across IP changes; gombwe host excluded implicitly
+   * (it's never one of the device's IPs). This is what a parent screenshots.
+   */
+  forensicTimeline(mac: string, days = 14): {
+    device: string; days: number; generatedAt: string;
+    sessions: Array<{ start: string; end: string; durationSec: number; category: string; severity: string; domains: string[]; lookups: number; bytesDown: number; topSource: string | null }>;
+  } {
+    const target = mac.toUpperCase();
+    const name = this.aliases[target] || target;
+    const cutoffMs = Date.now() - days * 86400_000;
+    const dayStrs: string[] = [];
+    for (let i = days; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
+    const readDay = (path: string): string | null => {
+      try { if (existsSync(path)) return readFileSync(path, 'utf-8'); if (existsSync(path + '.gz')) return gunzipSync(readFileSync(path + '.gz')).toString('utf-8'); } catch { /* */ } return null;
+    };
+    // MAC → IP change-points
+    const changes: Array<[string, string]> = []; let lastIp: string | null = null;
+    for (const day of dayStrs) {
+      const raw = readDay(join(DATA_DIR, `${day}.jsonl`)); if (!raw) continue;
+      for (const line of raw.split('\n')) { if (!line.trim()) continue; let s: { ts?: string; devices?: Array<Record<string, unknown>> }; try { s = JSON.parse(line); } catch { continue; }
+        for (const d of s.devices || []) if (String(d['mac-address'] || '').toUpperCase() === target && d.address && d.address !== lastIp) { changes.push([s.ts || '', String(d.address)]); lastIp = String(d.address); } }
+    }
+    const ipAt = (ts: string): string | null => { if (!changes.length) return null; let ip = changes[0][1]; for (const [t, p] of changes) { if (t <= ts) ip = p; else break; } return ip; };
+    const reg = (h: string) => { const p = h.split('.'); return p.length >= 2 ? p.slice(-2).join('.') : h; };
+    // concerning lookups
+    type Hit = { t: number; iso: string; cat: string; dom: string };
+    const hits: Hit[] = [];
+    for (const day of dayStrs) {
+      const raw = readDay(join(DATA_DIR, `dns-${day}.jsonl`)); if (!raw) continue;
+      for (const line of raw.split('\n')) { if (!line.trim()) continue; let r: { ts?: string; client_ip?: string; hostname?: string }; try { r = JSON.parse(line); } catch { continue; }
+        if (!r.hostname || !r.ts) continue;
+        const tms = new Date(r.ts).getTime(); if (tms < cutoffMs) continue;
+        if (r.client_ip !== ipAt(r.ts)) continue;
+        const c = categorizeActivity(r.hostname);
+        // Dossier = the damning categories only. ai-helper (homework tools) is a
+        // separate concern and runs all-day, which would bloat sessions + bytes.
+        if (!c.concern || c.category === 'ai-helper') continue;
+        hits.push({ t: tms, iso: r.ts, cat: c.category, dom: reg(r.hostname).toLowerCase() }); }
+    }
+    hits.sort((a, b) => a.t - b.t);
+    // sessionize per category (30-min gap)
+    type Sess = { category: string; start: string; end: string; tStart: number; tEnd: number; domains: Set<string>; lookups: number };
+    const sessions: Sess[] = []; const open: Record<string, Sess | undefined> = {};
+    for (const h of hits) {
+      const s = open[h.cat];
+      if (s && h.t - s.tEnd <= 1800_000) { s.tEnd = h.t; s.end = h.iso; s.domains.add(h.dom); s.lookups++; }
+      else { if (s) sessions.push(s); open[h.cat] = { category: h.cat, start: h.iso, end: h.iso, tStart: h.t, tEnd: h.t, domains: new Set([h.dom]), lookups: 1 }; }
+    }
+    for (const k in open) if (open[k]) sessions.push(open[k]!);
+    const sevOf = (c: string) => c === 'adult' ? 'high' : (c === 'proxy/vpn' || c === 'gambling' || c === 'dating/strangers') ? 'med' : 'low';
+    const out = sessions.map(s => {
+      // VPN = an engagement/bypass event; its window-bytes are concurrent other
+      // traffic (misleading), so don't attribute bytes to it.
+      const isVpn = s.category === 'proxy/vpn';
+      const { dl, top, activeMs } = isVpn ? { dl: 0, top: null, activeMs: 0 } : this.deviceDownloadInWindow(ipAt, s.tStart - 120_000, s.tEnd + 1200_000);
+      const durationSec = Math.max(Math.round((s.tEnd - s.tStart) / 1000), Math.round(activeMs / 1000));
+      return { start: s.start, end: s.end, durationSec, category: s.category, severity: sevOf(s.category), domains: [...s.domains], lookups: s.lookups, bytesDown: dl, topSource: top };
+    }).sort((a, b) => (a.start < b.start ? 1 : -1));
+    return { device: name, days, generatedAt: new Date().toISOString(), sessions: out };
+  }
+
+  /** Download bytes (+biggest source) to the device during [t0ms,t1ms], from
+   *  NetFlow when present else conntrack snapshots. ipAt gives the device IP at a time. */
+  private deviceDownloadInWindow(ipAt: (ts: string) => string | null, t0ms: number, t1ms: number): { dl: number; top: string | null; activeMs: number } {
+    const days = new Set<string>();
+    for (let t = t0ms; t <= t1ms; t += 3600_000) days.add(new Date(t).toISOString().slice(0, 10));
+    days.add(new Date(t1ms).toISOString().slice(0, 10));
+    let dl = 0; const bydst = new Map<string, number>();
+    let tmin = Infinity, tmax = 0;   // span of byte-bearing activity (≈ viewing time)
+    for (const day of days) {
+      const fp = join(DATA_DIR, `flows-${day}.jsonl`);
+      if (existsSync(fp)) {
+        for (const line of readFileSync(fp, 'utf-8').split('\n')) { if (!line.trim()) continue; let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+          const st = new Date(String(f.start || f.ts)).getTime(); if (st < t0ms || st > t1ms) continue;
+          if (f.dst === ipAt(String(f.start || f.ts))) { const b = Number(f.bytes || 0); dl += b; bydst.set(String(f.src), (bydst.get(String(f.src)) || 0) + b);
+            if (b > 50_000) { const et = new Date(String(f.end || f.start)).getTime(); tmin = Math.min(tmin, st); tmax = Math.max(tmax, et); } } }
+      } else {
+        let raw: string | null = null;
+        try { const sp = join(DATA_DIR, `${day}.jsonl`); if (existsSync(sp)) raw = readFileSync(sp, 'utf-8'); else if (existsSync(sp + '.gz')) raw = gunzipSync(readFileSync(sp + '.gz')).toString('utf-8'); } catch { raw = null; }
+        if (!raw) continue;
+        const conns = new Map<string, { dst: string; repl: number }>();
+        for (const line of raw.split('\n')) { if (!line.trim()) continue; let s: { ts?: string; connections?: Array<Record<string, unknown>> }; try { s = JSON.parse(line); } catch { continue; }
+          const tms = new Date(s.ts || '').getTime(); if (tms < t0ms || tms > t1ms) continue;
+          const ip = ipAt(s.ts || '');
+          for (const c of s.connections || []) { const src = String(c['src-address'] || '').split(':')[0], dst = String(c['dst-address'] || '').split(':')[0];
+            if (src === ip) { const k = `${c['src-address']}|${c['dst-address']}`; const repl = Number(c['repl-bytes'] || 0); const ex = conns.get(k); if (!ex || repl > ex.repl) conns.set(k, { dst, repl });
+              if (repl > 50_000) { tmin = Math.min(tmin, tms); tmax = Math.max(tmax, tms); } } } }
+        for (const v of conns.values()) { dl += v.repl; bydst.set(v.dst, (bydst.get(v.dst) || 0) + v.repl); }
+      }
+    }
+    let top: string | null = null, tb = 0; for (const [d, b] of bydst) if (b > tb) { tb = b; top = d; }
+    return { dl, top: top ? `${top} · ${(tb / 1048576).toFixed(0)} MB` : null, activeMs: tmax > tmin ? tmax - tmin : 0 };
+  }
+
   // ── Live strands (every active session as an inspectable thread) ──
   /**
    * Every currently-active connection as a "strand": which device, to where
