@@ -1608,7 +1608,7 @@ export class Gateway {
       const mac = String(req.query.mac || '').toUpperCase();
       if (!mac) { res.status(400).json({ error: 'mac required' }); return; }
       const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '14'), 10) || 14));
-      try { res.json(getNetworkService().forensicTimeline(mac, days)); }
+      try { res.json(getNetworkService().getDossier(mac, days)); }
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
@@ -3136,6 +3136,17 @@ The ingredients should be grocery item names with quantities scaled for ${family
         netflowCollector().start();
       } catch (err) {
         console.warn(`[gombwe] netflow collector failed to start:`, err);
+      }
+
+      // Pre-build dossiers in the background so the Dossier view loads instantly
+      // (forensicTimeline is expensive and grows with history). Warm shortly
+      // after boot, then refresh every 15 min.
+      try {
+        const svc = getNetworkService();
+        setTimeout(() => { try { svc.refreshAllDossiers(); } catch (e) { console.warn('[gombwe] dossier prebuild failed:', e); } }, 20_000);
+        setInterval(() => { try { svc.refreshAllDossiers(); } catch { /* */ } }, 15 * 60 * 1000);
+      } catch (err) {
+        console.warn(`[gombwe] dossier prebuilder failed to start:`, err);
       }
     } else {
       console.log(`[gombwe] MikroTik not configured (no ~/.claude-gombwe/mikrotik.json) — network features disabled`);

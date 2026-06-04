@@ -51,6 +51,7 @@ const KIDLIST_PATH = join(homedir(), '.claude-gombwe', 'network-kid-list.json');
 const DEVICE_POLICY_PATH = join(homedir(), '.claude-gombwe', 'network-device-policy.json');
 const POLICY_ACTIONS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-actions.jsonl');
 const FLAGS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-flags.jsonl');
+const DOSSIER_CACHE_PATH = join(homedir(), '.claude-gombwe', 'network-dossier-cache.json');
 
 // Per-device blocked-category map. Default for adults: none.
 // Default applied automatically when a device is added to the kid list:
@@ -178,6 +179,9 @@ export class NetworkService {
   private blocks: BlockState = readJsonOrEmpty(BLOCKS_PATH, {});
   private kidList: KidList = readJsonOrEmpty(KIDLIST_PATH, { macs: [] });
   private devicePolicy: DevicePolicyMap = readJsonOrEmpty(DEVICE_POLICY_PATH, {});
+  // Pre-built dossiers (forensicTimeline is expensive + grows over time). The
+  // background refresher rebuilds these; the endpoint serves the cache instantly.
+  private dossierCache: Record<string, { builtAt: number; device: string; sessions: ReturnType<NetworkService['forensicTimeline']>['sessions'] }> = readJsonOrEmpty(DOSSIER_CACHE_PATH, {});
   // first-seen wall-clock per active connection key, for live strand "since".
   private strandSeen = new Map<string, number>();
   // Per-kid auto-block rules added by the policy scanner: mac → hostname → ruleId(s)
@@ -961,6 +965,33 @@ export class NetworkService {
     }
     let top: string | null = null, tb = 0; for (const [d, b] of bydst) if (b > tb) { tb = b; top = d; }
     return { dl, top: top ? `${top} · ${(tb / 1048576).toFixed(0)} MB` : null, activeMs: tmax > tmin ? tmax - tmin : 0 };
+  }
+
+  /** Rebuild + persist the dossier cache for one device (full 90-day window). */
+  rebuildDossier(mac: string): void {
+    const key = mac.toUpperCase();
+    const t = this.forensicTimeline(key, 90);
+    this.dossierCache[key] = { builtAt: Date.now(), device: t.device, sessions: t.sessions };
+    try { writeJson(DOSSIER_CACHE_PATH, this.dossierCache); } catch { /* keep in memory */ }
+  }
+
+  /** Serve a dossier from cache (filtered to the requested window), building
+   *  it live only if never cached. This keeps the endpoint instant. */
+  getDossier(mac: string, days: number): { device: string; days: number; generatedAt: string; cached: boolean; sessions: ReturnType<NetworkService['forensicTimeline']>['sessions'] } {
+    const key = mac.toUpperCase();
+    let c = this.dossierCache[key]; let cached = true;
+    if (!c) { this.rebuildDossier(key); c = this.dossierCache[key]; cached = false; }
+    const cutoff = Date.now() - days * 86400_000;
+    const sessions = (c.sessions || []).filter(s => new Date(s.start).getTime() >= cutoff);
+    return { device: c.device, days, generatedAt: new Date(c.builtAt).toISOString(), cached, sessions };
+  }
+
+  /** Background refresh: rebuild dossiers for every device that has any
+   *  concerning history (so the cache stays warm). Called on a timer. */
+  refreshAllDossiers(): void {
+    const macs = new Set<string>();
+    for (const f of this.allFlags()) { const m = String(f.mac || '').toUpperCase(); if (m && !this.selfMacs.has(m)) macs.add(m); }
+    for (const m of macs) { try { this.rebuildDossier(m); } catch { /* skip a bad device */ } }
   }
 
   // ── Live strands (every active session as an inspectable thread) ──
