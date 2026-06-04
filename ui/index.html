@@ -274,37 +274,45 @@
           <!-- Alerts banner — visible across all panes when any are active -->
           <div class="eero-alerts hidden" id="eeroAlerts"></div>
 
-          <!-- Activity — per-device online behaviour log (what / when / category) -->
+          <!-- Activity — per-device online behaviour (master/detail) -->
           <div class="eero-pane" data-eero-pane="strands">
-            <div class="strands-toolbar">
-              <select id="actDevice" class="strands-select" title="Device"></select>
-              <select id="actDays" class="strands-select" title="Time window">
+            <div class="md-toolbar">
+              <select id="actDevice" class="md-select" title="Device"></select>
+              <select id="actDays" class="md-select" title="Time window">
                 <option value="1">Today</option>
                 <option value="7" selected>Last 7 days</option>
                 <option value="30">Last 30 days</option>
                 <option value="90">Last 90 days</option>
               </select>
-              <label class="act-check"><input type="checkbox" id="actFlagged"> Flagged only</label>
-              <span id="actCount" class="strands-count">—</span>
-              <span class="strands-spacer"></span>
-              <input id="actFilter" class="strands-filter" placeholder="filter site / category…" autocomplete="off" />
+              <label class="md-check"><input type="checkbox" id="actFlagged"> Flagged only</label>
+              <input id="actFilter" class="md-search" placeholder="Search sites…" autocomplete="off" />
+              <span class="md-spacer"></span>
+              <span id="actCount" class="md-count">—</span>
             </div>
-            <div id="actLog" class="strands-console"></div>
+            <div class="md-split">
+              <div class="md-list" id="actList"></div>
+              <div class="md-detail" id="actDetail"><div class="md-empty">Select a site to see details.</div></div>
+            </div>
           </div>
 
-          <!-- Dossier — sequenced evidence timeline (concerning sessions only) -->
+          <!-- Dossier — sequenced evidence timeline (master/detail) -->
           <div class="eero-pane" data-eero-pane="dossier">
-            <div class="strands-toolbar">
-              <select id="dosDevice" class="strands-select" title="Device"></select>
-              <select id="dosDays" class="strands-select" title="Time window">
+            <div class="md-toolbar">
+              <select id="dosDevice" class="md-select" title="Device"></select>
+              <select id="dosDays" class="md-select" title="Time window">
                 <option value="7">Last 7 days</option>
                 <option value="14" selected>Last 14 days</option>
                 <option value="30">Last 30 days</option>
                 <option value="90">Last 90 days</option>
               </select>
-              <span id="dosCount" class="strands-count">—</span>
+              <div class="md-pills" id="dosPills"></div>
+              <span class="md-spacer"></span>
+              <span id="dosCount" class="md-count">—</span>
             </div>
-            <div id="dosLog" class="dossier-log"></div>
+            <div class="md-split">
+              <div class="md-list" id="dosList"></div>
+              <div class="md-detail" id="dosDetail"><div class="md-empty">Select a session to see the full breakdown.</div></div>
+            </div>
           </div>
 
           <!-- Overview (MikroTik vitals, replaces eero-snapshot rollups) -->
