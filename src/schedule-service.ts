@@ -140,10 +140,24 @@ async function provisionRouterSide(def: ScheduleDef): Promise<void> {
 
   if (def.type === 'recurring') {
     if (!def.start_time || !def.end_time) return;
-    const matcher = timeMatcher({ days: def.days || [], start_time: def.start_time, end_time: def.end_time });
-    await mikrotik.addScheduledMacBlock(
-      def.mac, matcher, `gombwe-sched ${def.id} ${def.name}`,
-    );
+    const days = def.days || [];
+    // RouterOS firewall `time` does NOT wrap past midnight. For an overnight
+    // window (start > end, e.g. 21:00–06:30) a single rule would never match,
+    // so split into two: [start–23:59:59] + [00:00:00–end]. For everyday
+    // schedules, blocking every morning 00:00–end is exactly what's wanted.
+    if (def.start_time > def.end_time) {
+      await mikrotik.addScheduledMacBlock(
+        def.mac, `${def.start_time}:00-23:59:59,${days.join(',')}`, `gombwe-sched ${def.id} ${def.name} (eve)`,
+      );
+      await mikrotik.addScheduledMacBlock(
+        def.mac, `00:00:00-${def.end_time}:00,${days.join(',')}`, `gombwe-sched ${def.id} ${def.name} (morn)`,
+      );
+    } else {
+      const matcher = timeMatcher({ days, start_time: def.start_time, end_time: def.end_time });
+      await mikrotik.addScheduledMacBlock(
+        def.mac, matcher, `gombwe-sched ${def.id} ${def.name}`,
+      );
+    }
     // Optional audit-on-fire companions: 2 scheduler entries that POST to a
     // gombwe webhook when the window opens / closes. Router still does the
     // actual blocking via the time matcher above; these are notification only.
