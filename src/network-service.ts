@@ -127,6 +127,18 @@ function localHostMacs(): Set<string> {
   return macs;
 }
 
+/** This host's own LAN IPv4 addresses — reliable self-identification even when
+ *  the router sees a randomized Wi-Fi MAC that os.networkInterfaces() doesn't. */
+function localHostIps(): Set<string> {
+  const ips = new Set<string>();
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.family === 'IPv4' && !i.internal && i.address) ips.add(i.address);
+    }
+  }
+  return ips;
+}
+
 /** Clean `os.hostname()` for display: strip trailing .local, replace dashes with spaces nothing else. */
 function selfDisplayName(): string {
   const raw = osHostname().replace(/\.local\.?$/i, '');
@@ -172,6 +184,7 @@ export class NetworkService {
   private kidAutoBlocks: Map<string, Map<string, string[]>> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private selfMacs: Set<string> = localHostMacs();
+  private selfIps: Set<string> = localHostIps();
   private selfName: string = selfDisplayName();
 
   constructor() {
@@ -435,6 +448,12 @@ export class NetworkService {
     severity: 'low' | 'med' | 'high', reason: string,
     category?: string, ip?: string,
   ): void {
+    // NEVER flag the gombwe host itself. gombwe resolves flagged domains on
+    // this host (enforceCategoryBlock → dns.resolve) to BLOCK them for kids,
+    // which makes the host's DNS log mirror exactly what it's blocking. Flagging
+    // that would falsely accuse the host (e.g. pornhub appearing on the Mac at
+    // the same second the Chromebook hit it). Self = infrastructure, not a user.
+    if (this.selfMacs.has(mac.toUpperCase()) || (ip && this.selfIps.has(ip))) return;
     const rec = {
       time: new Date().toISOString(),
       action: 'flagged',
