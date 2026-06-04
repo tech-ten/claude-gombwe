@@ -259,6 +259,7 @@
           <div class="eero-subnav" id="eeroSubnav">
             <button class="eero-subtab active" data-eero-tab="overview">Overview</button>
             <button class="eero-subtab" data-eero-tab="strands">Activity</button>
+            <button class="eero-subtab" data-eero-tab="dossier">Dossier</button>
             <button class="eero-subtab" data-eero-tab="kids">Access Control</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
@@ -289,6 +290,21 @@
               <input id="actFilter" class="strands-filter" placeholder="filter site / category…" autocomplete="off" />
             </div>
             <div id="actLog" class="strands-console"></div>
+          </div>
+
+          <!-- Dossier — sequenced evidence timeline (concerning sessions only) -->
+          <div class="eero-pane" data-eero-pane="dossier">
+            <div class="strands-toolbar">
+              <select id="dosDevice" class="strands-select" title="Device"></select>
+              <select id="dosDays" class="strands-select" title="Time window">
+                <option value="7">Last 7 days</option>
+                <option value="14" selected>Last 14 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+              <span id="dosCount" class="strands-count">—</span>
+            </div>
+            <div id="dosLog" class="dossier-log"></div>
           </div>
 
           <!-- Overview (MikroTik vitals, replaces eero-snapshot rollups) -->

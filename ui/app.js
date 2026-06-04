@@ -3099,6 +3099,65 @@ async function startActivity() {
 }
 function stopActivity() { /* no polling — historical view, loads on demand */ }
 
+// ════════════════════════════════════════════════════════════════════
+//  DOSSIER — sequenced evidence timeline (concerning sessions only).
+//  Built to be screenshot-able: per device, chronological, Melbourne time,
+//  with session duration + data downloaded, VPN attempts marked inline.
+// ════════════════════════════════════════════════════════════════════
+const dossier = { mac: '', days: 14, devices: [] };
+async function startDossier() {
+  if (!dossier.devices.length) {
+    try { const devs = await (await fetch(`${API}/api/network/devices`)).json();
+      dossier.devices = (devs||[]).filter(d=>d.mac).map(d=>({mac:d.mac,name:d.name||d.hostname||d.ip||d.mac})).sort((a,b)=>a.name.localeCompare(b.name));
+    } catch { dossier.devices = []; }
+  }
+  const sel = document.getElementById('dosDevice');
+  if (sel) {
+    sel.innerHTML = dossier.devices.map(d=>`<option value="${esc(d.mac)}">${esc(d.name)}</option>`).join('');
+    if (!dossier.mac) { const liam = dossier.devices.find(d=>/liam.*chrome/i.test(d.name)) || dossier.devices.find(d=>/liam/i.test(d.name)); dossier.mac = (liam||dossier.devices[0]||{}).mac || ''; }
+    sel.value = dossier.mac; sel.onchange = () => { dossier.mac = sel.value; renderDossier(); };
+  }
+  const dd = document.getElementById('dosDays'); if (dd) dd.onchange = e => { dossier.days = +e.target.value; renderDossier(); };
+  renderDossier();
+}
+function stopDossier() {}
+async function renderDossier() {
+  const box = document.getElementById('dosLog'); if (!box) return;
+  if (!dossier.mac) { box.innerHTML = '<div class="sc-empty">No device selected.</div>'; return; }
+  box.innerHTML = '<div class="sc-empty">Building dossier…</div>';
+  let d;
+  try { d = await (await fetch(`${API}/api/network/forensics?mac=${encodeURIComponent(dossier.mac)}&days=${dossier.days}`)).json(); }
+  catch (e) { box.innerHTML = `<div class="sc-empty">Couldn't load: ${esc(e.message)}</div>`; return; }
+  const cnt = document.getElementById('dosCount');
+  const adult = d.sessions.filter(s=>s.category==='adult').length, vpn = d.sessions.filter(s=>s.category==='proxy/vpn').length;
+  if (cnt) cnt.textContent = `${d.sessions.length} sessions · ${adult} adult · ${vpn} VPN · ${d.days}d`;
+  if (!d.sessions.length) { box.innerHTML = '<div class="sc-empty">No concerning sessions in this window — clean.</div>'; return; }
+  const LABEL = {'adult':'ADULT','proxy/vpn':'VPN','gambling':'GAMBLING','dating/strangers':'DATING'};
+  const dayName = iso => new Date(iso).toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',weekday:'long',day:'numeric',month:'long'});
+  const byday = {};
+  for (const s of d.sessions) { const k = dayName(s.start); (byday[k] = byday[k] || []).push(s); }
+  box.innerHTML = `<div class="dos-head">${esc(d.device)} — concerning activity (${esc(String(d.days))} days, Melbourne time)</div>` +
+    Object.entries(byday).map(([day, ss]) => `
+      <div class="dos-day">${esc(day)}</div>
+      ${ss.map(s => {
+        const isVpn = s.category === 'proxy/vpn';
+        const dur = s.durationSec >= 60 ? `${Math.round(s.durationSec/60)} min` : (s.durationSec ? `${s.durationSec}s` : '');
+        const vol = s.bytesDown > 0 ? '↓ ' + fmtBytes(s.bytesDown) : '';
+        const meta = [dur, vol, (!isVpn && s.topSource) ? s.topSource : ''].filter(Boolean).join('  ·  ');
+        return `<div class="dos-row sev-${s.severity}">
+          <span class="dos-time">${esc(melTime(s.start))}</span>
+          <span class="dos-cat dos-${s.severity}">${LABEL[s.category]||esc(s.category)}</span>
+          <span class="dos-detail">
+            <span class="dos-dom">${esc(s.domains.slice(0,3).join(', '))}</span>
+            ${isVpn ? '<span class="dos-note">VPN client engaged — bypass attempt</span>' : ''}
+            ${meta ? `<span class="dos-meta">${esc(meta)}</span>` : ''}
+          </span>
+        </div>`;
+      }).join('')}
+    `).join('');
+}
+
+
 async function renderActivity() {
   const box = document.getElementById('actLog');
   if (!box) return;
@@ -5267,6 +5326,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
     eeroActiveSubtab = b.dataset.eeroTab;
     document.querySelectorAll('.eero-pane').forEach(p => p.classList.toggle('active', p.dataset.eeroPane === eeroActiveSubtab));
     if (eeroActiveSubtab === 'strands') startActivity(); else stopActivity();
+    if (eeroActiveSubtab === 'dossier') startDossier();
     if (eeroActiveSubtab === 'usage') { renderEeroUsageChart(); renderUsageDossier(); }
     if (eeroActiveSubtab === 'audit') renderEeroAudit();   // refresh from /api/network/policy/actions
     if (eeroActiveSubtab === 'profiles') {

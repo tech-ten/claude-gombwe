@@ -1601,6 +1601,17 @@ export class Gateway {
       catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
+    // Forensic dossier — sequenced CONCERNING sessions for one device (adult /
+    // vpn / gambling / dating / ai-helper) with duration + bytes. ?mac=&days=N
+    this.app.get('/api/network/forensics', (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      const mac = String(req.query.mac || '').toUpperCase();
+      if (!mac) { res.status(400).json({ error: 'mac required' }); return; }
+      const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '14'), 10) || 14));
+      try { res.json(getNetworkService().forensicTimeline(mac, days)); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
     // Per-device activity log — what this device did online, over time (DNS
     // history, categorised, risky activity flagged). ?mac=&days=N&flaggedOnly=
     this.app.get('/api/network/activity', (req: Request, res: Response) => {
