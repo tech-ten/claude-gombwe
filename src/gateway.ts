@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'node:http';
+import { freePort } from './daemon-lock.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
@@ -3207,8 +3208,22 @@ The ingredients should be grocery item names with quantities scaled for ${family
       console.log(`[gombwe] network status broadcaster running every 5s`);
     }
 
-    // Start server
-    return new Promise((resolve) => {
+    // Start server. Without an 'error' handler an EADDRINUSE (orphaned listener
+    // left behind by a hard-killed predecessor) would surface as an uncaught
+    // exception and crash-loop under launchd. Reclaim the port once and retry.
+    return new Promise((resolve, reject) => {
+      let reclaimAttempted = false;
+      this.server.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE' && !reclaimAttempted) {
+          reclaimAttempted = true;
+          const killed = freePort(this.config.port);
+          console.error(`[gombwe] port ${this.config.port} was in use — reclaimed from PID(s): ${killed.join(', ') || 'none found'}`);
+          setTimeout(() => this.server.listen(this.config.port, this.config.host), 500);
+          return;
+        }
+        console.error(`[gombwe] gateway listen failed: ${err.message}`);
+        reject(err);
+      });
       this.server.listen(this.config.port, this.config.host, () => {
         console.log(`[gombwe] Gateway running at http://${this.config.host}:${this.config.port}`);
         console.log(`[gombwe] Control panel: http://${this.config.host}:${this.config.port}/ui`);

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { getConfigDir } from './config.js';
 
@@ -34,6 +35,27 @@ export function clearLock(): void {
 export function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch { return false; }
+}
+
+/**
+ * SIGKILL whatever still holds the given TCP port (except ourselves).
+ * A predecessor killed with SIGKILL can't run its shutdown handler, so it
+ * orphans its listener (and any child it spawned) still bound to the port.
+ * launchd then respawns us, but listen() throws EADDRINUSE and we crash-loop.
+ * Reclaiming the port here lets the supervised restart actually succeed.
+ * Returns the PIDs we killed.
+ */
+export function freePort(port: number): number[] {
+  const killed: number[] = [];
+  let out = '';
+  try { out = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim(); }
+  catch { return killed; } // lsof exits non-zero when nothing holds the port
+  for (const line of out.split('\n')) {
+    const pid = parseInt(line, 10);
+    if (!pid || pid === process.pid) continue;
+    try { process.kill(pid, 'SIGKILL'); killed.push(pid); } catch {}
+  }
+  return killed;
 }
 
 export async function isResponsive(port: number): Promise<boolean> {
