@@ -6,7 +6,7 @@ import { Gateway } from './gateway.js';
 import { createProxyServer } from './proxy.js';
 import { SERVICES, connectService, disconnectService, listConnectedServices } from './setup.js';
 import { runRepl } from './repl.js';
-import { getDaemonState, writeLock, clearLock, isAlive } from './daemon-lock.js';
+import { getDaemonState, writeLock, clearLock, isAlive, freePort } from './daemon-lock.js';
 
 const program = new Command();
 
@@ -44,9 +44,19 @@ program
     }
 
     if (state.state === 'wedged') {
-      console.error(`gombwe process ${state.lock.pid} is alive but not responding on port ${state.lock.port}.`);
-      console.error(`Run 'gombwe stop --force' to clean it up, then try again.`);
-      process.exit(1);
+      if (opts.headless) {
+        // Under launchd KeepAlive, exiting here just crash-loops forever. A wedged
+        // PID under supervision means a predecessor was killed hard and left the
+        // lock + port behind — reclaim it and continue spawning fresh.
+        console.error(`Reclaiming wedged gombwe (PID ${state.lock.pid}, port ${state.lock.port})...`);
+        try { process.kill(state.lock.pid, 'SIGKILL'); } catch {}
+        freePort(state.lock.port);
+        clearLock();
+      } else {
+        console.error(`gombwe process ${state.lock.pid} is alive but not responding on port ${state.lock.port}.`);
+        console.error(`Run 'gombwe stop --force' to clean it up, then try again.`);
+        process.exit(1);
+      }
     }
 
     // not-running or stale-lock — spawn fresh daemon
