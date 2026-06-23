@@ -135,12 +135,19 @@ export class PolicyScanner extends EventEmitter {
   private async askClaude(queries: DnsQueryRecord[]): Promise<PolicyVerdict[]> {
     // Deduplicate hostnames so the model sees the unique set, not the noise.
     const uniq = Array.from(new Set(queries.map(q => q.hostname))).slice(0, MAX_HOSTNAMES_PER_PROMPT);
-    const userMsg = SYSTEM_PROMPT + '\n\nHostnames:\n' + uniq.join('\n') + '\n\nReturn JSON now:';
+    // The persona/instructions go in the SYSTEM prompt, not the user message.
+    // Prepending them to -p made Claude treat its own instructions as untrusted
+    // user input and refuse the scan as a "prompt injection attempt".
+    const userMsg = 'Hostnames:\n' + uniq.join('\n') + '\n\nReturn JSON now:';
 
     const output = await new Promise<string>((resolve, reject) => {
       const proc = spawn('claude', [
         '-p', userMsg,
+        '--system-prompt', SYSTEM_PROMPT,
         '--output-format', 'json',
+        // No MCP servers needed for text classification. Without this, every scan
+        // boots all configured MCP servers (puppeteer, gmail, …) → 60s timeouts.
+        '--strict-mcp-config',
         '--dangerously-skip-permissions',
         '--model', 'claude-haiku-4-5-20251001',   // Haiku is fast + cheap for classification
       ], { stdio: ['ignore', 'pipe', 'pipe'] });

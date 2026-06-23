@@ -15,7 +15,7 @@ import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
-import { findChrome, detachedSpawnOptions } from './platform.mjs';
+import { findChrome, detachedSpawnOptions, browserVisibilityArgs } from './platform.mjs';
 
 const PORT = 19222;
 const CHROME_URL = `http://127.0.0.1:${PORT}`;
@@ -38,6 +38,8 @@ async function connectChrome() {
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
+    // Hidden off-screen by default; --show / GOMBWE_BROWSER_VISIBLE=1 reveals it.
+    ...browserVisibilityArgs(),
     'https://www.woolworths.com.au',
     'https://www.coles.com.au',
   ], detachedSpawnOptions());

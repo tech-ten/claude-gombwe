@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import puppeteer from 'puppeteer-core';
-import { findChrome, detachedSpawnOptions, tempPath } from './platform.mjs';
+import { findChrome, detachedSpawnOptions, tempPath, browserVisibilityArgs } from './platform.mjs';
 
 const PORT = 19222;
 const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
@@ -131,6 +131,8 @@ async function connectChrome() {
   spawn(chromePath, [
     `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
+    // Hidden off-screen by default; --show / GOMBWE_BROWSER_VISIBLE=1 reveals it.
+    ...browserVisibilityArgs(),
     'https://www.coles.com.au', 'https://www.woolworths.com.au',
   ], detachedSpawnOptions()).unref();
 

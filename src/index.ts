@@ -515,6 +515,7 @@ program
   .option('--store <store>', 'Order from specific store (woolworths/coles)')
   .option('--compare', 'Compare prices only, don\'t order')
   .option('--split', 'Smart split — cheapest items from each store')
+  .option('--show', 'Show the browser window (default: hidden off-screen)')
   .action(async (items, opts) => {
     const { execSync } = await import('node:child_process');
     const { join } = await import('node:path');
@@ -536,8 +537,11 @@ program
       cmd = `node scripts/grocery.mjs split ${items.map((i: string) => `"${i}"`).join(' ')}`;
     }
 
+    // Browser runs hidden off-screen by default; --show reveals the window.
+    const env = opts.show ? { ...process.env, GOMBWE_BROWSER_VISIBLE: '1' } : process.env;
+
     try {
-      execSync(cmd, { cwd: scriptDir, stdio: 'inherit' });
+      execSync(cmd, { cwd: scriptDir, stdio: 'inherit', env });
     } catch {
       console.error('Grocery order failed. Make sure Chrome is running with your saved session.');
       console.error('Run "gombwe grocery-setup" if this is your first time.');

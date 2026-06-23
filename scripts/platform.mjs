@@ -90,6 +90,21 @@ export function killPort(port) {
 }
 
 /**
+ * Chrome window-placement flags controlling whether the automation browser is
+ * visible. By default the window is parked far off-screen so grocery automation
+ * never hijacks the user's desktop or focus. Set GOMBWE_BROWSER_VISIBLE=1 (or
+ * pass `gombwe grocery --show`) to bring it on-screen for login, captchas, or
+ * debugging. Same Chrome + same profile + same fingerprint either way — only
+ * the window position changes, so scraping behaviour is identical.
+ */
+export function browserVisibilityArgs() {
+  const visible = process.env.GOMBWE_BROWSER_VISIBLE === '1';
+  return visible
+    ? ['--window-position=100,100', '--window-size=1280,1000']
+    : ['--window-position=-32000,-32000', '--window-size=1280,1000'];
+}
+
+/**
  * Returns spawn options suitable for detached Chrome on the current platform.
  */
 export function detachedSpawnOptions() {
