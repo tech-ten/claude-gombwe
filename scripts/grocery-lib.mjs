@@ -25,7 +25,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
-import { findChrome, detachedSpawnOptions } from './platform.mjs';
+import { findChrome, detachedSpawnOptions, browserVisibilityArgs } from './platform.mjs';
 import { logSearch, logDiscoveryAttempt } from './grocery-forensics.mjs';
 
 // ── constants ────────────────────────────────────────────────────────
@@ -62,6 +62,9 @@ export async function connectChrome() {
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
+    // Hidden off-screen by default so we never hijack the desktop; --show /
+    // GOMBWE_BROWSER_VISIBLE=1 brings it on-screen.
+    ...browserVisibilityArgs(),
     // Strip the automation tells (navigator.webdriver / "controlled by
     // automated software") that Imperva & co. fingerprint on.
     '--disable-blink-features=AutomationControlled',
