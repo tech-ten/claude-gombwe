@@ -3054,6 +3054,16 @@ The ingredients should be grocery item names with quantities scaled for ${family
         console.warn(`[gombwe] dns-receiver failed to start:`, err);
       }
 
+      // Self-heal the DNS feed: keep the router's remote-log target pointed at
+      // gombwe's current LAN IP. Without this, an IP drift (DHCP/Wi-Fi MAC
+      // rotation) silently kills the feed until someone notices days later.
+      try {
+        const { startDnsFeedHealer } = await import('./dns-feed-healer.js');
+        startDnsFeedHealer();
+      } catch (err) {
+        console.warn(`[gombwe] dns feed healer failed to start:`, err);
+      }
+
       // Bootstrap the local blocklist cache — fast load from disk if present,
       // background refresh if stale. Powers per-device category classification
       // (5b.2) and gives us a free domain→category index for the Usage chart.
