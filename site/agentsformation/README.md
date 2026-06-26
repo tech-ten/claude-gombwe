@@ -23,17 +23,35 @@ Copy individual files explicitly. Never `--delete`. Never bulk-sync the folder.
 
 ```bash
 # From the repo root:
-aws s3 cp site/agentsformation/index.html              s3://www.agentsform.ai/index.html
-aws s3 cp site/agentsformation/style.css               s3://www.agentsform.ai/style.css
-aws s3 cp site/agentsformation/blog.html               s3://www.agentsform.ai/blog.html
-aws s3 cp site/agentsformation/blog-managed-agents.html s3://www.agentsform.ai/blog-managed-agents.html
-aws s3 cp site/agentsformation/robots.txt              s3://www.agentsform.ai/robots.txt
-aws s3 cp site/agentsformation/sitemap.xml             s3://www.agentsform.ai/sitemap.xml
+aws s3 cp site/agentsformation/index.html    s3://www.agentsform.ai/index.html
+aws s3 cp site/agentsformation/style.css     s3://www.agentsform.ai/style.css
+aws s3 cp site/agentsformation/thesis.html   s3://www.agentsform.ai/thesis.html
+aws s3 cp site/agentsformation/registry.html s3://www.agentsform.ai/registry.html
+aws s3 cp site/agentsformation/robots.txt    s3://www.agentsform.ai/robots.txt
+aws s3 cp site/agentsformation/sitemap.xml   s3://www.agentsform.ai/sitemap.xml
 
 # Then invalidate CloudFront so the new versions land at the edge:
 aws cloudfront create-invalidation \
   --distribution-id E1QP7Q4V8GZBLK \
-  --paths /index.html /style.css /blog.html /blog-managed-agents.html /robots.txt /sitemap.xml
+  --paths /index.html /style.css /thesis.html /registry.html /robots.txt /sitemap.xml
+```
+
+### Removing the retired managed-IT pages from the live bucket
+
+The 2026-06 rewrite dropped the managed-IT pivot pages from this repo. Because
+we never `--delete`, those keys still live in the bucket and stay reachable by
+direct URL until removed explicitly. They target single file keys, so they
+cannot touch the Next.js app. Remove them when deploying the rewrite:
+
+```bash
+for p in what-we-cover ai-integration lawfirm-intern before-you-hire \
+         talk thanks blog blog-managed-agents; do
+  aws s3 rm "s3://www.agentsform.ai/$p.html"
+done
+aws cloudfront create-invalidation --distribution-id E1QP7Q4V8GZBLK \
+  --paths "/what-we-cover.html" "/ai-integration.html" "/lawfirm-intern.html" \
+          "/before-you-hire.html" "/talk.html" "/thanks.html" \
+          "/blog.html" "/blog-managed-agents.html"
 ```
 
 ## Long-term plan
