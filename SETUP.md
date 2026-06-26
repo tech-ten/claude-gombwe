@@ -23,6 +23,69 @@ gombwe status
 
 ---
 
+## Keeping gombwe running (auto-start on boot)
+
+`gombwe start --headless` runs the daemon in the foreground (gateway + dashboard + channels, no interactive REPL) so the OS can supervise it. Use the **native service manager**: a **launchd LaunchAgent** on macOS, a **systemd** unit on Linux. One hop, launchd/systemd → gombwe, no pm2. It restarts gombwe if it crashes (`KeepAlive`) and brings it back on login/boot (`RunAtLoad`).
+
+> **Why not pm2?** It was tried and dropped. On macOS the policy scanner spawns `claude -p`, whose Claude **subscription** token lives in your **login keychain**. Only a process inside your login (Aqua) session can read it — so gombwe must run as a per-user **LaunchAgent**, not a system LaunchDaemon (a Daemon runs in a different security session and can't reach the keychain, which silently breaks AI classification unless you switch to a billed `ANTHROPIC_API_KEY`). pm2's extra supervisor hop added nothing over launchd here.
+
+### macOS — launchd LaunchAgent
+
+The repo ships an installer template at [`deploy/launchd/com.gombwe.daemon.plist`](deploy/launchd/com.gombwe.daemon.plist). Fill in the `@…@` placeholders (`@NODE_BIN@`, `@GOMBWE_DIST@`, `@GOMBWE_REPO@`, `@HOME@`) and install it — **no sudo needed for a user agent**:
+
+```bash
+# render the template (example values — adjust to your paths)
+sed -e "s|@NODE_BIN@|$(which node)|" \
+    -e "s|@GOMBWE_DIST@|$(npm root -g)/claude-gombwe/dist|" \
+    -e "s|@GOMBWE_REPO@|$HOME/code/claude-gombwe|" \
+    -e "s|@HOME@|$HOME|g" \
+    deploy/launchd/com.gombwe.daemon.plist > ~/Library/LaunchAgents/com.gombwe.daemon.plist
+
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gombwe.daemon.plist
+```
+
+It **must** run `start --headless` — plain `start` opens a REPL that dies with no TTY and triggers a KeepAlive restart loop.
+
+> ⚠️ **Login, not boot:** a LaunchAgent starts at **login**, not at the login window. On a FileVault host that's moot — someone must unlock at the console each boot anyway, and that unlock logs them in, which fires the Agent. If you genuinely need pre-login start *and* AI classification, that needs a billed `ANTHROPIC_API_KEY` + a system LaunchDaemon instead. (The Cloudflare tunnel differs — it's a system LaunchDaemon that starts before login. See [cloudflare-setup.md](docs/cloudflare-setup.md).)
+
+### Linux — systemd
+
+```ini
+# /etc/systemd/system/gombwe.service  (or ~/.config/systemd/user/ for a user unit)
+[Unit]
+Description=gombwe daemon
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /path/to/claude-gombwe/dist/index.js start --headless
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now gombwe
+```
+
+### Managing the service (macOS)
+
+```bash
+launchctl list | grep com.gombwe.daemon      # is it running? (PID, last exit code)
+launchctl kickstart -k gui/$(id -u)/com.gombwe.daemon   # restart (after npm run build or config change)
+launchctl bootout gui/$(id -u)/com.gombwe.daemon        # stop + unload
+tail -f ~/.claude-gombwe/gombwe.out.log       # logs (stderr: gombwe.err.log)
+```
+
+After any code or config change: `npm run build` (if you edited source) then `launchctl kickstart -k gui/$(id -u)/com.gombwe.daemon`.
+
+> If `dashboard.gombwe.com` returns **502 / Bad Gateway**, the tunnel is up but gombwe itself isn't — the tunnel and gombwe are **separate services**. Check `launchctl list | grep gombwe`. (Tunnel setup: [cloudflare-setup.md](docs/cloudflare-setup.md).)
+
+---
+
 ## Adding Discord
 
 1. Create a bot at https://discord.com/developers/applications
