@@ -3154,8 +3154,8 @@ The ingredients should be grocery item names with quantities scaled for ${family
       // after boot, then refresh every 15 min.
       try {
         const svc = getNetworkService();
-        setTimeout(() => { try { svc.refreshAllDossiers(); } catch (e) { console.warn('[gombwe] dossier prebuild failed:', e); } }, 20_000);
-        setInterval(() => { try { svc.refreshAllDossiers(); } catch { /* */ } }, 15 * 60 * 1000);
+        setTimeout(() => { svc.refreshAllDossiers().catch(e => console.warn('[gombwe] dossier prebuild failed:', e)); }, 20_000);
+        setInterval(() => { svc.refreshAllDossiers().catch(() => { /* */ }); }, 15 * 60 * 1000);
       } catch (err) {
         console.warn(`[gombwe] dossier prebuilder failed to start:`, err);
       }
