@@ -10,7 +10,7 @@
  * No EventEmitter or WebSocket wiring here — that lives in the gateway. This
  * file is the data layer.
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync, statSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
@@ -160,17 +160,79 @@ function todayJsonlPath(): string {
   return join(DATA_DIR, `${new Date().toISOString().slice(0, 10)}.jsonl`);
 }
 
-/** Read today's JSONL snapshots. Each line is one minute's full snapshot. Cheap enough to re-read on every request. */
-function readTodaySnapshots(): Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }> {
-  const path = todayJsonlPath();
-  if (!existsSync(path)) return [];
-  const text = readFileSync(path, 'utf-8');
-  const out: Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }> = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
+// ── Parsed day-file cache ────────────────────────────────────────────
+// Reading + splitting + JSON.parsing the multi-MB DNS / flow / snapshot day
+// files on every dashboard poll and every 5s status broadcast was pegging the
+// CPU (a `sample` profile was dominated by String.split, JSON.parse and V8's
+// DateParser). Historical day files are immutable; only today's grows. Cache
+// the parsed records keyed by (size, mtime) so repeated reads are free, and
+// precompute a numeric `_tms` for the `ts` field so consumers never re-run
+// `new Date(str)`. Bounded so the cache can't grow without limit.
+export type JsonlRec = Record<string, unknown> & { _tms?: number };
+const _dayFileCache = new Map<string, { sig: string; recs: JsonlRec[]; heap: number }>();
+let _dayFileCacheHeap = 0;
+// Parsed JS objects cost roughly 5× the on-disk JSON text in V8 heap. Bound the
+// cache by ESTIMATED HEAP (not file bytes) — bounding by file size let 7-14 days
+// of parsed day files accumulate past the ~2 GB V8 limit and OOM-crash the
+// process. ~200 MB heap keeps today's hot files (re-read every 5s) cached with
+// headroom for the dossier builders' transient working set.
+const HEAP_PER_FILE_BYTE = 5;
+const DAY_FILE_CACHE_MAX_HEAP = 150 * 1024 * 1024;
+
+/**
+ * Read a JSONL day file (optionally .gz) and return its parsed records, cached
+ * by file size+mtime. Each record gets a numeric `_tms` if it has a string
+ * `ts`. The returned array is shared — callers MUST treat records as read-only.
+ */
+function readJsonlCached(path: string): JsonlRec[] {
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(path); } catch { return []; }
+  const sig = `${st.size}:${st.mtimeMs}`;
+  const hit = _dayFileCache.get(path);
+  if (hit && hit.sig === sig) return hit.recs;
+
+  let raw: string;
+  try {
+    raw = path.endsWith('.gz')
+      ? gunzipSync(readFileSync(path)).toString('utf-8')
+      : readFileSync(path, 'utf-8');
+  } catch { return []; }
+
+  const recs: JsonlRec[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    let r: JsonlRec;
+    try { r = JSON.parse(line); } catch { continue; }
+    const ts = r.ts;
+    if (typeof ts === 'string') r._tms = Date.parse(ts);
+    recs.push(r);
   }
-  return out;
+
+  const heap = st.size * HEAP_PER_FILE_BYTE;
+  if (hit) _dayFileCacheHeap -= hit.heap;
+  _dayFileCache.set(path, { sig, recs, heap });
+  _dayFileCacheHeap += heap;
+  // Evict oldest (insertion-ordered) entries until under the heap ceiling. Never
+  // evict the entry we just inserted (a single oversized file may exceed it).
+  while (_dayFileCacheHeap > DAY_FILE_CACHE_MAX_HEAP && _dayFileCache.size > 1) {
+    const oldest = _dayFileCache.keys().next().value as string;
+    if (oldest === path) break;
+    _dayFileCacheHeap -= _dayFileCache.get(oldest)!.heap;
+    _dayFileCache.delete(oldest);
+  }
+  return recs;
+}
+
+/** Read a DNS/flow/snapshot day file, transparently falling back to its .gz. */
+function readDayRecs(path: string): JsonlRec[] {
+  if (existsSync(path)) return readJsonlCached(path);
+  if (existsSync(path + '.gz')) return readJsonlCached(path + '.gz');
+  return [];
+}
+
+/** Read today's JSONL snapshots. Each line is one minute's full snapshot. Cached by mtime/size. */
+function readTodaySnapshots(): Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }> {
+  return readDayRecs(todayJsonlPath()) as unknown as Array<{ ts: string; devices: MtLease[]; arp: MtArp[]; connections: MtConnection[]; }>;
 }
 
 export class NetworkService {
@@ -603,9 +665,7 @@ export class NetworkService {
       const flowPath = join(DATA_DIR, `flows-${day}.jsonl`);
       if (existsSync(flowPath)) {
         usedNetflow = true;
-        for (const line of readFileSync(flowPath, 'utf-8').split('\n')) {
-          if (!line.trim()) continue;
-          let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+        for (const f of readDayRecs(flowPath)) {
           const src = String(f.src || ''), dst = String(f.dst || '');
           const bytes = Number(f.bytes || 0), dur = Number(f.dur_s || 0);
           const start = String(f.start || f.ts || ''), end = String(f.end || f.ts || '');
@@ -619,10 +679,7 @@ export class NetworkService {
         if (!existsSync(snapPath)) continue;
         usedSnapshots = true;
         const conns = new Map<string, { src: string; dst: string; orig: number; repl: number; first: string; last: string }>();
-        for (const line of readFileSync(snapPath, 'utf-8').split('\n')) {
-          if (!line.trim()) continue;
-          let s: { ts?: string; connections?: Array<Record<string, unknown>> };
-          try { s = JSON.parse(line); } catch { continue; }
+        for (const s of readDayRecs(snapPath) as Array<{ ts?: string; connections?: Array<Record<string, unknown>> }>) {
           const ts = s.ts || '';
           for (const c of s.connections || []) {
             const src = ipOnly(String(c['src-address'] || '')), dst = ipOnly(String(c['dst-address'] || ''));
@@ -728,11 +785,7 @@ export class NetworkService {
     for (let i = days; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
     for (const day of dayStrs) {
       const snap = join(DATA_DIR, `${day}.jsonl`);
-      if (!existsSync(snap)) continue;
-      for (const line of readFileSync(snap, 'utf-8').split('\n')) {
-        if (!line.trim()) continue;
-        let s: { ts?: string; devices?: Array<Record<string, unknown>> };
-        try { s = JSON.parse(line); } catch { continue; }
+      for (const s of readDayRecs(snap) as Array<{ ts?: string; devices?: Array<Record<string, unknown>> }>) {
         for (const d of s.devices || []) {
           if (String(d['mac-address'] || '').toUpperCase() === target && d.address && d.address !== lastIp) {
             changes.push([s.ts || '', String(d.address)]); lastIp = String(d.address);
@@ -756,40 +809,35 @@ export class NetworkService {
       const h = String(f.hostname || ''); if (h) auditDomains.add(reg(h).toLowerCase());
     }
 
-    // 2. read DNS day files, attribute, collect (domain, ts)
+    // 2. read DNS day files, attribute, collect (domain, ts). Use the cached
+    //    reader + precomputed `_tms` so we don't re-read/re-parse the multi-MB
+    //    day files or re-`new Date()` every record on each call.
     type Visit = { domain: string; category: string; concern: boolean; inAudit: boolean; first: string; last: string; count: number; down: number; up: number };
-    const byDomain = new Map<string, Array<string>>();  // domain -> sorted ts list
+    type TsRec = { tms: number; ts: string };
+    const byDomain = new Map<string, TsRec[]>();  // domain -> records (sorted later)
     for (const day of dayStrs) {
-      let raw: string | null = null;
-      const plain = join(DATA_DIR, `dns-${day}.jsonl`), gz = join(DATA_DIR, `dns-${day}.jsonl.gz`);
-      try {
-        if (existsSync(plain)) raw = readFileSync(plain, 'utf-8');
-        else if (existsSync(gz)) raw = gunzipSync(readFileSync(gz)).toString('utf-8');
-      } catch { raw = null; }
-      if (!raw) continue;
-      for (const line of raw.split('\n')) {
-        if (!line.trim()) continue;
-        let r: { ts?: string; client_ip?: string; hostname?: string };
-        try { r = JSON.parse(line); } catch { continue; }
-        if (!r.hostname || !r.ts || new Date(r.ts).getTime() < cutoffMs || r.client_ip !== ipAt(r.ts)) continue;
-        const dom = reg(r.hostname).toLowerCase();
-        if (!byDomain.has(dom)) byDomain.set(dom, []);
-        byDomain.get(dom)!.push(r.ts);
+      for (const r of readDayRecs(join(DATA_DIR, `dns-${day}.jsonl`)) as Array<JsonlRec & { client_ip?: string; hostname?: string }>) {
+        const tms = r._tms ?? NaN;
+        const ts = r.ts as string | undefined;
+        if (!r.hostname || !ts || !(tms >= cutoffMs) || r.client_ip !== ipAt(ts)) continue;
+        const dom = reg(String(r.hostname)).toLowerCase();
+        let arr = byDomain.get(dom); if (!arr) { arr = []; byDomain.set(dom, arr); }
+        arr.push({ tms, ts });
       }
     }
     // 3. aggregate into visits (10-min gap splits a visit)
     const GAP = 10 * 60 * 1000;
     const visits: Visit[] = [];
-    for (const [dom, tsList] of byDomain) {
-      tsList.sort();
+    for (const [dom, recs] of byDomain) {
+      recs.sort((a, b) => a.tms - b.tms);
       const cat = categorizeActivity(dom);
       const inAudit = auditDomains.has(dom);
-      let vs = tsList[0], prev = tsList[0], cnt = 0;
-      const push = (first: string, last: string, count: number) =>
-        visits.push({ domain: dom, category: cat.category, concern: cat.concern, inAudit, first, last, count, down: 0, up: 0 });
-      for (const t of tsList) {
-        if (new Date(t).getTime() - new Date(prev).getTime() > GAP) { push(vs, prev, cnt); vs = t; cnt = 0; }
-        prev = t; cnt++;
+      let vs = recs[0], prev = recs[0], cnt = 0;
+      const push = (first: TsRec, last: TsRec, count: number) =>
+        visits.push({ domain: dom, category: cat.category, concern: cat.concern, inAudit, first: first.ts, last: last.ts, count, down: 0, up: 0 });
+      for (const r of recs) {
+        if (r.tms - prev.tms > GAP) { push(vs, prev, cnt); vs = r; cnt = 0; }
+        prev = r; cnt++;
       }
       push(vs, prev, cnt);
     }
@@ -808,9 +856,7 @@ export class NetworkService {
     for (const day of dayStrs) {
       const fp = join(DATA_DIR, `flows-${day}.jsonl`);
       if (existsSync(fp)) {
-        for (const line of readFileSync(fp, 'utf-8').split('\n')) {
-          if (!line.trim()) continue;
-          let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
+        for (const f of readDayRecs(fp)) {
           const s = String(f.src || ''), dd = String(f.dst || ''), b = Number(f.bytes || 0);
           const st = String(f.start || f.ts || ''), en = String(f.end || f.ts || '');
           if (s === ipAt(st)) addDF(remoteDom(dd), b, 0, st, en);
@@ -818,17 +864,8 @@ export class NetworkService {
         }
       } else {
         const sp = join(DATA_DIR, `${day}.jsonl`);
-        let raw: string | null = null;
-        try {
-          if (existsSync(sp)) raw = readFileSync(sp, 'utf-8');
-          else if (existsSync(sp + '.gz')) raw = gunzipSync(readFileSync(sp + '.gz')).toString('utf-8');
-        } catch { raw = null; }
-        if (!raw) continue;
         const conns = new Map<string, { src: string; dst: string; orig: number; repl: number; first: string; last: string }>();
-        for (const line of raw.split('\n')) {
-          if (!line.trim()) continue;
-          let s: { ts?: string; connections?: Array<Record<string, unknown>> };
-          try { s = JSON.parse(line); } catch { continue; }
+        for (const s of readDayRecs(sp) as Array<{ ts?: string; connections?: Array<Record<string, unknown>> }>) {
           const ts = s.ts || '';
           for (const c of s.connections || []) {
             const src = String(c['src-address'] || '').split(':')[0], dst = String(c['dst-address'] || '').split(':')[0];
@@ -885,15 +922,12 @@ export class NetworkService {
     const cutoffMs = Date.now() - days * 86400_000;
     const dayStrs: string[] = [];
     for (let i = days; i >= 0; i--) dayStrs.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
-    const readDay = (path: string): string | null => {
-      try { if (existsSync(path)) return readFileSync(path, 'utf-8'); if (existsSync(path + '.gz')) return gunzipSync(readFileSync(path + '.gz')).toString('utf-8'); } catch { /* */ } return null;
-    };
     // MAC → IP change-points
     const changes: Array<[string, string]> = []; let lastIp: string | null = null;
     for (const day of dayStrs) {
-      const raw = readDay(join(DATA_DIR, `${day}.jsonl`)); if (!raw) continue;
-      for (const line of raw.split('\n')) { if (!line.trim()) continue; let s: { ts?: string; devices?: Array<Record<string, unknown>> }; try { s = JSON.parse(line); } catch { continue; }
-        for (const d of s.devices || []) if (String(d['mac-address'] || '').toUpperCase() === target && d.address && d.address !== lastIp) { changes.push([s.ts || '', String(d.address)]); lastIp = String(d.address); } }
+      for (const s of readDayRecs(join(DATA_DIR, `${day}.jsonl`)) as Array<{ ts?: string; devices?: Array<Record<string, unknown>> }>) {
+        for (const d of s.devices || []) if (String(d['mac-address'] || '').toUpperCase() === target && d.address && d.address !== lastIp) { changes.push([s.ts || '', String(d.address)]); lastIp = String(d.address); }
+      }
     }
     const ipAt = (ts: string): string | null => { if (!changes.length) return null; let ip = changes[0][1]; for (const [t, p] of changes) { if (t <= ts) ip = p; else break; } return ip; };
     const reg = (h: string) => { const p = h.split('.'); return p.length >= 2 ? p.slice(-2).join('.') : h; };
@@ -901,16 +935,17 @@ export class NetworkService {
     type Hit = { t: number; iso: string; cat: string; dom: string };
     const hits: Hit[] = [];
     for (const day of dayStrs) {
-      const raw = readDay(join(DATA_DIR, `dns-${day}.jsonl`)); if (!raw) continue;
-      for (const line of raw.split('\n')) { if (!line.trim()) continue; let r: { ts?: string; client_ip?: string; hostname?: string }; try { r = JSON.parse(line); } catch { continue; }
-        if (!r.hostname || !r.ts) continue;
-        const tms = new Date(r.ts).getTime(); if (tms < cutoffMs) continue;
-        if (r.client_ip !== ipAt(r.ts)) continue;
-        const c = categorizeActivity(r.hostname);
+      for (const r of readDayRecs(join(DATA_DIR, `dns-${day}.jsonl`)) as Array<JsonlRec & { client_ip?: string; hostname?: string }>) {
+        const ts = r.ts as string | undefined;
+        if (!r.hostname || !ts) continue;
+        const tms = r._tms ?? NaN; if (!(tms >= cutoffMs)) continue;
+        if (r.client_ip !== ipAt(ts)) continue;
+        const c = categorizeActivity(String(r.hostname));
         // Dossier = the damning categories only. ai-helper (homework tools) is a
         // separate concern and runs all-day, which would bloat sessions + bytes.
         if (!c.concern || c.category === 'ai-helper') continue;
-        hits.push({ t: tms, iso: r.ts, cat: c.category, dom: reg(r.hostname).toLowerCase() }); }
+        hits.push({ t: tms, iso: ts, cat: c.category, dom: reg(String(r.hostname)).toLowerCase() });
+      }
     }
     hits.sort((a, b) => a.t - b.t);
     // sessionize per category (30-min gap)
@@ -945,18 +980,17 @@ export class NetworkService {
     for (const day of days) {
       const fp = join(DATA_DIR, `flows-${day}.jsonl`);
       if (existsSync(fp)) {
-        for (const line of readFileSync(fp, 'utf-8').split('\n')) { if (!line.trim()) continue; let f: Record<string, unknown>; try { f = JSON.parse(line); } catch { continue; }
-          const st = new Date(String(f.start || f.ts)).getTime(); if (st < t0ms || st > t1ms) continue;
-          if (f.dst === ipAt(String(f.start || f.ts))) { const b = Number(f.bytes || 0); dl += b; bydst.set(String(f.src), (bydst.get(String(f.src)) || 0) + b);
+        for (const f of readDayRecs(fp)) {
+          const startStr = String(f.start || f.ts);
+          const st = (f.start ? Date.parse(startStr) : (f._tms ?? Date.parse(startStr))); if (st < t0ms || st > t1ms) continue;
+          if (f.dst === ipAt(startStr)) { const b = Number(f.bytes || 0); dl += b; bydst.set(String(f.src), (bydst.get(String(f.src)) || 0) + b);
             if (b > 50_000) { const et = new Date(String(f.end || f.start)).getTime(); tmin = Math.min(tmin, st); tmax = Math.max(tmax, et); } } }
       } else {
-        let raw: string | null = null;
-        try { const sp = join(DATA_DIR, `${day}.jsonl`); if (existsSync(sp)) raw = readFileSync(sp, 'utf-8'); else if (existsSync(sp + '.gz')) raw = gunzipSync(readFileSync(sp + '.gz')).toString('utf-8'); } catch { raw = null; }
-        if (!raw) continue;
+        const sp = join(DATA_DIR, `${day}.jsonl`);
         const conns = new Map<string, { dst: string; repl: number }>();
-        for (const line of raw.split('\n')) { if (!line.trim()) continue; let s: { ts?: string; connections?: Array<Record<string, unknown>> }; try { s = JSON.parse(line); } catch { continue; }
-          const tms = new Date(s.ts || '').getTime(); if (tms < t0ms || tms > t1ms) continue;
-          const ip = ipAt(s.ts || '');
+        for (const s of readDayRecs(sp) as Array<JsonlRec & { ts?: string; connections?: Array<Record<string, unknown>> }>) {
+          const tms = s._tms ?? NaN; if (!(tms >= t0ms) || tms > t1ms) continue;
+          const ip = ipAt(String(s.ts || ''));
           for (const c of s.connections || []) { const src = String(c['src-address'] || '').split(':')[0], dst = String(c['dst-address'] || '').split(':')[0];
             if (src === ip) { const k = `${c['src-address']}|${c['dst-address']}`; const repl = Number(c['repl-bytes'] || 0); const ex = conns.get(k); if (!ex || repl > ex.repl) conns.set(k, { dst, repl });
               if (repl > 50_000) { tmin = Math.min(tmin, tms); tmax = Math.max(tmax, tms); } } } }
@@ -986,12 +1020,27 @@ export class NetworkService {
     return { device: c.device, days, generatedAt: new Date(c.builtAt).toISOString(), cached, sessions };
   }
 
-  /** Background refresh: rebuild dossiers for every device that has any
-   *  concerning history (so the cache stays warm). Called on a timer. */
-  refreshAllDossiers(): void {
-    const macs = new Set<string>();
-    for (const f of this.allFlags()) { const m = String(f.mac || '').toUpperCase(); if (m && !this.selfMacs.has(m)) macs.add(m); }
-    for (const m of macs) { try { this.rebuildDossier(m); } catch { /* skip a bad device */ } }
+  /** Background refresh: rebuild dossiers for devices whose concerning history
+   *  has actually changed (so the cache stays warm). Called on a timer.
+   *
+   *  The forensic dossier is built purely from CONCERNING (flagged) DNS, so a
+   *  device's dossier cannot change unless it has a flag newer than its last
+   *  build. Gating on that turns this sweep from "re-read 90 days × every
+   *  flagged device, every 15 min" (which pegged the CPU and froze the gateway)
+   *  into near-zero work on a quiet network. Yields between rebuilds so a cold
+   *  build never blocks the event loop / HTTP server. */
+  async refreshAllDossiers(): Promise<void> {
+    const newestFlag = new Map<string, number>();
+    for (const f of this.allFlags()) {
+      const m = String(f.mac || '').toUpperCase(); if (!m || this.selfMacs.has(m)) continue;
+      const t = Date.parse(String(f.time || '')); if (!Number.isFinite(t)) continue;
+      if (t > (newestFlag.get(m) ?? 0)) newestFlag.set(m, t);
+    }
+    for (const [m, newest] of newestFlag) {
+      if (newest <= (this.dossierCache[m]?.builtAt ?? 0)) continue;   // nothing new since last build
+      try { this.rebuildDossier(m); } catch { /* skip a bad device */ }
+      await new Promise(r => setImmediate(r));                        // yield to the event loop
+    }
   }
 
   // ── Live strands (every active session as an inspectable thread) ──
