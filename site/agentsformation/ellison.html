@@ -3,407 +3,224 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tendai Ellison Mudavanhu — Engineer</title>
-<meta name="description" content="Tendai Ellison Mudavanhu — engineer and network planning manager. 15 years across telecom, network engineering and data platforms, now building AI systems that take real actions in the real world. Melbourne, Australia.">
-<meta property="og:title" content="Tendai Ellison Mudavanhu — Engineer">
-<meta property="og:description" content="Engineer building AI systems that take real actions: groceries, phone calls, tenders, home networks. Telecom + data platforms + applied AI. Melbourne.">
+<title>Tendai Ellison Mudavanhu</title>
+<meta name="description" content="Tendai Ellison Mudavanhu — engineer and network planning manager in Melbourne. Fifteen years in telecommunications and data platforms, now building applied AI systems.">
+<meta property="og:title" content="Tendai Ellison Mudavanhu">
+<meta property="og:description" content="Engineer and network planning manager in Melbourne, building applied AI systems.">
 <meta property="og:type" content="profile">
 <meta property="og:image" content="images/headshot.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23f4f2ec'/><rect x='2' y='2' width='12' height='12' fill='none' stroke='%23b23a2e' stroke-width='1.5'/><path d='M2 8h12M8 2v12' stroke='%23b23a2e' stroke-width='0.6'/></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%231f1e1b'/><text x='16' y='22' font-family='Georgia,serif' font-size='18' fill='%23fcfbf8' text-anchor='middle'>E</text></svg>">
 <style>
   :root{
-    --paper:#f4f2ec; --panel:#faf9f5; --ink:#181510; --ink-soft:#3a352c;
-    --muted:#736b5c; --faint:#a49b89; --rule:#ddd7c9; --rule-hard:#c7bfad;
-    --grid:rgba(24,21,16,.045); --accent:#b23a2e; --accent-deep:#8f2c22;
-    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
-    --sans:"IBM Plex Sans",system-ui,sans-serif;
-    --serif:"IBM Plex Serif",Georgia,serif;
+    --bg:#fcfbf8; --ink:#1f1e1b; --soft:#54514b; --faint:#8f8b81;
+    --rule:#e7e4db; --link:#35506e; --link-hover:#213850;
+    --sans:"Source Sans 3", system-ui, sans-serif;
+    --serif:"Source Serif 4", Georgia, "Times New Roman", serif;
   }
   *{box-sizing:border-box;}
   html{-webkit-text-size-adjust:100%;}
   body{
-    margin:0; color:var(--ink); background-color:var(--paper);
-    background-image:
-      linear-gradient(var(--grid) 1px,transparent 1px),
-      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-    background-size:26px 26px;
-    font-family:var(--serif); font-size:17px; line-height:1.62;
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--serif); font-size:18px; line-height:1.66;
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   }
-  .sheet{max-width:940px; margin:0 auto; padding:0 24px 96px;}
+  .page{max-width:680px; margin:0 auto; padding:64px 24px 96px;}
+  p{margin:0 0 1.05em;}
+  a{color:var(--link); text-decoration:none; border-bottom:1px solid rgba(53,80,110,.35); transition:color .15s, border-color .15s;}
+  a:hover{color:var(--link-hover); border-color:var(--link-hover);}
 
-  /* ── frame / registration marks ─────────────────────────── */
-  .rule{border:0; border-top:1px solid var(--rule); margin:0;}
-  .rule.hard{border-top:1px solid var(--rule-hard);}
-  a{color:var(--accent-deep); text-decoration:none; background-image:linear-gradient(var(--accent),var(--accent));
-    background-size:100% 1px; background-repeat:no-repeat; background-position:0 100%; padding-bottom:1px;
-    transition:background-size .18s ease, color .18s ease;}
-  a:hover{color:var(--accent); background-size:100% 1.5px;}
+  /* header */
+  header{display:flex; gap:26px; align-items:flex-start; margin-bottom:34px;}
+  header img.me{width:112px; height:130px; object-fit:cover; object-position:center 20%; border:1px solid var(--rule); border-radius:2px; flex-shrink:0;}
+  h1{font-family:var(--sans); font-weight:700; font-size:2.15rem; line-height:1.08; letter-spacing:-.01em; margin:2px 0 6px;}
+  .role{font-family:var(--sans); font-weight:400; font-size:1rem; color:var(--soft); margin:0 0 14px;}
+  .role .go{color:var(--faint);}
+  .lede{font-size:1.12rem; line-height:1.5; margin:0 0 15px;}
+  .links{font-family:var(--sans); font-size:.95rem;}
+  .links a{border-bottom:none; color:var(--link);}
+  .links a:hover{text-decoration:underline;}
+  .links .sep{color:var(--faint); margin:0 8px;}
 
-  .mono{font-family:var(--mono);}
-  .lbl{font-family:var(--mono); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+  /* sections */
+  section{border-top:1px solid var(--rule); padding-top:12px; margin-top:36px;}
+  .h{font-family:var(--sans); font-weight:600; font-size:.78rem; letter-spacing:.11em; text-transform:uppercase; color:var(--faint); margin:0 0 18px;}
+  .intro p:last-child{margin-bottom:0;}
 
-  /* ── masthead ───────────────────────────────────────────── */
-  header{padding:44px 0 22px;}
-  .desig{font-family:var(--mono); font-size:.72rem; letter-spacing:.32em; text-transform:uppercase; color:var(--accent-deep); margin:0 0 14px;}
-  .desig::before{content:"▚ "; color:var(--accent); letter-spacing:0;}
-  .masthead{display:grid; grid-template-columns:auto 1fr; gap:30px; align-items:start;}
-  figure.plate{margin:0; width:150px;}
-  figure.plate img{
-    display:block; width:150px; height:172px; object-fit:cover; object-position:center 22%;
-    border:1px solid var(--ink); filter:grayscale(1) contrast(1.06) brightness(1.02);
-    background:var(--panel);
+  /* experience */
+  .role-item{margin-bottom:22px;}
+  .role-item:last-child{margin-bottom:2px;}
+  .role-item .yr{font-family:var(--sans); font-size:.86rem; color:var(--faint); margin-bottom:1px;}
+  .role-item h3{font-family:var(--sans); font-weight:600; font-size:1.06rem; margin:0 0 2px; line-height:1.3;}
+  .role-item .org{font-family:var(--sans); font-size:.92rem; color:var(--soft); display:flex; align-items:center; gap:8px; margin-bottom:7px;}
+  .role-item .org img{height:16px; width:auto; max-width:66px; object-fit:contain; opacity:.9;}
+  .role-item p{font-size:1rem; line-height:1.55; color:var(--ink); margin:0;}
+
+  /* building */
+  .work{margin-bottom:20px;}
+  .work:last-child{margin-bottom:2px;}
+  .work h3{font-family:var(--sans); font-weight:600; font-size:1.06rem; margin:0 0 4px;}
+  .work h3 a{border-bottom:none;}
+  .work h3 a:hover{text-decoration:underline;}
+  .work h3 .m{font-family:var(--serif); font-weight:400; font-style:italic; font-size:1rem; color:var(--soft);}
+  .work p{font-size:1rem; line-height:1.55; margin:0; color:var(--ink);}
+
+  /* skills / lists */
+  .skill{display:grid; grid-template-columns:130px 1fr; gap:6px 20px; margin-bottom:12px; font-size:1rem;}
+  .skill:last-child{margin-bottom:0;}
+  .skill .k{font-family:var(--sans); font-weight:600; font-size:.92rem; color:var(--soft); padding-top:1px;}
+  .skill .v{color:var(--ink); line-height:1.5;}
+  ul.plain{margin:0; padding:0; list-style:none;}
+  ul.plain li{padding-left:18px; position:relative; margin-bottom:8px; font-size:1rem; line-height:1.5;}
+  ul.plain li:last-child{margin-bottom:0;}
+  ul.plain li::before{content:"·"; position:absolute; left:4px; color:var(--faint); font-weight:700;}
+  .muted{color:var(--soft);}
+
+  footer{border-top:1px solid var(--rule); padding-top:16px; margin-top:40px; font-family:var(--sans); font-size:.92rem; color:var(--soft);}
+  footer a{color:var(--link); border-bottom:none;}
+  footer a:hover{text-decoration:underline;}
+
+  @media (max-width:560px){
+    body{font-size:17px;}
+    .page{padding:44px 20px 72px;}
+    header{gap:18px;}
+    header img.me{width:92px; height:108px;}
+    h1{font-size:1.8rem;}
+    .skill{grid-template-columns:1fr; gap:1px;}
+    .skill .k{padding-top:6px;}
   }
-  figure.plate figcaption{font-family:var(--mono); font-size:.62rem; letter-spacing:.06em; color:var(--faint); margin-top:6px; text-align:left;}
-  h1{font-family:var(--sans); font-weight:700; font-size:clamp(2.05rem,5.6vw,3.05rem); line-height:1.02; letter-spacing:-.018em; margin:0 0 4px;}
-  .goesby{font-family:var(--mono); font-size:.74rem; letter-spacing:.05em; color:var(--muted); margin:0 0 16px;}
-  .goesby b{color:var(--ink); font-weight:600;}
-  .lede{font-family:var(--serif); font-style:italic; font-size:1.14rem; line-height:1.5; color:var(--ink-soft); margin:0 0 18px; max-width:34em;}
-  .links{font-family:var(--mono); font-size:.82rem; letter-spacing:.02em; display:flex; flex-wrap:wrap; gap:0 4px;}
-  .links a{padding-bottom:1px;}
-  .links .sep{color:var(--faint); padding:0 7px; background:none;}
-
-  /* ── telemetry strip ────────────────────────────────────── */
-  .telemetry{
-    font-family:var(--mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase;
-    color:var(--muted); display:flex; flex-wrap:wrap; align-items:center; gap:0 6px;
-    padding:11px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
-  }
-  .telemetry .k{color:var(--faint);}
-  .telemetry .dot{width:6px; height:6px; border-radius:50%; background:var(--accent); display:inline-block; box-shadow:0 0 0 3px rgba(178,58,46,.16);}
-  .telemetry .div{color:var(--rule-hard); padding:0 4px;}
-  .cursor{display:inline-block; width:.55em; height:1.05em; background:var(--accent); margin-left:2px; transform:translateY(2px); animation:blink 1.15s steps(1) infinite;}
-  @keyframes blink{50%{opacity:0;}}
-
-  /* ── content blocks (datasheet rows) ────────────────────── */
-  .block{display:grid; grid-template-columns:150px 1fr; gap:30px; padding:30px 0;}
-  .block+.block{border-top:1px solid var(--rule);}
-  .index{position:sticky; top:22px; align-self:start;}
-  .index .sec{font-family:var(--mono); font-weight:600; font-size:.8rem; color:var(--accent-deep); display:block;}
-  .index .ttl{font-family:var(--mono); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); display:block; margin-top:3px;}
-  .index .note{font-family:var(--mono); font-size:.62rem; color:var(--faint); display:block; margin-top:12px; line-height:1.5;}
-  .body>p:first-child{margin-top:0;}
-  .body p{margin:0 0 15px;}
-  .body p:last-child{margin-bottom:0;}
-  .abstract{font-size:1.04rem;}
-  .abstract .drop::first-letter{}
-
-  /* experience log */
-  .job{display:grid; grid-template-columns:auto 1fr; gap:20px; padding:15px 0;}
-  .job+.job{border-top:1px dotted var(--rule-hard);}
-  .job .when{font-family:var(--mono); font-size:.74rem; color:var(--muted); white-space:nowrap; padding-top:5px; letter-spacing:.01em;}
-  .job h3{font-family:var(--sans); font-weight:600; font-size:1.02rem; margin:0 0 2px; line-height:1.25;}
-  .job .org{font-family:var(--mono); font-size:.73rem; letter-spacing:.03em; color:var(--accent-deep); margin:0 0 7px; display:flex; align-items:center; gap:9px;}
-  .job .org .logo{height:19px; width:auto; max-width:74px; object-fit:contain; filter:grayscale(1) contrast(1.04); opacity:.68; transition:filter .2s ease, opacity .2s ease; flex-shrink:0;}
-  .job:hover .org .logo{filter:none; opacity:1;}
-  .job p{font-size:.98rem; line-height:1.55; margin:0; color:var(--ink-soft);}
-
-  /* systems */
-  .sys{padding:16px 0;}
-  .sys+.sys{border-top:1px solid var(--rule);}
-  .sys .head{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:7px;}
-  .sys h3{font-family:var(--sans); font-weight:600; font-size:1.12rem; margin:0;}
-  .sys h3 a{padding-bottom:2px;}
-  .sys .tag{font-family:var(--mono); font-size:.63rem; letter-spacing:.1em; text-transform:uppercase; color:var(--paper); background:var(--ink); padding:2px 6px;}
-  .sys .tag.live{background:var(--accent);}
-  .sys .kind{font-family:var(--mono); font-size:.73rem; color:var(--muted);}
-  .sys p{font-size:.98rem; line-height:1.56; margin:0 0 10px; color:var(--ink-soft);}
-  .facts{font-family:var(--mono); font-size:.72rem; letter-spacing:.02em; color:var(--muted); display:flex; flex-wrap:wrap; gap:5px 8px;}
-  .facts span{border:1px solid var(--rule-hard); padding:2px 7px; white-space:nowrap;}
-
-  /* code plate */
-  figure.code{margin:20px 0 6px; border:1px solid var(--ink); background:#14120d;}
-  figure.code figcaption{font-family:var(--mono); font-size:.64rem; letter-spacing:.06em; color:#b8b0a0; background:#211d16; padding:6px 12px; border-bottom:1px solid #34302650; display:flex; justify-content:space-between;}
-  figure.code figcaption .rt{color:#7d7768;}
-  pre{margin:0; padding:13px 14px; overflow-x:auto; font-family:var(--mono); font-size:.76rem; line-height:1.6; color:#e6e1d5;}
-  pre .c{color:#7d7768; font-style:italic;} /* comment */
-  pre .k{color:#e0996b;}                     /* keyword */
-  pre .f{color:#d8c98a;}                      /* fn/ident */
-  pre .s{color:#9ab87e;}                      /* string */
-  pre .p{color:#8f887a;}                      /* punctuation-ish */
-
-  /* spec table */
-  table.spec{width:100%; border-collapse:collapse; font-size:.9rem;}
-  table.spec td{padding:9px 0; border-top:1px solid var(--rule); vertical-align:top;}
-  table.spec tr:first-child td{border-top:0;}
-  table.spec td.key{font-family:var(--mono); font-size:.72rem; letter-spacing:.03em; text-transform:uppercase; color:var(--accent-deep); width:150px; padding-right:16px; padding-top:11px;}
-  table.spec td.val{font-family:var(--serif); color:var(--ink-soft); line-height:1.5;}
-
-  ul.list{margin:0; padding:0; list-style:none;}
-  ul.list li{padding:8px 0 8px 20px; position:relative; font-size:.97rem; color:var(--ink-soft); line-height:1.5;}
-  ul.list li+li{border-top:1px dotted var(--rule-hard);}
-  ul.list li::before{content:"—"; position:absolute; left:0; color:var(--accent); font-family:var(--mono);}
-  ul.list li b{color:var(--ink); font-weight:600; font-family:var(--sans); font-size:.92rem;}
-
-  /* colophon */
-  footer{padding:34px 0 0; border-top:1px solid var(--rule-hard); margin-top:8px;}
-  .colophon{display:grid; grid-template-columns:150px 1fr; gap:30px;}
-  .colophon .body{font-family:var(--mono); font-size:.74rem; line-height:1.7; color:var(--muted);}
-  .colophon .body a{font-size:.74rem;}
-  .colophon .body .big{font-family:var(--sans); font-size:1rem; color:var(--ink); letter-spacing:0; text-transform:none; display:block; margin-bottom:8px;}
-
-  /* reveal */
-  .rv{opacity:0; transform:translateY(10px); transition:opacity .6s cubic-bezier(.2,.7,.2,1), transform .6s cubic-bezier(.2,.7,.2,1);}
-  .rv.in{opacity:1; transform:none;}
-
-  @media (max-width:720px){
-    body{font-size:16px;}
-    .masthead{grid-template-columns:1fr; gap:20px;}
-    figure.plate,figure.plate img{width:128px;} figure.plate img{height:150px;}
-    .block{grid-template-columns:1fr; gap:12px; padding:26px 0;}
-    .index{position:static;}
-    .index .sec,.index .ttl{display:inline-block; margin:0;}
-    .index .ttl{margin-left:8px;}
-    .index .note{display:none;}
-    .job{grid-template-columns:1fr; gap:3px;}
-    .job .when{padding-top:0;}
-    .colophon{grid-template-columns:1fr; gap:10px;}
-    table.spec td.key{width:auto; display:block; padding-bottom:0;}
-    table.spec td.val{display:block; padding-top:2px;}
-    table.spec td{border-top:0;} table.spec tr{border-top:1px solid var(--rule); display:block; padding:8px 0;}
-  }
-  @media (prefers-reduced-motion:reduce){ .rv{opacity:1; transform:none; transition:none;} .cursor{animation:none;} }
-
-  /* print — this should print like a proper CV / datasheet */
   @media print{
-    body{background:#fff; font-size:10.5pt; color:#000;}
-    .sheet{max-width:none; padding:0;}
-    .telemetry,.cursor,figure.code{display:none;}
-    a{color:#000; background:none;}
-    .block,.colophon{grid-template-columns:120px 1fr; gap:16px; page-break-inside:avoid;}
-    .index{position:static;}
+    body{background:#fff; font-size:11pt; color:#000;}
+    .page{max-width:none; padding:0;}
+    a{color:#000; border:none;}
+    header img.me{filter:grayscale(1);}
+    section{page-break-inside:avoid;}
   }
 </style>
 </head>
 <body>
-<div class="sheet">
+<div class="page">
 
-  <!-- ══ MASTHEAD ══════════════════════════════════════════ -->
   <header>
-    <p class="desig">Engineer · Network Planning · Applied&nbsp;AI</p>
-    <div class="masthead">
-      <figure class="plate">
-        <img src="images/headshot.png" alt="Tendai Ellison Mudavanhu">
-        <figcaption>FIG. 0 — MELBOURNE, VIC</figcaption>
-      </figure>
-      <div>
-        <h1>Tendai&nbsp;Ellison<br>Mudavanhu</h1>
-        <p class="goesby">goes by <b>Ellison</b> · 15 years, telecom → data platforms → applied AI</p>
-        <p class="lede">I build AI systems that take real actions in the real world — ordering the groceries, answering the phone, reading a tender, running a home network.</p>
-        <p class="links">
-          <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a><span class="sep">/</span>
-          <a href="https://github.com/tech-ten">GitHub</a><span class="sep">/</span>
-          <a href="mailto:tmudavanhu@gmail.com">Email</a><span class="sep">/</span>
-          <a href="https://gombwe.com">Gombwe</a><span class="sep">/</span>
-          <a href="https://agentsform.ai">AgentsForm</a>
-        </p>
-      </div>
+    <img class="me" src="images/headshot.png" alt="Tendai Ellison Mudavanhu">
+    <div>
+      <h1>Tendai Ellison Mudavanhu</h1>
+      <p class="role">Engineer &amp; network planning manager · Melbourne, Australia <span class="go">· I go by Ellison</span></p>
+      <p class="lede">I build AI systems that take real actions in the real world — ordering the groceries, answering the phone, reading a tender, running a home network.</p>
+      <p class="links">
+        <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a><span class="sep">·</span>
+        <a href="https://github.com/tech-ten">GitHub</a><span class="sep">·</span>
+        <a href="mailto:tmudavanhu@gmail.com">Email</a><span class="sep">·</span>
+        <a href="https://gombwe.com">Gombwe</a><span class="sep">·</span>
+        <a href="https://agentsform.ai">AgentsForm</a>
+      </p>
     </div>
   </header>
 
-  <div class="telemetry" aria-hidden="true">
-    <span class="dot"></span>
-    <span><span class="k">LOC</span> Melbourne, VIC · −37.8136, 144.9631</span>
-    <span class="div">|</span>
-    <span><span class="k">LOCAL</span> <span id="clock">--:--:--</span> AEST</span>
-    <span class="div">|</span>
-    <span><span class="k">STATUS</span> building<span class="cursor"></span></span>
-  </div>
+  <section class="intro" style="border-top:none; padding-top:0; margin-top:0;">
+    <p>I&rsquo;m an engineer and network planning manager with fifteen years in telecommunications — RAN, fixed wireless, fibre, transmission, performance and capacity — across nbn, Ericsson, Telstra, Huawei, Astellia and Econet. Much of that work has been taking something slow and manual and turning it into a system that runs reliably and can be checked.</p>
+    <p>More recently I&rsquo;ve been building with large language models: applications, tool-use, APIs, data platforms and the infrastructure beneath them. It&rsquo;s the same engineering as network automation — clear data models, sensible guardrails, good logging, real evaluation — except the systems can now act on their own.</p>
+  </section>
 
-  <!-- ══ §01 ABSTRACT ══════════════════════════════════════ -->
-  <section class="block rv">
-    <div class="index"><span class="sec">§01</span><span class="ttl">Abstract</span><span class="note">summary · what I do · why</span></div>
-    <div class="body abstract">
-      <p>I&rsquo;m an engineer and network planning manager with fifteen years of production depth across telecommunications — RAN, fixed wireless, fibre, transmission, performance and capacity — at nbn, Ericsson, Telstra, Huawei, Astellia and Econet. The through-line has always been the same: take work that is slow, manual and repetitive and turn it into repeatable, observable systems.</p>
-      <p>Today that work has moved up the stack. I build LLM applications, tool-use and function-calling systems, API/backend services, data platforms and the AI infrastructure underneath them. The engineering discipline is identical to network automation — data models, guardrails, logs, evaluation loops — only now the systems can talk, decide and act. This page is written like a datasheet on purpose.</p>
+  <section>
+    <p class="h">Experience</p>
+
+    <div class="role-item">
+      <div class="yr">2025 — present</div>
+      <h3>Network Planning Manager — Data, AI &amp; Platform Engineering</h3>
+      <div class="org"><img src="images/logos/metcash.png" alt="">Metcash / TTHG / Mitre 10 · Melbourne</div>
+      <p>Building Meridian, a decision-support platform on Microsoft Fabric, AWS and Python/SQL with LLM/ML workflows — turning open-ended network-strategy and performance questions into working systems: data models, processing logic, dashboards and clear outputs for planning decisions.</p>
+    </div>
+
+    <div class="role-item">
+      <div class="yr">2020 — 2025</div>
+      <h3>Solutions Architect / Senior Network Engineer</h3>
+      <div class="org"><img src="images/logos/nbn.png" alt="">nbn Australia · Melbourne</div>
+      <p>Wrote Python automation that replaced manual RF and network design, cutting cycles from days to hours. Built and validated mmWave 5G line-of-sight prediction at scale as an input to the Max Achievable Speed Engine (MASE), and helped move Network Standard Design off spreadsheets and into governed workflows.</p>
+    </div>
+
+    <div class="role-item">
+      <div class="yr">2018 — 2020</div>
+      <h3>Network Engineer</h3>
+      <div class="org"><img src="images/logos/ericsson.png" alt="">Ericsson · Melbourne</div>
+      <p>Performance, troubleshooting and optimisation across infrastructure projects — using KPI and operational data to isolate faults, validate changes and improve reliability and capacity.</p>
+    </div>
+
+    <div class="role-item">
+      <div class="yr">2018</div>
+      <h3>Design Engineer</h3>
+      <div class="org"><img src="images/logos/telstra.png" alt="">Telstra · Melbourne</div>
+      <p>Metro Ethernet and fibre transport — L1/L2 physical and logical network designs.</p>
+    </div>
+
+    <div class="role-item">
+      <div class="yr">2011 — 2017</div>
+      <h3>Consultant / Engineer</h3>
+      <div class="org"><img src="images/logos/huawei.png" alt="">Astellia · Huawei · Econet Wireless · Africa, Europe &amp; China</div>
+      <p>Network analytics, probe-based assurance, call tracing, KPI extraction, RAN optimisation and field support across operator environments.</p>
     </div>
   </section>
 
-  <!-- ══ §02 EXPERIENCE ════════════════════════════════════ -->
-  <section class="block rv">
-    <div class="index"><span class="sec">§02</span><span class="ttl">Experience</span><span class="note">reverse chronological · hands-on throughout</span></div>
-    <div class="body">
-      <div class="job">
-        <div class="when">2025—<br>now</div>
-        <div>
-          <h3>Network Planning Manager — Data / AI / Platform Engineering</h3>
-          <p class="org"><img class="logo" src="images/logos/metcash.png" alt="Metcash">Metcash · TTHG · Mitre 10 — Melbourne</p>
-          <p>Building <b style="font-weight:600">Meridian</b>, a decision-support platform on Microsoft Fabric, AWS, Python/SQL and LLM/ML workflows. I turn ambiguous network-strategy and performance questions into working system components: data model, processing logic, guardrails, dashboards, narrative outputs and an operating rhythm — improving repeatability, auditability and turnaround.</p>
-        </div>
-      </div>
-      <div class="job">
-        <div class="when">2020—<br>2025</div>
-        <div>
-          <h3>Solutions Architect / Senior Network Engineer</h3>
-          <p class="org"><img class="logo" src="images/logos/nbn.png" alt="nbn">nbn Australia — Melbourne</p>
-          <p>Wrote Python automation that replaced manual RF/network design — long manual cycles cut from days to hours with consistent, repeatable outputs. Built and validated mmWave 5G line-of-sight prediction at scale as an input to the Max Achievable Speed Engine (MASE), comparing predicted LoS against measured RSRP, SINR and speed. Helped move Network Standard Design logic off spreadsheets and into governed system workflows.</p>
-        </div>
-      </div>
-      <div class="job">
-        <div class="when">2018—<br>2020</div>
-        <div>
-          <h3>Network Engineer</h3>
-          <p class="org"><img class="logo" src="images/logos/ericsson.png" alt="Ericsson">Ericsson — Melbourne</p>
-          <p>Performance, troubleshooting and optimisation across infrastructure projects — using interface, KPI and operational data to isolate faults, validate changes and improve reliability, capacity and customer experience.</p>
-        </div>
-      </div>
-      <div class="job">
-        <div class="when">2018</div>
-        <div>
-          <h3>Design Engineer</h3>
-          <p class="org"><img class="logo" src="images/logos/telstra.png" alt="Telstra">Telstra — Melbourne</p>
-          <p>Metro Ethernet and fibre transport services — L1/L2 physical and logical network designs, strengthening infrastructure architecture fundamentals.</p>
-        </div>
-      </div>
-      <div class="job">
-        <div class="when">2011—<br>2017</div>
-        <div>
-          <h3>Consultant / Engineer</h3>
-          <p class="org"><img class="logo" src="images/logos/huawei.png" alt="Huawei">Astellia · Huawei · Econet Wireless — Africa / Europe / China</p>
-          <p>Network analytics, probe-based assurance, call tracing, KPI extraction, RAN optimisation and field support across operator environments.</p>
-        </div>
-      </div>
+  <section>
+    <p class="h">Building</p>
+
+    <div class="work">
+      <h3><a href="https://gombwe.com">Gombwe</a> <span class="m">— personal AI assistant</span></h3>
+      <p>An assistant I reach through Discord that can act on my Mac and home network. It handles real errands — grocery orders across Coles and Woolworths, school events, meal planning — and runs continuous monitoring on the home MikroTik router with per-device controls. It keeps itself running: restarting on failure and repairing its own data feeds.</p>
+    </div>
+
+    <div class="work">
+      <h3><a href="https://agentsform.ai">AgentsForm</a> <span class="m">— skills for agents, on demand</span></h3>
+      <p>A product idea built on a simple bet: the best interface is no interface at all. An agent hits a task it can&rsquo;t finish, describes the skill it needs, the skill gets built on demand, and it completes the job — turning forms, prompts and API actions into reusable automation.</p>
+    </div>
+
+    <div class="work">
+      <h3>AI Receptionist <span class="m">— for trades &amp; service businesses</span></h3>
+      <p>A workflow for the unanswered phone: missed-call recovery, customer intake, job classification, booking handoff and human escalation — for plumbers, electricians and operators who lose work after hours.</p>
+    </div>
+
+    <div class="work">
+      <h3><a href="https://tradeprocurement.com.au">TradeProcurement</a> <span class="m">— tender &amp; RFP automation</span></h3>
+      <p>AI for procurement work: document ingestion, requirement extraction, supplier comparison and response drafting — faster comprehension and cleaner comparison, with the commercial call kept human.</p>
     </div>
   </section>
 
-  <!-- ══ §03 SYSTEMS ═══════════════════════════════════════ -->
-  <section class="block rv">
-    <div class="index"><span class="sec">§03</span><span class="ttl">Systems</span><span class="note">things I&rsquo;ve built and run — not slideware</span></div>
-    <div class="body">
-
-      <div class="sys">
-        <div class="head">
-          <span class="tag live">Live</span>
-          <h3><a href="https://gombwe.com">Gombwe</a></h3>
-          <span class="kind">personal AI assistant &amp; tool-use operating layer</span>
-        </div>
-        <p>An assistant reached through Discord that actually touches my Mac and local network — not a chat box. It runs real life-management: grocery ordering across Coles and Woolworths, school events, meal planning, and 24/7 home-network monitoring on a MikroTik router (NetFlow + DNS capture, per-device policy, parental controls). It supervises itself: crash-recovering launchd service, a self-healing DNS-log feed, and an AI policy scanner. The code below is the real drift-repair loop that keeps its monitoring alive.</p>
-        <figure class="code">
-          <figcaption><span>gombwe/src/dns-feed-healer.ts</span><span class="rt">// keeps the router pointed at us</span></figcaption>
-<pre><span class="k">export async function</span> <span class="f">ensureDnsLogTarget</span>() {
-  <span class="k">const</span> me = <span class="f">currentLanIp</span>();                       <span class="c">// our LAN IP, via DHCP</span>
-  <span class="k">const</span> action = (<span class="k">await</span> mikrotik.<span class="f">get</span>(<span class="s">"/system/logging/action"</span>))
-                   .<span class="f">find</span>(a => a.name === <span class="s">"remote"</span>);
-  <span class="k">if</span> (action.remote === me) <span class="k">return</span> <span class="s">"ok"</span>;          <span class="c">// already correct</span>
-  <span class="k">await</span> mikrotik.<span class="f">patch</span>(action, { remote: me });    <span class="c">// repoint on drift</span>
-  <span class="k">await</span> <span class="f">toggleRule</span>(<span class="s">"dns→remote"</span>);              <span class="c">// force RouterOS to re-resolve</span>
-  <span class="k">return</span> <span class="s">`repointed → ${me}`</span>;
-}</pre>
-        </figure>
-        <div class="facts"><span>TypeScript / Node</span><span>Claude tool-use</span><span>MikroTik REST</span><span>NetFlow v9</span><span>launchd</span><span>SQLite</span></div>
-      </div>
-
-      <div class="sys">
-        <div class="head">
-          <span class="tag">Vision</span>
-          <h3><a href="https://agentsform.ai">AgentsForm</a></h3>
-          <span class="kind">where agents get the skills they don&rsquo;t have yet</span>
-        </div>
-        <p>A product thesis: the best interface is no interface at all. An agent hits a task it can&rsquo;t finish, describes the skill it needs, the skill gets built on demand, the agent pays for it, and it completes the job. Forms, prompts, context and API actions become repeatable, callable automation — without every use case needing a bespoke software project.</p>
-        <div class="facts"><span>agent-to-agent</span><span>MCP servers</span><span>skills-on-demand</span></div>
-      </div>
-
-      <div class="sys">
-        <div class="head">
-          <span class="tag">Build</span>
-          <h3>AI Receptionist</h3>
-          <span class="kind">missed-call recovery for trades &amp; service businesses</span>
-        </div>
-        <p>The unanswered-phone problem, as a workflow: missed-call recovery, customer intake, job classification, urgency detection, booking handoff and human escalation — with business-specific instructions, transcript summaries, CRM/calendar hooks and confidence-based fallbacks. For plumbers, electricians and operators who lose work after hours.</p>
-        <div class="facts"><span>speech + LLM</span><span>intake / triage</span><span>CRM integration</span></div>
-      </div>
-
-      <div class="sys">
-        <div class="head">
-          <span class="tag">Build</span>
-          <h3><a href="https://tradeprocurement.com.au">TradeProcurement</a></h3>
-          <span class="kind">AI procurement &amp; tender automation</span>
-        </div>
-        <p>An AI-assisted procurement workflow for tender/RFP analysis: document ingestion, requirement extraction, supplier comparison, response drafting and structured decision support — faster comprehension and cleaner comparison, with commercial judgement kept human.</p>
-        <div class="facts"><span>document ingestion</span><span>retrieval / extraction</span><span>structured output</span></div>
-      </div>
-
-    </div>
+  <section>
+    <p class="h">Skills</p>
+    <div class="skill"><div class="k">LLM applications</div><div class="v">Prompt design, structured outputs, tool-use / function calling, retrieval, evaluation, guardrails.</div></div>
+    <div class="skill"><div class="k">Backend</div><div class="v">Python, SQL, REST APIs, FastAPI, Node.js / TypeScript.</div></div>
+    <div class="skill"><div class="k">Cloud &amp; data</div><div class="v">AWS (Lambda, DynamoDB, CDK), Microsoft Fabric, PostgreSQL / PostGIS, pipelines and dashboards.</div></div>
+    <div class="skill"><div class="k">AI infrastructure</div><div class="v">GPU/HPC fundamentals, Linux, Docker / Kubernetes, observability.</div></div>
+    <div class="skill"><div class="k">Networks</div><div class="v">RAN, fixed wireless, fibre, transmission, performance &amp; capacity, RF automation, mmWave modelling.</div></div>
   </section>
 
-  <!-- ══ §04 STACK ═════════════════════════════════════════ -->
-  <section class="block rv">
-    <div class="index"><span class="sec">§04</span><span class="ttl">Stack</span><span class="note">what I actually reach for</span></div>
-    <div class="body">
-      <table class="spec">
-        <tr><td class="key">LLM apps</td><td class="val">Prompt design, structured outputs, tool-use / function calling, retrieval-assisted &amp; source-grounded responses, evaluation, guardrails, human review.</td></tr>
-        <tr><td class="key">Backend</td><td class="val">Python, SQL, REST/API design, FastAPI-style services, Node.js / TypeScript, webhooks, JSON schemas, Git-based delivery.</td></tr>
-        <tr><td class="key">Cloud &amp; data</td><td class="val">AWS (Lambda / DynamoDB / CDK), Microsoft Fabric, PostgreSQL / PostGIS, ingestion, transformation, dashboards, reproducible pipelines.</td></tr>
-        <tr><td class="key">AI infra</td><td class="val">GPU/HPC fundamentals, Spectrum / Mellanox concepts, Linux, Docker / Kubernetes, production observability.</td></tr>
-        <tr><td class="key">Networks</td><td class="val">RAN, fixed wireless, fibre, transmission, performance &amp; capacity, KPI/telemetry analysis, RF automation, mmWave 5G modelling.</td></tr>
-      </table>
-    </div>
+  <section>
+    <p class="h">Certifications</p>
+    <ul class="plain">
+      <li>NVIDIA-Certified Associate — AI Infrastructure &amp; Operations (NCA-AIIO)</li>
+      <li>AWS Certified Cloud Practitioner</li>
+      <li>NVIDIA — Introduction to Transformer-Based NLP</li>
+      <li><span class="muted">In progress:</span> NVIDIA-Certified Professional — AI Infrastructure (NCP-AII) &amp; AI Operations (NCP-AIO)</li>
+    </ul>
   </section>
 
-  <!-- ══ §05 CREDENTIALS ═══════════════════════════════════ -->
-  <section class="block rv">
-    <div class="index"><span class="sec">§05</span><span class="ttl">Credentials</span><span class="note">certifications · education</span></div>
-    <div class="body">
-      <p class="lbl" style="margin:0 0 4px">Certifications</p>
-      <ul class="list">
-        <li><b>NVIDIA-Certified Associate</b> — AI Infrastructure &amp; Operations (NCA-AIIO). <span class="mono" style="font-size:.72rem;color:var(--muted)">· completed</span></li>
-        <li><b>AWS Certified Cloud Practitioner</b>; NVIDIA Introduction to Transformer-Based NLP. <span class="mono" style="font-size:.72rem;color:var(--muted)">· completed</span></li>
-        <li><b>NVIDIA-Certified Professional</b> — AI Infrastructure (NCP-AII) &amp; AI Operations (NCP-AIO). <span class="mono" style="font-size:.72rem;color:var(--accent-deep)">· in progress</span></li>
-      </ul>
-      <p class="lbl" style="margin:22px 0 4px">Education</p>
-      <ul class="list">
-        <li><b>Graduate Certificate, Business Administration</b> — Melbourne Business School, University of Melbourne. I finished the graduate certificate and chose not to continue to the full MBA — partly cost, mostly to keep my hands on the engineering rather than step away from it. Genuine respect for those who complete the full track; mine is simply a different road to the same commercial judgement.</li>
-        <li><b>Bachelor of Engineering, Electronic Engineering</b> — National University of Science &amp; Technology (NUST), 2005–2010.</li>
-        <li><b>Embedded Software &amp; Hardware intern</b> — BFH, Bern, Switzerland, 2008–2009 (embedded systems, FPGA).</li>
-      </ul>
-    </div>
+  <section>
+    <p class="h">Education</p>
+    <ul class="plain">
+      <li>Graduate Certificate in Business Administration — Melbourne Business School, University of Melbourne</li>
+      <li>Bachelor of Engineering, Electronic Engineering — National University of Science &amp; Technology (NUST), 2005–2010</li>
+      <li>Embedded software &amp; hardware internship — BFH, Bern, Switzerland, 2008–2009</li>
+    </ul>
   </section>
 
-  <!-- ══ COLOPHON ══════════════════════════════════════════ -->
   <footer>
-    <div class="colophon">
-      <div class="index"><span class="sec mono" style="color:var(--muted);font-size:.68rem;letter-spacing:.14em">COLOPHON</span></div>
-      <div class="body">
-        <span class="big">Tendai Ellison Mudavanhu — Melbourne, VIC, Australia</span>
-        <a href="mailto:tmudavanhu@gmail.com">tmudavanhu@gmail.com</a> · 0410&nbsp;386&nbsp;167 ·
-        <a href="https://www.linkedin.com/in/ellison-mudavanhu">linkedin.com/in/ellison-mudavanhu</a> ·
-        <a href="https://github.com/tech-ten">github.com/tech-ten</a><br><br>
-        Typeset in IBM&nbsp;Plex. No framework, no tracker, one HTML file.
-        <a href="#" onclick="window.print();return false;">Print this page →</a>
-      </div>
-    </div>
+    Melbourne, VIC · <a href="mailto:tmudavanhu@gmail.com">tmudavanhu@gmail.com</a> ·
+    <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a> ·
+    <a href="https://github.com/tech-ten">GitHub</a>
   </footer>
 
 </div>
-
-<script>
-  // Live Melbourne clock — an engineering telemetry touch, not decoration.
-  (function(){
-    var el = document.getElementById('clock');
-    if(!el) return;
-    function tick(){
-      try{
-        el.textContent = new Intl.DateTimeFormat('en-GB',{
-          hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,
-          timeZone:'Australia/Melbourne'
-        }).format(new Date());
-      }catch(e){ el.textContent = '—'; }
-    }
-    tick(); setInterval(tick,1000);
-  })();
-
-  // Staggered reveal on scroll (respects reduced-motion via CSS fallback).
-  (function(){
-    var blocks = document.querySelectorAll('.rv');
-    if(!('IntersectionObserver' in window)){ blocks.forEach(function(b){b.classList.add('in');}); return; }
-    var io = new IntersectionObserver(function(entries){
-      entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
-    },{rootMargin:'0px 0px -8% 0px', threshold:.08});
-    blocks.forEach(function(b){ io.observe(b); });
-  })();
-</script>
 </body>
 </html>
