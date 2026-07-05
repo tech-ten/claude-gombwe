@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tendai Ellison Mudavanhu</title>
-<meta name="description" content="Tendai Ellison Mudavanhu, engineer and network planning manager in Melbourne. Fifteen years in telecommunications and data platforms, now building applied AI systems.">
+<meta name="description" content="Tendai Ellison Mudavanhu, engineer in Melbourne. Fifteen years in telecom networks, now building AI systems that take real actions in the real world.">
 <meta property="og:title" content="Tendai Ellison Mudavanhu">
-<meta property="og:description" content="Engineer and network planning manager in Melbourne, building applied AI systems that take real actions in the real world.">
+<meta property="og:description" content="Engineer in Melbourne building AI systems that take real actions in the real world.">
 <meta property="og:type" content="profile">
 <meta property="og:image" content="images/headshot.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,8 +15,8 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='5' fill='%231f1e1b'/><text x='16' y='23' font-family='Georgia,serif' font-size='19' font-weight='700' fill='%23fcfbf8' text-anchor='middle'>E</text></svg>">
 <style>
   :root{
-    --bg:#fcfbf8; --ink:#201e1a; --soft:#55514a; --faint:#8d897f;
-    --rule:#e6e2d9; --link:#345a7a; --link-hover:#213b52;
+    --bg:#fcfbf8; --ink:#201e1a; --soft:#544f47; --faint:#8d897f;
+    --rule:#e6e2d9; --link:#1667b0; --link-hover:#0f4d86;
     --sans:"Source Sans 3", system-ui, sans-serif;
     --serif:"Source Serif 4", Georgia, "Times New Roman", serif;
   }
@@ -28,88 +28,61 @@
     font-size:18px; line-height:1.62;
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   }
-  .page{max-width:690px; margin:0 auto; padding:70px 26px 100px;}
-  p{margin:0 0 1.1em;}
+  .page{max-width:684px; margin:0 auto; padding:70px 26px 96px;}
+  p{margin:0 0 1.15em;}
   strong,b{font-weight:600;}
-  a{color:var(--link); text-decoration:none; border-bottom:1px solid rgba(52,90,122,.32); transition:color .15s, border-color .15s;}
-  a:hover{color:var(--link-hover); border-color:var(--link-hover);}
+  a{color:var(--link); text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:2px; text-decoration-color:rgba(22,103,176,.4); transition:color .12s, text-decoration-color .12s;}
+  a:hover{color:var(--link-hover); text-decoration-color:currentColor;}
 
-  /* header */
-  header{display:flex; gap:28px; align-items:flex-start; margin-bottom:8px;}
-  header img.me{width:116px; height:134px; object-fit:cover; object-position:center 18%;
+  header{display:flex; gap:28px; align-items:flex-start; margin-bottom:34px;}
+  header img.me{width:118px; height:136px; object-fit:cover; object-position:center 18%;
     border:1px solid var(--rule); border-radius:2px; flex-shrink:0;}
-  h1{font-family:var(--sans); font-weight:700; font-size:2.3rem; line-height:1.05;
-    letter-spacing:-.015em; margin:2px 0 8px;}
-  .tag{font-family:var(--sans); font-size:.95rem; color:var(--soft); margin:0 0 14px; letter-spacing:.005em;}
-  .tag b{color:var(--ink); font-weight:600;}
-  .lede{font-size:1.16rem; line-height:1.48; margin:0 0 16px; color:var(--ink);}
-  .links{font-family:var(--sans); font-size:.95rem;}
-  .links a{border-bottom:none;}
-  .links a:hover{text-decoration:underline;}
-  .links .sep{color:var(--faint); margin:0 9px;}
+  h1{font-family:var(--sans); font-weight:700; font-size:2.35rem; line-height:1.05;
+    letter-spacing:-.015em; margin:2px 0 10px;}
+  .lede{font-size:1.17rem; line-height:1.48; margin:0 0 16px;}
+  .links{font-family:var(--sans); font-size:1rem; font-weight:500;}
+  .links a{text-decoration:none; margin-right:2px;}
+  .links a:hover{text-decoration:underline; text-underline-offset:3px;}
+  .links .sep{color:var(--faint); margin:0 9px; font-weight:400;}
 
-  /* sections */
-  section{border-top:1px solid var(--rule); margin-top:40px; padding-top:14px;}
-  .lead{border-top:none; margin-top:30px; padding-top:0;}
-  .lead p{font-size:1.08rem; line-height:1.56;}
-  .lead p:last-child{margin-bottom:0;}
-  h2{font-family:var(--sans); font-weight:600; font-size:.76rem; letter-spacing:.13em;
-    text-transform:uppercase; color:var(--faint); margin:0 0 20px;}
+  /* narrated timeline */
+  .tl{display:grid; grid-template-columns:92px 1fr; gap:26px; margin-bottom:20px;}
+  .tl:last-of-type{margin-bottom:6px;}
+  .tl .y{font-family:var(--sans); font-weight:600; font-size:.9rem; color:var(--faint); padding-top:4px; letter-spacing:.01em; white-space:nowrap;}
+  .tl .t{margin:0; line-height:1.55;}
+  .tl .t .logo{height:15px; width:auto; max-width:60px; object-fit:contain; opacity:.9;
+    vertical-align:-2px; margin-right:1px;}
+  .tl .t .co{font-weight:600;}
 
-  /* experience */
-  .item{margin-bottom:24px;}
-  .item:last-child{margin-bottom:2px;}
-  .item .yr{font-family:var(--sans); font-size:.85rem; color:var(--faint); margin-bottom:1px; letter-spacing:.01em;}
-  .item h3{font-family:var(--sans); font-weight:600; font-size:1.08rem; line-height:1.3; margin:0 0 3px;}
-  .item .org{font-family:var(--sans); font-size:.92rem; color:var(--soft);
-    display:flex; align-items:center; gap:8px; margin-bottom:8px;}
-  .item .org img{height:16px; width:auto; max-width:64px; object-fit:contain; opacity:.92;}
-  .item p{margin:0; line-height:1.55;}
+  h2{font-family:var(--sans); font-weight:600; font-size:1.28rem; letter-spacing:-.01em;
+    margin:44px 0 16px;}
+  .bio p:last-child{margin-bottom:0;}
 
-  /* building */
-  .build{margin-bottom:22px;}
+  .build{margin-bottom:16px;}
   .build:last-child{margin-bottom:2px;}
-  .build h3{font-family:var(--sans); font-weight:600; font-size:1.08rem; margin:0 0 4px;}
-  .build h3 a{border-bottom:none;}
-  .build h3 a:hover{text-decoration:underline;}
-  .build h3 .m{font-family:var(--serif); font-weight:400; font-style:italic; color:var(--soft);}
   .build p{margin:0; line-height:1.55;}
+  .build .n{font-weight:600;}
 
-  /* skills */
-  .row{display:grid; grid-template-columns:150px 1fr; gap:4px 22px; margin-bottom:13px;}
-  .row:last-child{margin-bottom:0;}
-  .row .k{font-family:var(--sans); font-weight:600; font-size:.9rem; color:var(--soft); padding-top:2px;}
-  .row .v{line-height:1.5;}
-
-  /* lists */
-  ul.plain{margin:0; padding:0; list-style:none;}
-  ul.plain li{padding-left:20px; position:relative; margin-bottom:9px; line-height:1.5;}
-  ul.plain li:last-child{margin-bottom:0;}
-  ul.plain li::before{content:""; position:absolute; left:2px; top:.68em; width:6px; height:6px;
-    border:1px solid var(--faint); border-radius:50%;}
-  ul.plain li b{font-family:var(--sans); font-weight:600; font-size:.92rem;}
-  .note{color:var(--soft);}
-
-  footer{border-top:1px solid var(--rule); margin-top:44px; padding-top:18px;
-    font-family:var(--sans); font-size:.9rem; color:var(--soft);}
-  footer a{color:var(--link); border-bottom:none;}
-  footer a:hover{text-decoration:underline;}
+  footer{margin-top:46px; padding-top:20px; border-top:1px solid var(--rule);
+    font-size:1rem; line-height:1.55; color:var(--soft);}
+  .contact{font-family:var(--sans); font-size:.94rem; margin-top:12px; color:var(--soft);}
+  .contact a{color:var(--link);}
 
   @media (max-width:560px){
     body{font-size:17px;}
-    .page{padding:46px 20px 76px;}
+    .page{padding:46px 20px 74px;}
     header{gap:18px;}
-    header img.me{width:94px; height:110px;}
-    h1{font-size:1.85rem;}
-    .row{grid-template-columns:1fr; gap:1px;}
-    .row .k{padding-top:7px;}
+    header img.me{width:96px; height:112px;}
+    h1{font-size:1.9rem;}
+    .tl{grid-template-columns:1fr; gap:2px;}
+    .tl .y{padding-top:0;}
   }
   @media print{
     body{background:#fff; color:#000; font-size:11pt;}
     .page{max-width:none; padding:0;}
-    a{color:#000; border:none;}
+    a{color:#000; text-decoration:none;}
     header img.me{filter:grayscale(1);}
-    section,.item,.build{page-break-inside:avoid;}
+    .tl,.build{page-break-inside:avoid;}
   }
 </style>
 </head>
@@ -120,8 +93,7 @@
     <img class="me" src="images/headshot.png" alt="Tendai Ellison Mudavanhu">
     <div>
       <h1>Tendai Ellison Mudavanhu</h1>
-      <p class="tag">Engineer · Network Planning Manager · goes by <b>Ellison</b> · Melbourne, Australia</p>
-      <p class="lede">I like to build AI systems that take real actions in the real world: ordering the groceries, answering the phone, reading a tender, running a home network.</p>
+      <p class="lede">I&rsquo;m an engineer in Melbourne. I like building AI systems that take real actions in the real world: ordering the groceries, answering the phone, reading a tender, running a home network. Most people call me Ellison.</p>
       <p class="links">
         <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a><span class="sep">·</span>
         <a href="https://github.com/tech-ten">GitHub</a><span class="sep">·</span>
@@ -132,104 +104,63 @@
     </div>
   </header>
 
-  <section class="lead">
-    <p>I&rsquo;m an engineer and network planning manager with 15 years across telecommunications, network engineering, data platforms and applied AI. My background is production engineering depth at nbn, Ericsson, Telstra, Huawei, Astellia and Econet: RAN, fixed wireless, fibre, transmission, performance, capacity and the operational systems that keep networks running.</p>
-    <p>These days my build work spans the full AI stack: LLM applications, tool-use and function-calling, API and backend services, cloud and data platforms, and AI infrastructure. What I care about is the same thing that made network automation worth doing. Take work that is slow, manual and repetitive and turn it into repeatable, observable systems. Only now the systems can talk, decide and act.</p>
-  </section>
+  <div class="tl">
+    <div class="y">2025 to now</div>
+    <p class="t"><img class="logo" src="images/logos/metcash.png" alt=""> I&rsquo;m a network planning manager at <span class="co">Metcash</span>, across Mitre 10 and TTHG. I&rsquo;m building <strong>Meridian</strong>, a decision-support platform on Microsoft Fabric and AWS that turns messy network and performance questions into something a planner can actually act on. It&rsquo;s the first job where my network background and my AI work sit in the same place.</p>
+  </div>
 
-  <section>
-    <h2>Experience</h2>
+  <div class="tl">
+    <div class="y">2020 to 2025</div>
+    <p class="t"><img class="logo" src="images/logos/nbn.png" alt=""> Senior network engineer and solutions architect at <span class="co">nbn</span>. I wrote a lot of Python to replace manual RF and network design, turning work that took days into work that took hours. The part I&rsquo;m proudest of was validating mmWave 5G line-of-sight prediction at scale, checking the predictions against real measured signal and speed before they fed nbn&rsquo;s Max Achievable Speed Engine.</p>
+  </div>
 
-    <div class="item">
-      <div class="yr">2025 to present</div>
-      <h3>Network Planning Manager, Data / AI / Platform Engineering</h3>
-      <div class="org"><img src="images/logos/metcash.png" alt="">Metcash / TTHG / Mitre 10 · Melbourne</div>
-      <p>Building <strong>Meridian</strong>, a decision-support platform on Microsoft Fabric, AWS, Python/SQL and LLM/ML workflows. It turns ambiguous network-strategy and performance questions into working system components: data models, processing logic, guardrails, dashboards and clear outputs for planning decisions.</p>
-    </div>
+  <div class="tl">
+    <div class="y">2018 to 2020</div>
+    <p class="t"><img class="logo" src="images/logos/ericsson.png" alt=""> Network engineer at <span class="co">Ericsson</span>, in the thick of performance, troubleshooting and optimisation. This is where I got properly good at reading operational data to find what is actually broken.</p>
+  </div>
 
-    <div class="item">
-      <div class="yr">2020 to 2025</div>
-      <h3>Solutions Architect / Senior Network Engineer</h3>
-      <div class="org"><img src="images/logos/nbn.png" alt="">nbn Australia · Melbourne</div>
-      <p>Wrote Python automation that replaced manual RF and network design, cutting long manual cycles to hours with consistent, repeatable outputs. Built and validated mmWave 5G line-of-sight prediction at scale as an input to the Max Achievable Speed Engine (MASE), and helped move Network Standard Design logic from spreadsheets toward governed system workflows.</p>
-    </div>
+  <div class="tl">
+    <div class="y">2018</div>
+    <p class="t"><img class="logo" src="images/logos/telstra.png" alt=""> A short run at <span class="co">Telstra</span> designing metro Ethernet and fibre transport.</p>
+  </div>
 
-    <div class="item">
-      <div class="yr">2018 to 2020</div>
-      <h3>Network Engineer</h3>
-      <div class="org"><img src="images/logos/ericsson.png" alt="">Ericsson · Melbourne</div>
-      <p>Performance, troubleshooting and optimisation across infrastructure projects, using interface, KPI and operational data to isolate faults, validate changes and improve reliability and capacity.</p>
-    </div>
+  <div class="tl">
+    <div class="y">2011 to 2017</div>
+    <p class="t"><img class="logo" src="images/logos/huawei.png" alt=""> Before Australia, I worked across Africa, Europe and China with <span class="co">Astellia, Huawei and Econet</span>: network analytics, call tracing, RAN optimisation and a lot of time in the field. This is where I learned the craft.</p>
+  </div>
 
-    <div class="item">
-      <div class="yr">2018</div>
-      <h3>Design Engineer</h3>
-      <div class="org"><img src="images/logos/telstra.png" alt="">Telstra · Melbourne</div>
-      <p>Metro Ethernet and fibre transport: L1/L2 physical and logical network designs.</p>
-    </div>
+  <div class="tl">
+    <div class="y">2005 to 2010</div>
+    <p class="t">Studied electronic engineering at <span class="co">NUST</span>, back home in Zimbabwe, with a year in the middle on an embedded-systems and FPGA internship at BFH in Bern.</p>
+  </div>
 
-    <div class="item">
-      <div class="yr">2011 to 2017</div>
-      <h3>Consultant / Engineer</h3>
-      <div class="org"><img src="images/logos/huawei.png" alt="">Astellia · Huawei · Econet Wireless · Africa, Europe &amp; China</div>
-      <p>Network analytics, probe-based assurance, call tracing, KPI extraction, RAN optimisation and field support across operator environments.</p>
-    </div>
-  </section>
+  <h2>A bit more</h2>
+  <div class="bio">
+    <p>I grew up in Harare and have been in Melbourne for years now. I&rsquo;m the kind of engineer who likes taking something slow, manual and repetitive and turning it into a system that runs on its own and can be checked. For fifteen years that meant telecom networks. Lately it means AI, which is really the same instinct with better tools. Somewhere along the way I also did a graduate certificate in business at Melbourne Business School.</p>
+    <p>Right now I&rsquo;m working through the NVIDIA AI-infrastructure certifications, the associate done and the professional ones underway, and mostly I&rsquo;m building the things below.</p>
+  </div>
 
-  <section>
-    <h2>What I&rsquo;m building</h2>
+  <h2>What I&rsquo;m building</h2>
 
-    <div class="build">
-      <h3><a href="https://gombwe.com">Gombwe</a><span class="m">, a personal AI assistant and tool-use operating layer</span></h3>
-      <p>An assistant reached through Discord that can actually touch my Mac and local workflows, not just chat. It runs real life-management: grocery shopping across Coles and Woolworths, school events and comms, meal planning, home-network management and parental controls. Under the hood there is persistent context, tool and action routing, command boundaries, safe-execution rules, logs and evaluation loops that improve it from real use.</p>
-    </div>
+  <div class="build">
+    <p><span class="n"><a href="https://gombwe.com">Gombwe</a></span> is my personal AI assistant. I reach it through Discord and it can actually do things on my Mac and home network, not just chat: order groceries across Coles and Woolworths, keep track of school events, plan meals, run parental controls and watch the home network. It mostly looks after itself, restarting and repairing its own feeds when something breaks.</p>
+  </div>
 
-    <div class="build">
-      <h3><a href="https://agentsform.ai">AgentsForm</a><span class="m">, where agents get the skills they don&rsquo;t have yet</span></h3>
-      <p>A product vision for a world where the best interface is no interface at all. An agent hits a task it can&rsquo;t finish, describes the skill it needs, the skill gets built on demand, the agent pays for it, and it completes the job. Forms, prompts, context and API actions become repeatable, callable automation, without every use case needing a bespoke software project.</p>
-    </div>
+  <div class="build">
+    <p><span class="n"><a href="https://agentsform.ai">AgentsForm</a></span> is a bet I keep coming back to: that the best interface is no interface at all. An agent hits something it can&rsquo;t do, describes the skill it needs, the skill gets built on demand, and it finishes the job.</p>
+  </div>
 
-    <div class="build">
-      <h3>AI Receptionist<span class="m">, missed-call recovery for trades and service businesses</span></h3>
-      <p>A receptionist workflow for the unanswered-phone problem: missed-call recovery, customer intake, job classification, urgency detection, booking handoff and human escalation, with business-specific instructions, transcript summaries, CRM/calendar hooks and confidence-based fallbacks. Built for plumbers, electricians and other operators who lose work after hours.</p>
-    </div>
+  <div class="build">
+    <p><span class="n">AI Receptionist</span> is a smaller build for trades and service businesses: catching the missed call, taking down the job, working out how urgent it is and handing off a booking, so a plumber or electrician stops losing work after hours.</p>
+  </div>
 
-    <div class="build">
-      <h3><a href="https://tradeprocurement.com.au">TradeProcurement</a><span class="m">, AI procurement and tender automation</span></h3>
-      <p>An AI-assisted procurement workflow for tender and RFP analysis: document ingestion, requirement extraction, supplier comparison, response drafting and structured decision support. Faster tender comprehension and cleaner supplier comparison, while the commercial judgement stays human.</p>
-    </div>
-  </section>
-
-  <section>
-    <h2>Skills</h2>
-    <div class="row"><div class="k">LLM applications</div><div class="v">Prompt design, structured outputs, tool-use / function calling, retrieval-assisted and source-grounded responses, evaluation, guardrails and human review.</div></div>
-    <div class="row"><div class="k">Backend &amp; platform</div><div class="v">Python, SQL, REST/API design, FastAPI-style services, Node.js/TypeScript, webhooks, JSON schemas, Git-based delivery.</div></div>
-    <div class="row"><div class="k">Cloud &amp; data</div><div class="v">AWS (Lambda / DynamoDB / CDK), Microsoft Fabric, PostgreSQL/PostGIS, ingestion, transformation, dashboards and reproducible pipelines.</div></div>
-    <div class="row"><div class="k">AI infrastructure</div><div class="v">NVIDIA-Certified Associate (AI Infrastructure &amp; Operations), GPU/HPC fundamentals, Spectrum/Mellanox concepts, Linux, Docker/Kubernetes and production observability.</div></div>
-    <div class="row"><div class="k">Networks</div><div class="v">RAN, fixed wireless, fibre, transmission, performance and capacity, KPI/telemetry analysis, RF automation, mmWave 5G modelling.</div></div>
-  </section>
-
-  <section>
-    <h2>Certifications</h2>
-    <ul class="plain">
-      <li><b>Completed.</b> NVIDIA-Certified Associate (AI Infrastructure &amp; Operations, NCA-AIIO); AWS Certified Cloud Practitioner; NVIDIA Introduction to Transformer-Based NLP.</li>
-      <li><b>In progress.</b> NVIDIA-Certified Professional in AI Infrastructure (NCP-AII) and AI Operations (NCP-AIO).</li>
-    </ul>
-  </section>
-
-  <section>
-    <h2>Education</h2>
-    <ul class="plain">
-      <li><b>Graduate Certificate in Business Administration.</b> Melbourne Business School, University of Melbourne.</li>
-      <li><b>Bachelor of Engineering, Electronic Engineering.</b> National University of Science and Technology (NUST), 2005 to 2010.</li>
-      <li><b>Embedded software and hardware internship.</b> BFH, Bern, Switzerland, 2008 to 2009.</li>
-    </ul>
-  </section>
+  <div class="build">
+    <p><span class="n"><a href="https://tradeprocurement.com.au">TradeProcurement</a></span> helps with tenders and RFPs: reading the document, pulling out the requirements, comparing suppliers and drafting a response, while the actual commercial call stays with a person.</p>
+  </div>
 
   <footer>
-    Melbourne, VIC · <a href="mailto:tmudavanhu@gmail.com">tmudavanhu@gmail.com</a> · 0410&nbsp;386&nbsp;167 ·
-    <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a> ·
-    <a href="https://github.com/tech-ten">GitHub</a>
+    I mostly work in Python, TypeScript, SQL and AWS, with a long tail of network and RF tooling behind me. The easiest way to reach me is email.
+    <p class="contact">Melbourne, VIC · <a href="mailto:tmudavanhu@gmail.com">tmudavanhu@gmail.com</a> · <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a> · <a href="https://github.com/tech-ten">GitHub</a></p>
   </footer>
 
 </div>
