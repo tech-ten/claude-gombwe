@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tendai Ellison Mudavanhu</title>
-<meta name="description" content="Tendai Ellison Mudavanhu, engineer in Melbourne. Fifteen years in telecom networks, now building AI systems that take real actions in the real world.">
+<meta name="description" content="Tendai Ellison Mudavanhu, engineer in Melbourne building AI systems that take real actions in the real world. Fifteen years in telecom networks behind it.">
 <meta property="og:title" content="Tendai Ellison Mudavanhu">
 <meta property="og:description" content="Engineer in Melbourne building AI systems that take real actions in the real world.">
 <meta property="og:type" content="profile">
@@ -34,7 +34,7 @@
   a{color:var(--link); text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:2px; text-decoration-color:rgba(22,103,176,.4); transition:color .12s, text-decoration-color .12s;}
   a:hover{color:var(--link-hover); text-decoration-color:currentColor;}
 
-  header{display:flex; gap:28px; align-items:flex-start; margin-bottom:34px;}
+  header{display:flex; gap:28px; align-items:flex-start; margin-bottom:36px;}
   header img.me{width:118px; height:136px; object-fit:cover; object-position:center 18%;
     border:1px solid var(--rule); border-radius:2px; flex-shrink:0;}
   h1{font-family:var(--sans); font-weight:700; font-size:2.35rem; line-height:1.05;
@@ -45,7 +45,16 @@
   .links a:hover{text-decoration:underline; text-underline-offset:3px;}
   .links .sep{color:var(--faint); margin:0 9px; font-weight:400;}
 
-  /* narrated timeline */
+  h2{font-family:var(--sans); font-weight:600; font-size:1.28rem; letter-spacing:-.01em;
+    margin:44px 0 16px;}
+  .sub{color:var(--soft); margin:-6px 0 18px;}
+
+  .build{margin-bottom:16px;}
+  .build p{margin:0; line-height:1.55;}
+  .build .n{font-weight:600;}
+  .now{color:var(--soft); margin-top:18px;}
+
+  /* narrated timeline: roles and personal facts together */
   .tl{display:grid; grid-template-columns:92px 1fr; gap:26px; margin-bottom:20px;}
   .tl:last-of-type{margin-bottom:6px;}
   .tl .y{font-family:var(--sans); font-weight:600; font-size:.9rem; color:var(--faint); padding-top:4px; letter-spacing:.01em; white-space:nowrap;}
@@ -53,15 +62,7 @@
   .tl .t .logo{height:15px; width:auto; max-width:60px; object-fit:contain; opacity:.9;
     vertical-align:-2px; margin-right:1px;}
   .tl .t .co{font-weight:600;}
-
-  h2{font-family:var(--sans); font-weight:600; font-size:1.28rem; letter-spacing:-.01em;
-    margin:44px 0 16px;}
-  .bio p:last-child{margin-bottom:0;}
-
-  .build{margin-bottom:16px;}
-  .build:last-child{margin-bottom:2px;}
-  .build p{margin:0; line-height:1.55;}
-  .build .n{font-weight:600;}
+  .coda{margin:18px 0 0; color:var(--soft);}
 
   footer{margin-top:46px; padding-top:20px; border-top:1px solid var(--rule);
     font-size:1rem; line-height:1.55; color:var(--soft);}
@@ -93,7 +94,7 @@
     <img class="me" src="images/headshot.png" alt="Tendai Ellison Mudavanhu">
     <div>
       <h1>Tendai Ellison Mudavanhu</h1>
-      <p class="lede">I&rsquo;m an engineer in Melbourne. I like building AI systems that take real actions in the real world: ordering the groceries, answering the phone, reading a tender, running a home network. Most people call me Ellison.</p>
+      <p class="lede">I build AI systems that take real actions in the real world: ordering the groceries, answering the phone, reading a tender, running a home network. I grew up in Harare, I&rsquo;m based in Melbourne, and most people call me Ellison.</p>
       <p class="links">
         <a href="https://www.linkedin.com/in/ellison-mudavanhu">LinkedIn</a><span class="sep">·</span>
         <a href="https://github.com/tech-ten">GitHub</a><span class="sep">·</span>
@@ -104,9 +105,33 @@
     </div>
   </header>
 
+  <h2>What I&rsquo;m building</h2>
+  <p class="sub">A few things I&rsquo;m working on right now, mostly on my own time.</p>
+
+  <div class="build">
+    <p><span class="n"><a href="https://gombwe.com">Gombwe</a></span> is my personal AI assistant. I reach it through Discord and it can actually do things on my Mac and home network, not just chat: order groceries across Coles and Woolworths, keep track of school events, plan meals, run parental controls and watch the home network. It mostly looks after itself, restarting and repairing its own feeds when something breaks.</p>
+  </div>
+
+  <div class="build">
+    <p><span class="n"><a href="https://agentsform.ai">AgentsForm</a></span> is a bet I keep coming back to: that the best interface is no interface at all. An agent hits something it can&rsquo;t do, describes the skill it needs, the skill gets built on demand, and it finishes the job.</p>
+  </div>
+
+  <div class="build">
+    <p><span class="n">AI Receptionist</span> is a smaller build for trades and service businesses: catching the missed call, taking down the job, working out how urgent it is and handing off a booking, so a plumber or electrician stops losing work after hours.</p>
+  </div>
+
+  <div class="build">
+    <p><span class="n"><a href="https://tradeprocurement.com.au">TradeProcurement</a></span> helps with tenders and RFPs: reading the document, pulling out the requirements, comparing suppliers and drafting a response, while the actual commercial call stays with a person.</p>
+  </div>
+
+  <p class="now">Alongside that I&rsquo;m working through the NVIDIA AI-infrastructure certifications, the associate done and the professional ones underway.</p>
+
+  <h2>How I got here</h2>
+  <p class="sub">Fifteen years of engineering, and the thing I like has never really changed: take something slow, manual and repetitive and turn it into a system that runs on its own. For most of it that meant telecom networks. Lately it means AI, which is the same instinct with better tools.</p>
+
   <div class="tl">
     <div class="y">2025 to now</div>
-    <p class="t"><img class="logo" src="images/logos/metcash.png" alt=""> I&rsquo;m a network planning manager at <span class="co">Metcash</span>, across Mitre 10 and TTHG. I&rsquo;m building <strong>Meridian</strong>, a decision-support platform on Microsoft Fabric and AWS that turns messy network and performance questions into something a planner can actually act on. It&rsquo;s the first job where my network background and my AI work sit in the same place.</p>
+    <p class="t"><img class="logo" src="images/logos/metcash.png" alt=""> Network planning manager at <span class="co">Metcash</span>, across Mitre 10 and TTHG, building <strong>Meridian</strong>: a decision-support platform on Microsoft Fabric and AWS that turns messy network and performance questions into something a planner can act on. It&rsquo;s the first job where my network background and my AI work sit in the same place.</p>
   </div>
 
   <div class="tl">
@@ -134,29 +159,7 @@
     <p class="t">Studied electronic engineering at <span class="co">NUST</span>, back home in Zimbabwe, with a year in the middle on an embedded-systems and FPGA internship at BFH in Bern.</p>
   </div>
 
-  <h2>A bit more</h2>
-  <div class="bio">
-    <p>I grew up in Harare and have been in Melbourne for years now. I&rsquo;m the kind of engineer who likes taking something slow, manual and repetitive and turning it into a system that runs on its own and can be checked. For fifteen years that meant telecom networks. Lately it means AI, which is really the same instinct with better tools. Somewhere along the way I also did a graduate certificate in business at Melbourne Business School.</p>
-    <p>Right now I&rsquo;m working through the NVIDIA AI-infrastructure certifications, the associate done and the professional ones underway, and mostly I&rsquo;m building the things below.</p>
-  </div>
-
-  <h2>What I&rsquo;m building</h2>
-
-  <div class="build">
-    <p><span class="n"><a href="https://gombwe.com">Gombwe</a></span> is my personal AI assistant. I reach it through Discord and it can actually do things on my Mac and home network, not just chat: order groceries across Coles and Woolworths, keep track of school events, plan meals, run parental controls and watch the home network. It mostly looks after itself, restarting and repairing its own feeds when something breaks.</p>
-  </div>
-
-  <div class="build">
-    <p><span class="n"><a href="https://agentsform.ai">AgentsForm</a></span> is a bet I keep coming back to: that the best interface is no interface at all. An agent hits something it can&rsquo;t do, describes the skill it needs, the skill gets built on demand, and it finishes the job.</p>
-  </div>
-
-  <div class="build">
-    <p><span class="n">AI Receptionist</span> is a smaller build for trades and service businesses: catching the missed call, taking down the job, working out how urgent it is and handing off a booking, so a plumber or electrician stops losing work after hours.</p>
-  </div>
-
-  <div class="build">
-    <p><span class="n"><a href="https://tradeprocurement.com.au">TradeProcurement</a></span> helps with tenders and RFPs: reading the document, pulling out the requirements, comparing suppliers and drafting a response, while the actual commercial call stays with a person.</p>
-  </div>
+  <p class="coda">Somewhere along the way I also did a graduate certificate in business at Melbourne Business School.</p>
 
   <footer>
     I mostly work in Python, TypeScript, SQL and AWS, with a long tail of network and RF tooling behind me. The easiest way to reach me is email.
