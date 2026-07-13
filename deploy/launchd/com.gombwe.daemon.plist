@@ -45,6 +45,12 @@
     <dict>
       <key>NODE_ENV</key><string>production</string>
       <key>HOME</key><string>@HOME@</string>
+      <!-- USER/LOGNAME are REQUIRED: the `claude` native binary (2.1.x+) needs
+           USER set to read its subscription token from the login keychain.
+           Without it, every spawned `claude -p` returns "Not logged in", which
+           surfaces as "Failed to start claude" in every channel. -->
+      <key>USER</key><string>@USER@</string>
+      <key>LOGNAME</key><string>@USER@</string>
       <key>PATH</key><string>@HOME@/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>StandardOutPath</key><string>@HOME@/.claude-gombwe/gombwe.out.log</string>

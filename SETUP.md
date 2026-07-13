@@ -31,7 +31,7 @@ gombwe status
 
 ### macOS — launchd LaunchAgent
 
-The repo ships an installer template at [`deploy/launchd/com.gombwe.daemon.plist`](deploy/launchd/com.gombwe.daemon.plist). Fill in the `@…@` placeholders (`@NODE_BIN@`, `@GOMBWE_DIST@`, `@GOMBWE_REPO@`, `@HOME@`) and install it — **no sudo needed for a user agent**:
+The repo ships an installer template at [`deploy/launchd/com.gombwe.daemon.plist`](deploy/launchd/com.gombwe.daemon.plist). Fill in the `@…@` placeholders (`@NODE_BIN@`, `@GOMBWE_DIST@`, `@GOMBWE_REPO@`, `@HOME@`, `@USER@`) and install it — **no sudo needed for a user agent**:
 
 ```bash
 # render the template (example values — adjust to your paths)
@@ -39,6 +39,7 @@ sed -e "s|@NODE_BIN@|$(which node)|" \
     -e "s|@GOMBWE_DIST@|$(npm root -g)/claude-gombwe/dist|" \
     -e "s|@GOMBWE_REPO@|$HOME/code/claude-gombwe|" \
     -e "s|@HOME@|$HOME|g" \
+    -e "s|@USER@|$(id -un)|g" \
     deploy/launchd/com.gombwe.daemon.plist > ~/Library/LaunchAgents/com.gombwe.daemon.plist
 
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gombwe.daemon.plist
