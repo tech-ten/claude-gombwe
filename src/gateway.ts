@@ -1485,11 +1485,33 @@ export class Gateway {
       } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
     });
 
-    // Re-block a screen-time device now (clears any pending timer).
+    // Force-block a screen-time device now, overriding its schedule.
     this.app.post('/api/network/screentime/:mac/block', async (req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
       try {
         const state = await getNetworkService().blockScreenTime(String(req.params.mac));
+        res.json(state);
+        this.broadcast({ type: 'network:controls:update', data: {}, timestamp: new Date().toISOString() });
+      } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Drop any override and return the device to its schedule.
+    this.app.post('/api/network/screentime/:mac/resume', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const state = await getNetworkService().resumeSchedule(String(req.params.mac));
+        res.json(state);
+        this.broadcast({ type: 'network:controls:update', data: {}, timestamp: new Date().toISOString() });
+      } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Replace a device's whole weekly schedule. Body: { week: boolean[7][24], label? }
+    this.app.put('/api/network/screentime/:mac/schedule', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const week = req.body?.week;
+        const label = typeof req.body?.label === 'string' ? req.body.label : undefined;
+        const state = await getNetworkService().setDeviceSchedule(String(req.params.mac), week, label);
         res.json(state);
         this.broadcast({ type: 'network:controls:update', data: {}, timestamp: new Date().toISOString() });
       } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
