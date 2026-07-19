@@ -199,6 +199,7 @@ export type WSEventType =
   | 'eero:speedtest'
   | 'eero:alert'
   | 'network:device:update'
+  | 'network:controls:update'
   | 'network:status:update'
   | 'network:policy:flagged'
   | 'network:policy:blocked';
