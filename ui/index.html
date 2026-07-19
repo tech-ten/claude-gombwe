@@ -261,6 +261,7 @@
             <button class="eero-subtab" data-eero-tab="strands">Activity</button>
             <button class="eero-subtab" data-eero-tab="dossier">Dossier</button>
             <button class="eero-subtab" data-eero-tab="kids">Access Control</button>
+            <button class="eero-subtab" data-eero-tab="screentime">Screen Time</button>
             <button class="eero-subtab" data-eero-tab="devices">Devices</button>
             <button class="eero-subtab" data-eero-tab="profiles">Profiles</button>
             <button class="eero-subtab" data-eero-tab="schedule">Schedule</button>
@@ -593,6 +594,38 @@
             </div>
           </div>
 
+          <!-- Screen Time — standing per-device drop rules on the router, DNS-bypass
+               blocks, and the router-side auto-re-block timers. Single source of
+               truth: every control here reflects live RouterOS state. -->
+          <div class="eero-pane" data-eero-pane="screentime">
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Screen time devices</span>
+                <span class="muted small" id="stMeta"></span>
+              </div>
+              <p class="muted small" style="margin: 0 0 10px">Each device has a standing block on the router. <strong>Allow</strong> lifts it and arms an automatic re-block at the chosen time; the timer lives on the router, so it survives reboots and shows up under Timers below.</p>
+              <div id="stDevices"><div class="muted small">Loading…</div></div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>Scheduled re-blocks (router timers)</span>
+                <span class="muted small" id="stTimersMeta"></span>
+              </div>
+              <p class="muted small" style="margin: 0 0 10px">Live <code>/system/scheduler</code> entries gombwe created. Each re-enables a device's block at its fire time, then deletes itself. Cancel one to leave that device online with no automatic re-block.</p>
+              <div id="stTimers"><div class="muted small">Loading…</div></div>
+            </div>
+
+            <div class="card eero-card">
+              <div class="eero-card-header">
+                <span>DNS-bypass protection</span>
+                <span class="muted small">network-wide</span>
+              </div>
+              <p class="muted small" style="margin: 0 0 10px">Blocks encrypted DNS (DoT / DoH) so devices can't tunnel around the router's DNS filtering. On is the safe default.</p>
+              <div id="stDns"><div class="muted small">Loading…</div></div>
+            </div>
+          </div>
+
           <!-- Advanced (MikroTik NAT, DHCP, firewall — step 8) -->
           <div class="eero-pane" data-eero-pane="advanced">
             <!-- Port forwards -->
@@ -840,6 +873,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

@@ -1462,6 +1462,53 @@ export class Gateway {
       }
     });
 
+    // ── Screen-time & router-control surface ─────────────────────────
+    // The dashboard mirror of every gombwe-managed router object (standing
+    // screen-time drop rules, DoT/DoH blocks, and the router-side re-block
+    // timers). No invisible RouterOS state.
+    this.app.get('/api/network/controls', async (_req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().controlState()); }
+      catch (err) { res.status(500).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Allow a screen-time device online + arm a router-side auto-re-block.
+    // Body: { minutes: number }  OR  { until: "HH:MM" }
+    this.app.post('/api/network/screentime/:mac/allow', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const minutes = req.body?.minutes != null ? Number(req.body.minutes) : undefined;
+        const until = typeof req.body?.until === 'string' ? req.body.until : undefined;
+        const state = await getNetworkService().allowScreenTime(String(req.params.mac), { minutes, until });
+        res.json(state);
+        this.broadcast({ type: 'network:controls:update', data: {}, timestamp: new Date().toISOString() });
+      } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Re-block a screen-time device now (clears any pending timer).
+    this.app.post('/api/network/screentime/:mac/block', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try {
+        const state = await getNetworkService().blockScreenTime(String(req.params.mac));
+        res.json(state);
+        this.broadcast({ type: 'network:controls:update', data: {}, timestamp: new Date().toISOString() });
+      } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Toggle a DNS-bypass block (DoT/DoH). Body: { id, on: boolean }
+    this.app.post('/api/network/dns-guard', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().setDnsGuard(String(req.body?.id), !!req.body?.on)); }
+      catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
+    // Cancel a router-side re-block timer (device keeps its current state).
+    this.app.delete('/api/network/router-timers/:id', async (req: Request, res: Response) => {
+      if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
+      try { res.json(await getNetworkService().cancelRouterTimer(String(req.params.id))); }
+      catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+    });
+
     // Live interface stats — feeds the Speed subtab. Polled every few seconds
     // by the UI. interfaceStatsLive synthesises bits-per-second from byte
     // counter deltas; first call shows 0, subsequent calls show real rates.

@@ -3605,6 +3605,125 @@ async function renderAdvFirewall() {
   `;
 }
 
+// ── Screen Time controls ────────────────────────────────────────────
+// Mirrors gombwe-managed router state — per-device standing blocks, the
+// DNS-bypass blocks, and the router-side auto-re-block timers — and drives
+// it. The dashboard is the single source of truth; every value here is read
+// live from the router via /api/network/controls.
+const ST_BORDER = 'border-top:1px solid rgba(128,128,128,0.22)';
+
+function stFmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), now = new Date();
+  const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return t;
+  const tmrw = new Date(now); tmrw.setDate(now.getDate() + 1);
+  if (d.toDateString() === tmrw.toDateString()) return `${t} tomorrow`;
+  return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+function stCountdown(iso) {
+  if (!iso) return '';
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return 'any moment';
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
+async function renderScreenTime() {
+  const wrap = document.getElementById('stDevices');
+  if (!wrap) return;
+  let data;
+  try {
+    data = await fetch(`${API}/api/network/controls`).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
+  } catch { wrap.innerHTML = '<div class="muted small">Could not reach the router.</div>'; return; }
+
+  const meta = document.getElementById('stMeta');
+  const allowed = data.devices.filter(d => !d.blocked).length;
+  if (meta) meta.textContent = `${data.devices.length} devices · ${allowed} allowed now`;
+
+  wrap.innerHTML = data.devices.map(d => {
+    const state = d.blocked
+      ? '<span class="speed-state down">Blocked</span>'
+      : '<span class="speed-state up">Allowed</span>';
+    const timerLine = (!d.blocked && d.timer)
+      ? `<div class="muted small" style="margin-top:4px">Re-blocks at <strong>${esc(stFmtTime(d.timer.firesAt))}</strong> · in ${esc(stCountdown(d.timer.firesAt))}</div>`
+      : (!d.blocked ? '<div class="muted small" style="margin-top:4px">Allowed with no automatic re-block.</div>' : '');
+    const actions = d.blocked ? `
+      <button class="btn-sm btn-primary" data-st="allow" data-mac="${esc(d.mac)}" data-min="60">Allow 1h</button>
+      <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-min="120">Allow 2h</button>
+      <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-until="06:00">Till 6am</button>
+    ` : `
+      <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-min="60">+1h</button>
+      <button class="btn-sm" data-st="block" data-mac="${esc(d.mac)}">Block now</button>
+    `;
+    return `
+      <div class="st-row" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;${ST_BORDER}">
+        <div style="min-width:0">
+          <div><strong>${esc(d.label)}</strong> ${state}</div>
+          <div class="muted small">${esc(d.mac)}</div>
+          ${timerLine}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${actions}</div>
+      </div>`;
+  }).join('');
+
+  const timersEl = document.getElementById('stTimers');
+  const tmeta = document.getElementById('stTimersMeta');
+  if (tmeta) tmeta.textContent = `${data.timers.length} armed`;
+  if (timersEl) timersEl.innerHTML = data.timers.length ? data.timers.map(t => `
+    <div class="st-row" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}">
+      <div><strong>${esc(t.label || t.mac)}</strong> <span class="muted small">re-blocks ${esc(stFmtTime(t.firesAt))} · in ${esc(stCountdown(t.firesAt))}</span></div>
+      <button class="btn-sm" data-st="cancel-timer" data-id="${esc(t.id)}">Cancel</button>
+    </div>`).join('') : '<div class="muted small">No timers armed. Every device is on its standing schedule.</div>';
+
+  const dnsEl = document.getElementById('stDns');
+  if (dnsEl) dnsEl.innerHTML = ['dot', 'doh'].map(k => {
+    const r = data.dns[k];
+    const name = k === 'dot' ? 'DNS-over-TLS (DoT)' : 'DNS-over-HTTPS (DoH)';
+    if (!r) return `<div class="muted small" style="padding:8px 0;${ST_BORDER}">${name}: rule not present.</div>`;
+    const state = r.blocked ? '<span class="speed-state up">Blocking</span>' : '<span class="speed-state down">Off</span>';
+    const btn = r.blocked
+      ? `<button class="btn-sm" data-st="dns" data-id="${esc(r.id)}" data-on="0">Turn off</button>`
+      : `<button class="btn-sm btn-primary" data-st="dns" data-id="${esc(r.id)}" data-on="1">Turn on</button>`;
+    return `<div class="st-row" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}"><div><strong>${name}</strong> ${state}</div>${btn}</div>`;
+  }).join('');
+}
+
+let stRefreshInterval = null;
+function startScreenTime() { renderScreenTime(); if (!stRefreshInterval) stRefreshInterval = setInterval(renderScreenTime, 30000); }
+function stopScreenTime() { if (stRefreshInterval) { clearInterval(stRefreshInterval); stRefreshInterval = null; } }
+
+// Delegated handler for Screen Time actions.
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLElement) || !t.matches('[data-st]')) return;
+  const kind = t.dataset.st;
+  const orig = t.textContent;
+  t.disabled = true; t.textContent = '…';
+  try {
+    let res;
+    if (kind === 'allow') {
+      const body = t.dataset.until ? { until: t.dataset.until } : { minutes: Number(t.dataset.min) };
+      res = await fetch(`${API}/api/network/screentime/${encodeURIComponent(t.dataset.mac)}/allow`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } else if (kind === 'block') {
+      res = await fetch(`${API}/api/network/screentime/${encodeURIComponent(t.dataset.mac)}/block`, { method: 'POST' });
+    } else if (kind === 'dns') {
+      res = await fetch(`${API}/api/network/dns-guard`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.dataset.id, on: t.dataset.on === '1' }) });
+    } else if (kind === 'cancel-timer') {
+      res = await fetch(`${API}/api/network/router-timers/${encodeURIComponent(t.dataset.id)}`, { method: 'DELETE' });
+    }
+    if (res && !res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+    await renderScreenTime();
+  } catch (err) {
+    t.disabled = false; t.textContent = orig;
+    alert(`Failed: ${err.message}`);
+  }
+});
+
 // Delegated action handler for Advanced subtab buttons.
 document.addEventListener('click', async (e) => {
   const t = e.target;
@@ -5397,6 +5516,7 @@ document.querySelectorAll('.eero-subtab').forEach(b => {
       ]).then(renderEeroProfiles);
     }
     if (eeroActiveSubtab === 'kids') { renderEeroKids(); loadAccessControl(); }
+    if (eeroActiveSubtab === 'screentime') startScreenTime(); else stopScreenTime();
     if (eeroActiveSubtab === 'speed') startSpeedPolling(); else stopSpeedPolling();
     if (eeroActiveSubtab === 'overview') renderEeroOverview();
     if (eeroActiveSubtab === 'advanced') renderEeroAdvanced();

@@ -34,7 +34,7 @@ function categorizeActivity(host: string): { category: string; concern: boolean 
   return { category: 'other', concern: false };
 }
 import { createRequire } from 'node:module';
-import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry } from './mikrotik-client.js';
+import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry, MtFirewallRule, MtScheduler } from './mikrotik-client.js';
 import { dnsIndex } from './dns-index.js';
 import { ipResolver } from './ip-name-resolver.js';
 import { mdnsListener } from './mdns-listener.js';
@@ -1568,6 +1568,230 @@ export class NetworkService {
       this.unblock(mac).catch(err => console.error(`[network] scheduled unblock failed for ${mac}: ${err}`));
     }, delayMs);
     this.timers.set(mac, t);
+  }
+
+  // ── Screen-time & router-control surface ───────────────────────────
+  // The dashboard is meant to be the SINGLE SOURCE OF TRUTH for everything
+  // gombwe does to the router. These "screen-time" drop rules and the
+  // DoT/DoH blocks are STANDING firewall rules (toggled by hand historically),
+  // and their timed re-block used to live only as an invisible /system/scheduler
+  // entry on the router. controlState() mirrors all of it back to the UI, and
+  // allow/block arm the router-side timer so no state is ever hidden.
+
+  /** "gombwe-screentime: TCL TV — no screens before 3pm" -> "TCL TV" */
+  private screentimeLabel(comment: string): string {
+    const s = (comment || '').replace(/^gombwe-screentime:\s*/i, '');
+    return s.split(/\s+[—–-]\s+/)[0].trim() || s.trim();
+  }
+
+  /** Deterministic scheduler name per device so we can find/cancel it later. */
+  private reblockSchedName(mac: string): string {
+    return 'gombwe-reblock-' + mac.toUpperCase().replace(/[^0-9A-F]/g, '');
+  }
+
+  /** MAC in a scheduler name ("…08C3B34ED821") back to colon form for matching. */
+  private schedNameToMac(name: string): string {
+    const hex = name.replace(/^gombwe-reblock-/, '');
+    return (hex.match(/.{1,2}/g) || []).join(':');
+  }
+
+  // Router date-format is ISO and its clock shares this host's timezone
+  // (both Australia/Melbourne — verified via /system/clock), so local Date
+  // parts map straight onto router wall-clock time.
+  private mtDatePart(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  private mtTimePart(d: Date): string {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  }
+
+  /** When a router scheduler will fire, as an ISO string (null if unparseable). */
+  private schedFiresAtIso(s: MtScheduler): string | null {
+    const d = s['start-date'], t = s['start-time'];
+    if (!d || !t) return null;
+    const [Y, M, D] = d.split('-').map(Number);
+    const [h, mi, se] = t.split(':').map(Number);
+    if (!Y || !M || !D) return null;
+    return new Date(Y, M - 1, D, h || 0, mi || 0, se || 0).toISOString();
+  }
+
+  /** Target Date for a re-block, from either a duration or a wall-clock time. */
+  private computeReblockTarget(opts: { minutes?: number; until?: string }): Date {
+    if (opts.minutes && opts.minutes > 0) return new Date(Date.now() + opts.minutes * 60_000);
+    if (opts.until && /^\d{1,2}:\d{2}$/.test(opts.until)) {
+      const [hh, mm] = opts.until.split(':').map(Number);
+      const now = new Date();
+      const t = new Date(now);
+      t.setHours(hh, mm, 0, 0);
+      if (t.getTime() <= now.getTime()) t.setDate(t.getDate() + 1); // next occurrence
+      return t;
+    }
+    throw new Error('allow requires { minutes } or { until: "HH:MM" }');
+  }
+
+  private async findScreentimeRule(macKey: string): Promise<MtFirewallRule> {
+    const rules = await mikrotik.filterRules();
+    const rule = rules.find(r =>
+      (r.comment || '').startsWith('gombwe-screentime:') &&
+      (r['src-mac-address'] || '').toUpperCase() === macKey);
+    if (!rule) throw new Error(`no screen-time rule found for ${macKey}`);
+    return rule;
+  }
+
+  /** Remove any armed re-block scheduler(s) for a device. Idempotent. */
+  private async clearReblockTimer(macKey: string): Promise<void> {
+    const name = this.reblockSchedName(macKey);
+    const scheds = await mikrotik.schedulers();
+    for (const s of scheds) {
+      if (s.name === name && s['.id']) await mikrotik.removeScheduler(s['.id']);
+    }
+  }
+
+  /**
+   * Full mirror of gombwe-managed router state for the dashboard:
+   *   - screen-time devices (per-MAC standing drop rules) with live blocked/allowed
+   *     state and any armed auto-re-block timer
+   *   - DoT / DoH DNS-bypass blocks
+   *   - every gombwe re-block timer living on the router (/system/scheduler)
+   */
+  async controlState(): Promise<{
+    devices: Array<{ id: string; mac: string; label: string; blocked: boolean; timer: { id: string; firesAt: string | null; comment: string } | null }>;
+    dns: { dot: { id: string; blocked: boolean } | null; doh: { id: string; blocked: boolean } | null };
+    timers: Array<{ id: string; name: string; label: string; mac: string; firesAt: string | null; comment: string }>;
+  }> {
+    const [rules, scheds] = await Promise.all([mikrotik.filterRules(), mikrotik.schedulers()]);
+
+    const timerByMac = new Map<string, { id: string; firesAt: string | null; comment: string }>();
+    const timers = scheds
+      .filter(s => (s.name || '').startsWith('gombwe-reblock-'))
+      .map(s => {
+        const mac = this.schedNameToMac(s.name || '');
+        const firesAt = this.schedFiresAtIso(s);
+        const entry = { id: s['.id'], firesAt, comment: s.comment || '' };
+        timerByMac.set(mac, entry);
+        // The device label is carried in the scheduler comment: "gombwe-reblock <label> @ …".
+        const label = (s.comment || '').replace(/^gombwe-reblock\s+/, '').split(' @ ')[0].trim();
+        return { id: s['.id'], name: s.name || '', label, mac, firesAt, comment: s.comment || '' };
+      });
+
+    const devices = rules
+      .filter(r => (r.comment || '').startsWith('gombwe-screentime:'))
+      .map(r => {
+        const mac = (r['src-mac-address'] || '').toUpperCase();
+        return {
+          id: r['.id'],
+          mac,
+          label: this.screentimeLabel(r.comment || ''),
+          blocked: r.disabled !== 'true', // rule active (not disabled) == device blocked
+          timer: timerByMac.get(mac) ?? null,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    const dotRule = rules.find(r => (r.comment || '').startsWith('gombwe-dot-block'));
+    const dohRule = rules.find(r => (r.comment || '').startsWith('gombwe-doh-block'));
+    const dns = {
+      dot: dotRule ? { id: dotRule['.id'], blocked: dotRule.disabled !== 'true' } : null,
+      doh: dohRule ? { id: dohRule['.id'], blocked: dohRule.disabled !== 'true' } : null,
+    };
+
+    return { devices, dns, timers };
+  }
+
+  /**
+   * Allow a screen-time device online now, and arm a router-side one-shot
+   * scheduler to re-block it at the target time. The scheduler re-enables the
+   * drop rule (matched by MAC) and then deletes itself — so the timer survives
+   * gombwe restarts and reboots, and is fully visible in controlState().
+   */
+  async allowScreenTime(mac: string, opts: { minutes?: number; until?: string }): Promise<ReturnType<NetworkService['controlState']>> {
+    const key = mac.toUpperCase();
+    const rule = await this.findScreentimeRule(key);
+    const label = this.screentimeLabel(rule.comment || '');
+    const target = this.computeReblockTarget(opts);
+
+    await mikrotik.setRuleDisabled(rule['.id'], true); // disable drop rule == allow internet
+    await this.clearReblockTimer(key);                 // replace any existing timer
+
+    const name = this.reblockSchedName(key);
+    const onEvent =
+      `/ip firewall filter enable [find src-mac-address="${key}" comment~"gombwe-screentime"] ; ` +
+      `/system scheduler remove [find name="${name}"]`;
+    await mikrotik.addScheduler({
+      name,
+      startDate: this.mtDatePart(target),
+      startTime: this.mtTimePart(target),
+      interval: '00:00:00', // run once
+      onEvent,
+      comment: `gombwe-reblock ${label} @ ${target.toISOString()}`,
+    });
+
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: key,
+      name: label,
+      action: 'screentime-allow',
+      severity: 'manual',
+      reason: `Allowed online until ${target.toLocaleString()} (auto re-block armed)`,
+      reblock_at: target.toISOString(),
+    });
+
+    return this.controlState();
+  }
+
+  /** Re-block a screen-time device now and clear any pending auto-re-block. */
+  async blockScreenTime(mac: string): Promise<ReturnType<NetworkService['controlState']>> {
+    const key = mac.toUpperCase();
+    const rule = await this.findScreentimeRule(key);
+    await mikrotik.setRuleDisabled(rule['.id'], false); // enable drop rule == block
+    await this.clearReblockTimer(key);
+
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: key,
+      name: this.screentimeLabel(rule.comment || ''),
+      action: 'screentime-block',
+      severity: 'manual',
+      reason: 'Re-blocked now (manual)',
+    });
+
+    return this.controlState();
+  }
+
+  /** Toggle a gombwe DNS-bypass block (DoT or DoH) by rule id. */
+  async setDnsGuard(ruleId: string, on: boolean): Promise<ReturnType<NetworkService['controlState']>> {
+    const rule = await mikrotik.getFilterRule(ruleId);
+    if (!rule) throw new Error('rule not found');
+    if (!(rule.comment || '').startsWith('gombwe-do')) throw new Error('not a gombwe DNS-guard rule');
+    await mikrotik.setRuleDisabled(ruleId, !on); // on == drop enabled
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: null,
+      name: (rule.comment || '').split('(')[0].trim(),
+      action: on ? 'dns-guard-on' : 'dns-guard-off',
+      severity: 'manual',
+      reason: on ? 'DNS-bypass block enabled' : 'DNS-bypass block disabled',
+    });
+    return this.controlState();
+  }
+
+  /** Cancel a router-side timer by id. Leaves current allow/block state as-is. */
+  async cancelRouterTimer(id: string): Promise<ReturnType<NetworkService['controlState']>> {
+    const scheds = await mikrotik.schedulers();
+    const sched = scheds.find(s => s['.id'] === id);
+    if (sched && !(sched.name || '').startsWith('gombwe-reblock-')) {
+      throw new Error('only gombwe-managed timers can be cancelled via API');
+    }
+    await mikrotik.removeScheduler(id);
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: sched ? this.schedNameToMac(sched.name || '') : null,
+      name: sched?.comment || null,
+      action: 'timer-cancel',
+      severity: 'manual',
+      reason: 'Auto re-block timer cancelled (device stays as-is)',
+    });
+    return this.controlState();
   }
 }
 
