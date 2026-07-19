@@ -1629,13 +1629,54 @@ export class NetworkService {
     throw new Error('allow requires { minutes } or { until: "HH:MM" }');
   }
 
-  private async findScreentimeRule(macKey: string): Promise<MtFirewallRule> {
-    const rules = await mikrotik.filterRules();
-    const rule = rules.find(r =>
-      (r.comment || '').startsWith('gombwe-screentime:') &&
-      (r['src-mac-address'] || '').toUpperCase() === macKey);
-    if (!rule) throw new Error(`no screen-time rule found for ${macKey}`);
-    return rule;
+  // ── Recurring schedule <-> router time-matched rules ──────────────
+  // A device's weekly screen-time schedule is a 7×24 blocked mask. It is
+  // stored NOWHERE but the router: as `gombwe-screentime:` drop rules that
+  // carry RouterOS's native `time=` matcher, so the ROUTER enforces the
+  // schedule even when gombwe is offline. buildWeek() reconstructs the mask
+  // from the rules; emitSchedule() projects a mask back to a minimal rule set.
+  private readonly ST_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+  /** RouterOS time token -> hour int. "9h"->9, "1d"->24, "0h"->0. */
+  private stParseTok(t: string): number {
+    const m = t.trim();
+    const n = parseFloat(m);
+    if (m.endsWith('d')) return Math.round(n) * 24;
+    if (m.endsWith('m')) return Math.round(n / 60);
+    if (m.endsWith('s')) return Math.round(n / 3600);
+    return Math.round(n); // trailing 'h' or bare number
+  }
+
+  /** Parse one screen-time rule into the days + hour window it blocks. */
+  private stRuleWindow(rule: MtFirewallRule): { days: number[]; startH: number; endH: number } {
+    const tm = rule.time;
+    if (!tm) return { days: [0, 1, 2, 3, 4, 5, 6], startH: 0, endH: 24 };
+    const parts = tm.split(',');
+    const [st, en] = parts[0].split('-');
+    const dtoks = parts.slice(1).filter(p => this.ST_DAYS.includes(p));
+    const days = dtoks.length ? dtoks.map(d => this.ST_DAYS.indexOf(d)) : [0, 1, 2, 3, 4, 5, 6];
+    return { days, startH: this.stParseTok(st), endH: Math.min(this.stParseTok(en), 24) };
+  }
+
+  /** 7×24 blocked mask from a device's screen-time rules (union). */
+  private buildWeek(rules: MtFirewallRule[]): boolean[][] {
+    const w = Array.from({ length: 7 }, () => new Array(24).fill(false));
+    for (const r of rules) {
+      const win = this.stRuleWindow(r);
+      for (const d of win.days) for (let h = win.startH; h < win.endH && h < 24; h++) w[d][h] = true;
+    }
+    return w;
+  }
+
+  /** Contiguous blocked runs in one day's 24-hour mask -> [start, end) pairs. */
+  private stIntervals(day: boolean[]): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    let s: number | null = null;
+    for (let h = 0; h < 24; h++) {
+      if (day[h] && s === null) s = h;
+      if (s !== null && (!day[h] || h === 23)) { out.push([s, day[h] ? h + 1 : h]); s = null; }
+    }
+    return out;
   }
 
   /** Remove any armed re-block scheduler(s) for a device. Idempotent. */
@@ -1648,14 +1689,19 @@ export class NetworkService {
   }
 
   /**
-   * Full mirror of gombwe-managed router state for the dashboard:
-   *   - screen-time devices (per-MAC standing drop rules) with live blocked/allowed
-   *     state and any armed auto-re-block timer
-   *   - DoT / DoH DNS-bypass blocks
-   *   - every gombwe re-block timer living on the router (/system/scheduler)
+   * Full mirror of gombwe-managed router state for the dashboard. Per device:
+   * its weekly schedule (7×24 blocked mask, from the router's time-matched
+   * rules), whether it is blocked right now, and any temporary override
+   * (timed allow, or a manual force-block). Plus DoT/DoH blocks and every
+   * router-side re-block timer. Nothing here is invisible router state.
    */
   async controlState(): Promise<{
-    devices: Array<{ id: string; mac: string; label: string; blocked: boolean; timer: { id: string; firesAt: string | null; comment: string } | null }>;
+    now: string; todayIdx: number; hour: number;
+    devices: Array<{
+      mac: string; label: string; week: boolean[][]; hasSchedule: boolean;
+      blockedNow: boolean; forceBlocked: boolean; allowUntil: string | null;
+      timer: { id: string; firesAt: string | null; comment: string } | null;
+    }>;
     dns: { dot: { id: string; blocked: boolean } | null; doh: { id: string; blocked: boolean } | null };
     timers: Array<{ id: string; name: string; label: string; mac: string; firesAt: string | null; comment: string }>;
   }> {
@@ -1667,26 +1713,39 @@ export class NetworkService {
       .map(s => {
         const mac = this.schedNameToMac(s.name || '');
         const firesAt = this.schedFiresAtIso(s);
-        const entry = { id: s['.id'], firesAt, comment: s.comment || '' };
-        timerByMac.set(mac, entry);
-        // The device label is carried in the scheduler comment: "gombwe-reblock <label> @ …".
+        timerByMac.set(mac, { id: s['.id'], firesAt, comment: s.comment || '' });
         const label = (s.comment || '').replace(/^gombwe-reblock\s+/, '').split(' @ ')[0].trim();
         return { id: s['.id'], name: s.name || '', label, mac, firesAt, comment: s.comment || '' };
       });
 
-    const devices = rules
-      .filter(r => (r.comment || '').startsWith('gombwe-screentime:'))
-      .map(r => {
-        const mac = (r['src-mac-address'] || '').toUpperCase();
-        return {
-          id: r['.id'],
-          mac,
-          label: this.screentimeLabel(r.comment || ''),
-          blocked: r.disabled !== 'true', // rule active (not disabled) == device blocked
-          timer: timerByMac.get(mac) ?? null,
-        };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
+    // Group each device's screen-time rules by MAC.
+    const byMac = new Map<string, MtFirewallRule[]>();
+    for (const r of rules) {
+      if (!(r.comment || '').startsWith('gombwe-screentime:')) continue;
+      const mac = (r['src-mac-address'] || '').toUpperCase();
+      if (!mac) continue;
+      const arr = byMac.get(mac); if (arr) arr.push(r); else byMac.set(mac, [r]);
+    }
+
+    const now = new Date();
+    const todayIdx = (now.getDay() + 6) % 7; // JS Sun=0 -> our Mon=0
+    const hour = now.getHours();
+
+    const devices = [...byMac.entries()].map(([mac, rs]) => {
+      const label = this.screentimeLabel(rs[0].comment || '') || this.aliases[mac] || mac;
+      const week = this.buildWeek(rs);                                   // schedule as authored
+      const weekEnabled = this.buildWeek(rs.filter(r => r.disabled !== 'true')); // what's live now
+      const forceBlocked = !!this.blocks[mac];
+      const timer = timerByMac.get(mac) ?? null;
+      return {
+        mac, label, week,
+        hasSchedule: week.some(d => d.some(Boolean)),
+        blockedNow: forceBlocked || weekEnabled[todayIdx][hour],
+        forceBlocked,
+        allowUntil: timer?.firesAt ?? null,
+        timer,
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
 
     const dotRule = rules.find(r => (r.comment || '').startsWith('gombwe-dot-block'));
     const dohRule = rules.find(r => (r.comment || '').startsWith('gombwe-doh-block'));
@@ -1695,23 +1754,85 @@ export class NetworkService {
       doh: dohRule ? { id: dohRule['.id'], blocked: dohRule.disabled !== 'true' } : null,
     };
 
-    return { devices, dns, timers };
+    return { now: now.toISOString(), todayIdx, hour, devices, dns, timers };
+  }
+
+  /** All of a device's screen-time rules (enabled or disabled). */
+  private async screentimeRulesFor(macKey: string): Promise<MtFirewallRule[]> {
+    const rules = await mikrotik.filterRules();
+    return rules.filter(r =>
+      (r.comment || '').startsWith('gombwe-screentime:') &&
+      (r['src-mac-address'] || '').toUpperCase() === macKey);
+  }
+
+  private async deviceLabel(macKey: string): Promise<string> {
+    const rs = await this.screentimeRulesFor(macKey);
+    return (rs.length ? this.screentimeLabel(rs[0].comment || '') : '') || this.aliases[macKey] || macKey;
   }
 
   /**
-   * Allow a screen-time device online now, and arm a router-side one-shot
-   * scheduler to re-block it at the target time. The scheduler re-enables the
-   * drop rule (matched by MAC) and then deletes itself — so the timer survives
-   * gombwe restarts and reboots, and is fully visible in controlState().
+   * Replace a device's whole weekly schedule. `week` is a 7×24 (Mon-first)
+   * blocked mask. We delete the device's existing screen-time rules and emit
+   * a minimal set of `time=`-matched drop rules (days with identical masks are
+   * grouped; each contiguous blocked run becomes one rule). Router-enforced.
+   */
+  async setDeviceSchedule(mac: string, week: boolean[][], label?: string): Promise<ReturnType<NetworkService['controlState']>> {
+    const key = mac.toUpperCase();
+    if (!Array.isArray(week) || week.length !== 7 || week.some(d => !Array.isArray(d) || d.length !== 24)) {
+      throw new Error('week must be a 7×24 boolean array (Mon-first)');
+    }
+    const name = label || await this.deviceLabel(key);
+
+    // Wipe existing schedule rules for this device, and any stale allow-timer.
+    for (const r of await this.screentimeRulesFor(key)) await mikrotik.removeRule(r['.id']);
+    await this.clearReblockTimer(key);
+
+    // Group days with identical masks so we emit as few rules as possible.
+    const groups = new Map<string, number[]>();
+    for (let d = 0; d < 7; d++) {
+      const k = week[d].map(b => (b ? '1' : '0')).join('');
+      const g = groups.get(k); if (g) g.push(d); else groups.set(k, [d]);
+    }
+    let emitted = 0;
+    for (const [maskKey, dayIdxs] of groups) {
+      if (!maskKey.includes('1')) continue; // fully-allowed day group: no rule
+      const dayNames = dayIdxs.map(i => this.ST_DAYS[i]).join(',');
+      for (const [s, e] of this.stIntervals(week[dayIdxs[0]])) {
+        await mikrotik.addScheduledMacBlock(key, `${s}h-${e}h,${dayNames}`, `gombwe-screentime: ${name}`);
+        emitted++;
+      }
+    }
+
+    this.writePolicyAction({
+      ts: new Date().toISOString(),
+      mac: key,
+      name,
+      action: 'schedule-set',
+      severity: 'manual',
+      reason: `Weekly screen-time schedule updated (${emitted} rule${emitted === 1 ? '' : 's'})`,
+    });
+
+    return this.controlState();
+  }
+
+  /**
+   * Temporary override: allow a device online NOW regardless of its schedule,
+   * and arm a router-side one-shot to resume the schedule at the target time.
+   * We disable ALL the device's schedule rules (so nothing blocks it now) and
+   * lift any manual force-block; the one-shot re-enables every schedule rule
+   * for this MAC and deletes itself, so the timer survives reboots and shows
+   * up in controlState().
    */
   async allowScreenTime(mac: string, opts: { minutes?: number; until?: string }): Promise<ReturnType<NetworkService['controlState']>> {
     const key = mac.toUpperCase();
-    const rule = await this.findScreentimeRule(key);
-    const label = this.screentimeLabel(rule.comment || '');
+    const rules = await this.screentimeRulesFor(key);
+    if (!rules.length) throw new Error(`no screen-time schedule for ${key}`);
+    const label = this.screentimeLabel(rules[0].comment || '') || key;
     const target = this.computeReblockTarget(opts);
 
-    await mikrotik.setRuleDisabled(rule['.id'], true); // disable drop rule == allow internet
-    await this.clearReblockTimer(key);                 // replace any existing timer
+    if (this.blocks[key]) await this.unblock(key);             // clear any manual force-block
+    for (const r of rules) await mikrotik.setRuleDisabled(r['.id'], true); // allow now
+    await this.clearReblockTimer(key);                         // replace any existing timer
 
     const name = this.reblockSchedName(key);
     const onEvent =
@@ -1728,33 +1849,45 @@ export class NetworkService {
 
     this.writePolicyAction({
       ts: new Date().toISOString(),
-      mac: key,
-      name: label,
+      mac: key, name: label,
       action: 'screentime-allow',
       severity: 'manual',
-      reason: `Allowed online until ${target.toLocaleString()} (auto re-block armed)`,
+      reason: `Allowed online until ${target.toLocaleString()} (schedule resumes then)`,
       reblock_at: target.toISOString(),
     });
 
     return this.controlState();
   }
 
-  /** Re-block a screen-time device now and clear any pending auto-re-block. */
+  /**
+   * Manual force-block NOW, overriding the schedule (e.g. dinner time). Adds a
+   * standing per-MAC drop rule via the existing block() path, on top of the
+   * schedule. Clears any active allow-override first. Reversed by resumeSchedule().
+   */
   async blockScreenTime(mac: string): Promise<ReturnType<NetworkService['controlState']>> {
     const key = mac.toUpperCase();
-    const rule = await this.findScreentimeRule(key);
-    await mikrotik.setRuleDisabled(rule['.id'], false); // enable drop rule == block
     await this.clearReblockTimer(key);
+    for (const r of await this.screentimeRulesFor(key)) await mikrotik.setRuleDisabled(r['.id'], false); // restore schedule baseline
+    await this.block(key, null); // standing gombwe-block drop rule == blocked regardless of time
+    return this.controlState();
+  }
 
+  /**
+   * Drop any temporary override and return the device to its schedule: remove
+   * a manual force-block, re-enable all schedule rules, cancel the allow-timer.
+   */
+  async resumeSchedule(mac: string): Promise<ReturnType<NetworkService['controlState']>> {
+    const key = mac.toUpperCase();
+    if (this.blocks[key]) await this.unblock(key);
+    for (const r of await this.screentimeRulesFor(key)) await mikrotik.setRuleDisabled(r['.id'], false);
+    await this.clearReblockTimer(key);
     this.writePolicyAction({
       ts: new Date().toISOString(),
-      mac: key,
-      name: this.screentimeLabel(rule.comment || ''),
-      action: 'screentime-block',
+      mac: key, name: await this.deviceLabel(key),
+      action: 'schedule-resume',
       severity: 'manual',
-      reason: 'Re-blocked now (manual)',
+      reason: 'Override cleared; back on schedule',
     });
-
     return this.controlState();
   }
 

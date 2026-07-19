@@ -3605,12 +3605,16 @@ async function renderAdvFirewall() {
   `;
 }
 
-// ── Screen Time controls ────────────────────────────────────────────
-// Mirrors gombwe-managed router state — per-device standing blocks, the
-// DNS-bypass blocks, and the router-side auto-re-block timers — and drives
-// it. The dashboard is the single source of truth; every value here is read
-// live from the router via /api/network/controls.
+// ── Screen Time schedule ────────────────────────────────────────────
+// A per-device weekly schedule (7×24 blocked mask) shown as a 24-hour
+// timeline you edit by clicking hours. Enforced by the router itself via
+// time-matched firewall rules (holds even if gombwe is offline). A device
+// dropdown swaps which timeline you see; day tabs pick which day you edit.
 const ST_BORDER = 'border-top:1px solid rgba(128,128,128,0.22)';
+const ST_DAYNAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+let stData = null;                       // last /controls response
+let stEdit = { mac: null, day: 'every', week: null }; // working copy being edited
 
 function stFmtTime(iso) {
   if (!iso) return '';
@@ -3630,72 +3634,208 @@ function stCountdown(iso) {
   const h = Math.floor(m / 60), r = m % 60;
   return r ? `${h}h ${r}m` : `${h}h`;
 }
+function stCloneWeek(w) { return w.map(d => d.slice()); }
+function stCurrentDevice() { return (stData?.devices || []).find(d => d.mac === stEdit.mac) || null; }
+function stWeeksEqual(a, b) { return a && b && a.every((d, i) => d.every((v, h) => v === b[i][h])); }
+function stDirty() { const d = stCurrentDevice(); return d && stEdit.week && !stWeeksEqual(d.week, stEdit.week); }
 
 async function renderScreenTime() {
-  const wrap = document.getElementById('stDevices');
-  if (!wrap) return;
+  const tl = document.getElementById('stTimeline');
+  if (!tl) return;
   let data;
   try {
     data = await fetch(`${API}/api/network/controls`).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
-  } catch { wrap.innerHTML = '<div class="muted small">Could not reach the router.</div>'; return; }
+  } catch { tl.innerHTML = '<div class="muted small">Could not reach the router.</div>'; return; }
 
+  // Preserve edits: only reset the working copy if not currently dirty, or if
+  // the selected device vanished / changed.
+  const prevDirty = stDirty();
+  stData = data;
+  if (!stEdit.mac || !data.devices.some(d => d.mac === stEdit.mac)) {
+    stEdit.mac = data.devices[0]?.mac || null;
+    stEdit.week = stEdit.mac ? stCloneWeek(stCurrentDevice().week) : null;
+  } else if (!prevDirty) {
+    stEdit.week = stCloneWeek(stCurrentDevice().week); // pull in server state
+  }
+
+  // Device dropdown
+  const sel = document.getElementById('stDeviceSel');
+  if (sel) {
+    sel.innerHTML = data.devices.map(d => `<option value="${esc(d.mac)}">${esc(d.label)}</option>`).join('');
+    if (stEdit.mac) sel.value = stEdit.mac;
+  }
   const meta = document.getElementById('stMeta');
-  const allowed = data.devices.filter(d => !d.blocked).length;
-  if (meta) meta.textContent = `${data.devices.length} devices · ${allowed} allowed now`;
+  const blockedCount = data.devices.filter(d => d.blockedNow).length;
+  if (meta) meta.textContent = `${data.devices.length} devices · ${blockedCount} blocked now`;
 
-  wrap.innerHTML = data.devices.map(d => {
-    const state = d.blocked
-      ? '<span class="speed-state down">Blocked</span>'
-      : '<span class="speed-state up">Allowed</span>';
-    const timerLine = (!d.blocked && d.timer)
-      ? `<div class="muted small" style="margin-top:4px">Re-blocks at <strong>${esc(stFmtTime(d.timer.firesAt))}</strong> · in ${esc(stCountdown(d.timer.firesAt))}</div>`
-      : (!d.blocked ? '<div class="muted small" style="margin-top:4px">Allowed with no automatic re-block.</div>' : '');
-    const actions = d.blocked ? `
+  stRenderTimeline();
+  stRenderOverride();
+  stRenderTimers();
+  stRenderDns();
+}
+
+function stRenderTimeline() {
+  const tabs = document.getElementById('stDayTabs');
+  const tl = document.getElementById('stTimeline');
+  const dev = stCurrentDevice();
+  if (!tl) return;
+  if (!dev) { tl.innerHTML = '<div class="muted small">No screen-time devices found.</div>'; if (tabs) tabs.innerHTML = ''; return; }
+
+  // Day tabs: "Every day" + Mon–Sun, with today marked.
+  const todayIdx = stData.todayIdx;
+  if (tabs) tabs.innerHTML = [['every', 'Every day']].concat(ST_DAYNAMES.map((n, i) => [String(i), n]))
+    .map(([v, label]) => {
+      const active = String(stEdit.day) === v ? ' active' : '';
+      const today = v === String(todayIdx) ? ' · today' : '';
+      return `<button class="btn-sm st-daytab${active}" data-st-day="${v}">${label}${today}</button>`;
+    }).join('');
+
+  // Which hours are blocked in the current view?
+  const week = stEdit.week;
+  const blockedAt = (h) => {
+    if (stEdit.day === 'every') {
+      const n = week.reduce((c, d) => c + (d[h] ? 1 : 0), 0);
+      return n === 7 ? 'blocked' : (n === 0 ? 'allowed' : 'mixed');
+    }
+    return week[Number(stEdit.day)][h] ? 'blocked' : 'allowed';
+  };
+  const showNow = stEdit.day === 'every' || Number(stEdit.day) === todayIdx;
+
+  let cells = '';
+  for (let h = 0; h < 24; h++) {
+    const st = blockedAt(h);
+    const now = showNow && h === stData.hour ? ' st-now' : '';
+    const lbl = h % 3 === 0 ? `<span class="st-cell-h">${h}</span>` : '';
+    cells += `<button class="st-cell st-${st}${now}" data-st-h="${h}" title="${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00 · ${st}">${lbl}</button>`;
+  }
+  tl.innerHTML = `<div class="st-hours">${cells}</div><div class="st-ticks"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>`;
+
+  const nowHint = document.getElementById('stNowHint');
+  if (nowHint) nowHint.innerHTML = showNow ? `<span class="st-nowdot"></span> now: ${String(stData.hour).padStart(2, '0')}:00` : '';
+
+  const dirtyEl = document.getElementById('stDirty');
+  if (dirtyEl) dirtyEl.textContent = stDirty() ? 'Unsaved changes' : '';
+  const saveBtn = document.getElementById('stSave');
+  if (saveBtn) saveBtn.disabled = !stDirty();
+}
+
+function stRenderOverride() {
+  const el = document.getElementById('stOverride');
+  const d = stCurrentDevice();
+  if (!el || !d) { if (el) el.innerHTML = ''; return; }
+  const badge = d.blockedNow ? '<span class="speed-state down">Blocked now</span>' : '<span class="speed-state up">Allowed now</span>';
+  let line = '', actions = '';
+  if (d.forceBlocked) {
+    line = 'Force-blocked by manual override.';
+    actions = `<button class="btn-sm" data-st="resume" data-mac="${esc(d.mac)}">Resume schedule</button>`;
+  } else if (d.allowUntil) {
+    line = `Allowed until <strong>${esc(stFmtTime(d.allowUntil))}</strong> (in ${esc(stCountdown(d.allowUntil))}), then the schedule resumes.`;
+    actions = `<button class="btn-sm" data-st="resume" data-mac="${esc(d.mac)}">Resume now</button>`;
+  } else {
+    line = 'On schedule. Temporary override:';
+    actions = `
       <button class="btn-sm btn-primary" data-st="allow" data-mac="${esc(d.mac)}" data-min="60">Allow 1h</button>
       <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-min="120">Allow 2h</button>
       <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-until="06:00">Till 6am</button>
-    ` : `
-      <button class="btn-sm" data-st="allow" data-mac="${esc(d.mac)}" data-min="60">+1h</button>
-      <button class="btn-sm" data-st="block" data-mac="${esc(d.mac)}">Block now</button>
-    `;
-    return `
-      <div class="st-row" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;${ST_BORDER}">
-        <div style="min-width:0">
-          <div><strong>${esc(d.label)}</strong> ${state}</div>
-          <div class="muted small">${esc(d.mac)}</div>
-          ${timerLine}
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${actions}</div>
-      </div>`;
-  }).join('');
+      <button class="btn-sm" data-st="block" data-mac="${esc(d.mac)}">Block now</button>`;
+  }
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div><strong>${esc(d.label)}</strong> ${badge} <span class="muted small">${line}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${actions}</div>
+    </div>`;
+}
 
-  const timersEl = document.getElementById('stTimers');
-  const tmeta = document.getElementById('stTimersMeta');
-  if (tmeta) tmeta.textContent = `${data.timers.length} armed`;
-  if (timersEl) timersEl.innerHTML = data.timers.length ? data.timers.map(t => `
-    <div class="st-row" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}">
-      <div><strong>${esc(t.label || t.mac)}</strong> <span class="muted small">re-blocks ${esc(stFmtTime(t.firesAt))} · in ${esc(stCountdown(t.firesAt))}</span></div>
+function stRenderTimers() {
+  const el = document.getElementById('stTimers');
+  const meta = document.getElementById('stTimersMeta');
+  if (!el) return;
+  const timers = stData.timers || [];
+  if (meta) meta.textContent = `${timers.length} armed`;
+  el.innerHTML = timers.length ? timers.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}">
+      <div><strong>${esc(t.label || t.mac)}</strong> <span class="muted small">resumes schedule ${esc(stFmtTime(t.firesAt))} · in ${esc(stCountdown(t.firesAt))}</span></div>
       <button class="btn-sm" data-st="cancel-timer" data-id="${esc(t.id)}">Cancel</button>
-    </div>`).join('') : '<div class="muted small">No timers armed. Every device is on its standing schedule.</div>';
+    </div>`).join('') : '<div class="muted small">No overrides armed. Every device is on its schedule.</div>';
+}
 
-  const dnsEl = document.getElementById('stDns');
-  if (dnsEl) dnsEl.innerHTML = ['dot', 'doh'].map(k => {
-    const r = data.dns[k];
+function stRenderDns() {
+  const el = document.getElementById('stDns');
+  if (!el) return;
+  el.innerHTML = ['dot', 'doh'].map(k => {
+    const r = stData.dns[k];
     const name = k === 'dot' ? 'DNS-over-TLS (DoT)' : 'DNS-over-HTTPS (DoH)';
     if (!r) return `<div class="muted small" style="padding:8px 0;${ST_BORDER}">${name}: rule not present.</div>`;
     const state = r.blocked ? '<span class="speed-state up">Blocking</span>' : '<span class="speed-state down">Off</span>';
     const btn = r.blocked
       ? `<button class="btn-sm" data-st="dns" data-id="${esc(r.id)}" data-on="0">Turn off</button>`
       : `<button class="btn-sm btn-primary" data-st="dns" data-id="${esc(r.id)}" data-on="1">Turn on</button>`;
-    return `<div class="st-row" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}"><div><strong>${name}</strong> ${state}</div>${btn}</div>`;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;${ST_BORDER}"><div><strong>${name}</strong> ${state}</div>${btn}</div>`;
   }).join('');
 }
 
+// Toggle an hour in the working copy (applies to all days in "Every day" view).
+function stToggleHour(h) {
+  const week = stEdit.week; if (!week) return;
+  if (stEdit.day === 'every') {
+    const allBlocked = week.every(d => d[h]);
+    for (let i = 0; i < 7; i++) week[i][h] = !allBlocked;
+  } else {
+    const i = Number(stEdit.day);
+    week[i][h] = !week[i][h];
+  }
+  stRenderTimeline();
+}
+
+async function stSaveSchedule() {
+  const d = stCurrentDevice(); if (!d) return;
+  const btn = document.getElementById('stSave'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const res = await fetch(`${API}/api/network/screentime/${encodeURIComponent(d.mac)}/schedule`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ week: stEdit.week, label: d.label }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+    stData = await res.json();
+    stEdit.week = stCloneWeek(stCurrentDevice().week);
+    stRenderTimeline(); stRenderOverride(); stRenderTimers();
+  } catch (err) { alert(`Save failed: ${err.message}`); }
+  finally { if (btn) btn.textContent = 'Save schedule'; }
+}
+
 let stRefreshInterval = null;
-function startScreenTime() { renderScreenTime(); if (!stRefreshInterval) stRefreshInterval = setInterval(renderScreenTime, 30000); }
+function startScreenTime() { renderScreenTime(); if (!stRefreshInterval) stRefreshInterval = setInterval(() => { if (!stDirty()) renderScreenTime(); }, 30000); }
 function stopScreenTime() { if (stRefreshInterval) { clearInterval(stRefreshInterval); stRefreshInterval = null; } }
 
-// Delegated handler for Screen Time actions.
+// Editor interactions (device select, day tabs, timeline cells, edit buttons).
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'stDeviceSel') {
+    stEdit.mac = e.target.value;
+    stEdit.week = stCloneWeek(stCurrentDevice().week);
+    // Default day view: "Every day" if all days match, else today.
+    const w = stEdit.week;
+    const uniform = w.every(d => d.every((v, h) => v === w[0][h]));
+    stEdit.day = uniform ? 'every' : String(stData.todayIdx);
+    stRenderTimeline(); stRenderOverride();
+  }
+});
+document.addEventListener('click', (e) => {
+  const t = e.target.closest ? e.target.closest('[data-st-day],[data-st-h],#stApplyAll,#stAllBlock,#stAllAllow,#stRevert,#stSave') : null;
+  if (!t) return;
+  if (t.dataset.stDay !== undefined) { stEdit.day = t.dataset.stDay; stRenderTimeline(); }
+  else if (t.dataset.stH !== undefined) { stToggleHour(Number(t.dataset.stH)); }
+  else if (t.id === 'stApplyAll') { const src = stEdit.day === 'every' ? 0 : Number(stEdit.day); for (let i = 0; i < 7; i++) stEdit.week[i] = stEdit.week[src].slice(); stRenderTimeline(); }
+  else if (t.id === 'stAllBlock') { stSetView(true); }
+  else if (t.id === 'stAllAllow') { stSetView(false); }
+  else if (t.id === 'stRevert') { stEdit.week = stCloneWeek(stCurrentDevice().week); stRenderTimeline(); stRenderOverride(); }
+  else if (t.id === 'stSave') { stSaveSchedule(); }
+});
+function stSetView(blocked) {
+  const days = stEdit.day === 'every' ? [0, 1, 2, 3, 4, 5, 6] : [Number(stEdit.day)];
+  for (const i of days) for (let h = 0; h < 24; h++) stEdit.week[i][h] = blocked;
+  stRenderTimeline();
+}
+
+// Delegated handler for Screen Time override / timer / DNS actions.
 document.addEventListener('click', async (e) => {
   const t = e.target;
   if (!(t instanceof HTMLElement) || !t.matches('[data-st]')) return;
@@ -3710,6 +3850,8 @@ document.addEventListener('click', async (e) => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     } else if (kind === 'block') {
       res = await fetch(`${API}/api/network/screentime/${encodeURIComponent(t.dataset.mac)}/block`, { method: 'POST' });
+    } else if (kind === 'resume') {
+      res = await fetch(`${API}/api/network/screentime/${encodeURIComponent(t.dataset.mac)}/resume`, { method: 'POST' });
     } else if (kind === 'dns') {
       res = await fetch(`${API}/api/network/dns-guard`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.dataset.id, on: t.dataset.on === '1' }) });
@@ -3717,7 +3859,7 @@ document.addEventListener('click', async (e) => {
       res = await fetch(`${API}/api/network/router-timers/${encodeURIComponent(t.dataset.id)}`, { method: 'DELETE' });
     }
     if (res && !res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
-    await renderScreenTime();
+    if (res) { stData = await res.json(); if (!stDirty()) stEdit.week = stCloneWeek(stCurrentDevice()?.week || stEdit.week); stRenderTimeline(); stRenderOverride(); stRenderTimers(); stRenderDns(); }
   } catch (err) {
     t.disabled = false; t.textContent = orig;
     alert(`Failed: ${err.message}`);

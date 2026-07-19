@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <!-- Top Bar -->
@@ -600,11 +600,34 @@
           <div class="eero-pane" data-eero-pane="screentime">
             <div class="card eero-card">
               <div class="eero-card-header">
-                <span>Screen time devices</span>
+                <span>Screen time schedule</span>
                 <span class="muted small" id="stMeta"></span>
               </div>
-              <p class="muted small" style="margin: 0 0 10px">Each device has a standing block on the router. <strong>Allow</strong> lifts it and arms an automatic re-block at the chosen time; the timer lives on the router, so it survives reboots and shows up under Timers below.</p>
-              <div id="stDevices"><div class="muted small">Loading…</div></div>
+              <div class="st-toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+                <select id="stDeviceSel" class="md-select" style="min-width:180px"></select>
+                <span id="stStatus" class="muted small"></span>
+              </div>
+
+              <div id="stDayTabs" class="st-daytabs" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
+
+              <div class="st-legend muted small" style="display:flex;gap:14px;margin-bottom:6px">
+                <span><span class="st-swatch st-blocked"></span> Blocked (no internet)</span>
+                <span><span class="st-swatch st-allowed"></span> Allowed</span>
+                <span class="st-nowhint" id="stNowHint"></span>
+              </div>
+              <div id="stTimeline" class="st-timeline"><div class="muted small">Loading…</div></div>
+
+              <div class="st-editbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+                <button class="btn-sm" id="stAllBlock">Block all day</button>
+                <button class="btn-sm" id="stAllAllow">Allow all day</button>
+                <button class="btn-sm" id="stApplyAll">Copy this day → every day</button>
+                <span style="flex:1"></span>
+                <span class="muted small" id="stDirty"></span>
+                <button class="btn-sm" id="stRevert">Revert</button>
+                <button class="btn-sm btn-primary" id="stSave">Save schedule</button>
+              </div>
+
+              <div id="stOverride" class="st-override" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(128,128,128,0.22)"></div>
             </div>
 
             <div class="card eero-card">
@@ -873,6 +896,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
