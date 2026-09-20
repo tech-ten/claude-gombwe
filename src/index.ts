@@ -24,6 +24,8 @@ program
     const config = loadConfig();
     const requestedPort = opts.port ? parseInt(opts.port, 10) : config.port;
     config.port = requestedPort;
+    // Only the headless daemon may steer the router; a dev instance must not fight it.
+    config.routerOwner = !!opts.headless;
 
     const state = await getDaemonState();
 
