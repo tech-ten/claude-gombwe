@@ -3123,14 +3123,15 @@ The ingredients should be grocery item names with quantities scaled for ${family
         console.warn(`[gombwe] dns-receiver failed to start:`, err);
       }
 
-      // Self-heal the DNS feed: keep the router's remote-log target pointed at
-      // gombwe's current LAN IP. Without this, an IP drift (DHCP/Wi-Fi MAC
-      // rotation) silently kills the feed until someone notices days later.
+      // Self-heal the router feeds: keep the DNS-log and NetFlow targets pointed
+      // at gombwe's current LAN IP. Without this, an IP drift (DHCP/Wi-Fi MAC
+      // rotation) silently kills both feeds until someone notices weeks later.
+      // Only the headless daemon owns the router; a dev instance stays hands-off.
       try {
-        const { startDnsFeedHealer } = await import('./dns-feed-healer.js');
-        startDnsFeedHealer();
+        const { startRouterTargetHealer } = await import('./router-target-healer.js');
+        startRouterTargetHealer({ owner: this.config.routerOwner === true });
       } catch (err) {
-        console.warn(`[gombwe] dns feed healer failed to start:`, err);
+        console.warn(`[gombwe] router target healer failed to start:`, err);
       }
 
       // Bootstrap the local blocklist cache — fast load from disk if present,

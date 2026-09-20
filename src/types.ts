@@ -18,6 +18,8 @@ export interface GombweConfig {
     name: string;
     personality?: string;
   };
+  /** Set at runtime by `start --headless`: this instance owns the router (may rewrite its targets). */
+  routerOwner?: boolean;
 }
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';

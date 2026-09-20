@@ -1,7 +1,7 @@
 {
   "name": "claude-gombwe",
   "version": "0.2.0",
-  "description": "Autonomous agent control panel powered by Claude Code — orchestrate AI tasks, triggers, workflows, and skills from anywhere",
+  "description": "Autonomous agent control panel powered by Claude Code \u2014 orchestrate AI tasks, triggers, workflows, and skills from anywhere",
   "type": "module",
   "bin": {
     "gombwe": "./dist/index.js"
@@ -40,7 +40,8 @@
     "dev": "run-p watch-server watch-assets",
     "watch-server": "tsx watch src/index.ts",
     "watch-assets": "shx echo 'Watching assets...'",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "node --import tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1053.0",
