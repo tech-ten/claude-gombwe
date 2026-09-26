@@ -6,7 +6,9 @@ alignment and type hierarchy do the work. Nothing is decorative.
 
 Tokens live in `ui/theme.css` and must be linked before `ui/style.css`.
 `style.css` declares no colour of its own: every value resolves through a
-token, so light and dark are one implementation rather than two.
+token, so light and dark are one implementation rather than two. The only
+colour literals in the UI are the token definitions themselves, plus the
+chart palette in `ui/app.js` explained below.
 
 ## Colour
 
@@ -26,6 +28,13 @@ token, so light and dark are one implementation rather than two.
 | `--ok` | `#15803D` | `#4ADE80` | Healthy, online, done |
 | `--warn` | `#B45309` | `#FBBF24` | Needs attention, not broken |
 | `--danger` | `#B91C1C` | `#F87171` | Failed, blocked, breached |
+| `--scrim` | `rgba(0,0,0,.4)` | same | Behind a modal or the mobile drawer |
+
+`--scrim` is the one token that does not flip with the theme. A scrim dims
+whatever is beneath it, and what is beneath it is the page, which is already
+light or dark. Tinting it with the theme would make it lighten a dark page.
+It is used in exactly three places: the command palette overlay, the network
+modal, and the mobile drawer backdrop.
 
 There is exactly one accent. Blue means "you can act on this" or "this is
 where you are". It is never used to decorate a heading or a border that is
@@ -107,6 +116,23 @@ mode a tint over near-black reads as dirt.
 one action that matters. `.btn-ghost` is a hairline box for everything else.
 `.btn-sm` for in-row actions.
 
+**Glyphs.** There are no emoji anywhere in `ui/`. A flagged device or
+destination is marked by `.flag-dot`, a 6px circle drawn in CSS and coloured
+by `.flag-high` / `.flag-med` / `.flag-low`. A CSS glyph takes the theme's
+state colour and renders identically on every platform; an emoji does
+neither, and carries a colour the design system does not own. Status that
+used to lead with a tick or a cross now leads with the word, coloured by
+`.dns-ok` or `.dns-warn`.
+
+Directional arrows (`↓` down, `↑` up, `→` maps-to) are kept. They are
+typographic marks rather than pictographs, they carry meaning in a dense
+throughput column where a word would wrap, and they render from the text
+font in both themes.
+
+**Failed writes.** A write that fails says so where it was triggered, in an
+`.inline-error` line under the row, and the row stays put so the action can
+be retried. Not a toast, not an alert box, never only a `console.warn`.
+
 ## Graceful degradation
 
 Several endpoints this shell reads are owned by later work. The rule is that
@@ -115,7 +141,10 @@ a missing endpoint shortens the page, never breaks it:
 - `getJSON()` returns `null` on a non-OK response or a thrown fetch. Callers
   hide their panel.
 - `/api/me` returning 404 means owner with every grant, which is the
-  single-user behaviour the household has today.
+  single-user behaviour the household has today. This is the **only**
+  fail-open path. A principal that is not the owner and carries no grants
+  object holds no grants, so a malformed or truncated `/api/me` shows Home
+  and Chat and nothing else.
 - A tab hidden by grant is unreachable, including by URL hash.
 
 ## Do and do not
@@ -127,4 +156,6 @@ shadow and a fill.
 Do not: add a second accent; add a web font; use a gradient, a glow or a
 glassmorphic panel; animate on a loop; write an emoji or an exclamation mark
 into UI copy; put a number in a sentence where a column would do; introduce
-a colour literal in `style.css`.
+a colour literal in `style.css`; use a near-black tint such as
+`rgba(0,0,0,.02)` for a hover or open state, because it disappears entirely
+on a dark surface — use `--bg-soft`.

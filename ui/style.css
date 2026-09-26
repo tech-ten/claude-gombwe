@@ -551,7 +551,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  box-shadow: 0 -10px 32px rgba(0, 0, 0,0.10);
+  box-shadow: var(--shadow);
   z-index: 50;
 }
 
@@ -885,6 +885,41 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   .home-alert-detail { white-space: normal; }
 }
 
+
+/* ── Flag dot ─────────────────────────────────────────────────────────
+   Replaces the emoji that used to mark a flagged device or destination.
+   Drawn in CSS so it takes the theme's state colour and renders the same
+   on every platform, which an emoji does not. */
+.flag-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: var(--s2);
+  vertical-align: 0.1em;
+  background: var(--text-3);
+  flex: none;
+}
+.flag-high { background: var(--danger); }
+.flag-med  { background: var(--warn); }
+.flag-low  { background: var(--text-3); }
+
+.md-inaudit {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+
+/* A failed write, said once, under the row that failed. Not a toast, not
+   an alert box — the row keeps its place and the reason sits with it. */
+.inline-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: var(--s1);
+}
+
 /* ── Cards ────────────────────────────────────────────────── */
 
 /* A card is a hairline box. It is not raised, tinted or rounded further —
@@ -1073,7 +1108,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
 .cmd-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   display: flex;
@@ -1496,7 +1531,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   top: 0.5px;
   width: 5px;
   height: 9px;
-  border: solid white;
+  border: solid var(--on-accent);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -2194,7 +2229,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
 
 .eero-modal {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.4);
+  background: var(--scrim);
   display: flex; align-items: center; justify-content: center;
   z-index: 9998;
 }
@@ -2296,14 +2331,14 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
 .ac-adlist-label { color: var(--fam-text); font-weight: 500; }
 
 .ac-cat-block { border-bottom: 1px solid var(--border); }
-.ac-cat-block[open] { background: rgba(0, 0, 0, 0.015); }
+.ac-cat-block[open] { background: var(--bg-soft); }
 .ac-cat-summary {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 4px; cursor: pointer; list-style: none;
   transition: background 80ms ease;
 }
 .ac-cat-summary::-webkit-details-marker { display: none; }
-.ac-cat-summary:hover { background: rgba(0, 0, 0, 0.025); }
+.ac-cat-summary:hover { background: var(--bg-soft); }
 .ac-cat-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
 .ac-cat-name {
   font-family: monospace; font-size: 12px; letter-spacing: 0.06em;
@@ -2363,7 +2398,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   display: block;
   padding: 12px 0 4px;
 }
-.chart-gridline   { stroke: rgba(0, 0, 0, 0.08); stroke-width: 1; }
+.chart-gridline   { stroke: var(--border-soft); stroke-width: 1; }
 .chart-axis-label { font-family: monospace; font-size: 10px; fill: var(--text-3); letter-spacing: 0.04em; }
 .chart-empty-text { font-family: var(--sans); font-size: 14px; fill: var(--text-3); }
 .chart-band       { transition: fill-opacity var(--t); }
@@ -2591,7 +2626,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--t);

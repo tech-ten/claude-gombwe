@@ -47,6 +47,11 @@
   --sidebar:     #FAFAFB;
   --sidebar-w:   220px;
   --topbar-h:    48px;
+  /* The one colour that does not flip with the theme. A scrim behind a
+     modal or the mobile drawer dims whatever is under it, and what is under
+     it is the page, which is already light or dark. Tinting the scrim with
+     the theme would make it lighten a dark page. */
+  --scrim:       rgba(0, 0, 0, .4);
 
   /* ── Type ─────────────────────────────────────────────────────────── */
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;

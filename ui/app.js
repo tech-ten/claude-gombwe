@@ -666,11 +666,22 @@ async function loadHomeApprovals() {
 }
 
 async function decideApproval(id, verdict) {
+  const row = document.querySelector(`.home-approval[data-id="${CSS.escape(id)}"]`);
+  row?.querySelector('.inline-error')?.remove();
   try {
     const res = await fetch(`${API}/api/approvals/${encodeURIComponent(id)}/${verdict}`, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (err) {
     console.warn('[home] approval failed:', err);
+    // Say so where the decision was made, and leave the row in place so the
+    // buttons can be pressed again. Reloading here would wipe the message.
+    if (row) {
+      const msg = document.createElement('p');
+      msg.className = 'inline-error';
+      msg.textContent = 'Could not send. Try again.';
+      row.appendChild(msg);
+    }
+    return;
   }
   loadHomeApprovals();
 }
@@ -787,12 +798,16 @@ function grants() { return (me && me.grants) || null; }
 function isOwner() { return !me || me.role === 'owner'; }
 
 function hasGrant(grant) {
-  if (!grant) return true;
+  if (!grant) return true;                  // ungated tabs: Home, Chat
   if (isOwner()) return true;               // the owner holds every grant
   if (grant === 'owner') return false;
   if (grant === 'activity') return me.role === 'adult';
   const g = grants();
-  if (!g) return true;                      // no grants block = unrestricted
+  // A non-owner with no grants object holds no grants. Treating a missing
+  // block as unrestricted would fail open: a malformed or truncated /api/me
+  // would hand a child the whole dashboard. Only the owner short-circuit
+  // above may skip the check.
+  if (!g) return false;
   return Boolean(g[grant]);
 }
 
@@ -1231,7 +1246,11 @@ async function saveFamily() {
 function getWeekDates() {
   const now = new Date();
   const start = new Date(now);
-  start.setDate(start.getDate() - start.getDay() + 1 + weekOffset * 7);
+  // getDay() is 0 on Sunday, so the naive `- getDay() + 1` lands on
+  // tomorrow and the grid shows next week all day Sunday. Counting Sunday
+  // as the 7th day of the week that is ending fixes it.
+  const dow = start.getDay() || 7;
+  start.setDate(start.getDate() - dow + 1 + weekOffset * 7);
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(start);
@@ -1809,8 +1828,8 @@ function renderDeals() {
   const w = dealsData.carts?.woolworths;
   const c = dealsData.carts?.coles;
   if (metaEl) {
-    const wTxt = w ? `W: $${w.total}${w.free_delivery ? ' ✓ free' : ` (need $${(75 - w.total).toFixed(2)} more)`}` : '';
-    const cTxt = c ? `C: $${c.total}${c.free_delivery ? ' ✓ free' : ` (need $${(50 - c.total).toFixed(2)} more)`}` : '';
+    const wTxt = w ? `W: $${w.total}${w.free_delivery ? ' free delivery' : ` (need $${(75 - w.total).toFixed(2)} more)`}` : '';
+    const cTxt = c ? `C: $${c.total}${c.free_delivery ? ' free delivery' : ` (need $${(50 - c.total).toFixed(2)} more)`}` : '';
     metaEl.textContent = `${rb.length} rock-bottom · ${wTxt} · ${cTxt}`;
   }
 
@@ -1896,7 +1915,7 @@ function renderMealPlan() {
     if (d.status !== 'planned') {
       return `<div class="plan-row"><span class="plan-date">${esc(d.date)}</span><span class="plan-name muted">${esc(d.status)}</span></div>`;
     }
-    const flag = d.over_daily_allowance ? '<span class="plan-flag" title="Over daily budget">⚠</span>' : '';
+    const flag = d.over_daily_allowance ? '<span class="plan-flag">over budget</span>' : '';
     const mods = d.modifications && Object.keys(d.modifications).length
       ? `<details class="plan-mods"><summary>${Object.keys(d.modifications).length} mods</summary>${Object.entries(d.modifications).map(([w, m]) => `<div><span class="recipe-mod-who">${esc(w)}</span>: ${esc(m)}</div>`).join('')}</details>`
       : '';
@@ -3341,7 +3360,13 @@ async function renderUsageDossier() {
     box.innerHTML = '<div class="muted small" style="padding:16px">No sessions recorded yet. The NetFlow collector logs connections as they expire (~1 min).</div>';
     return;
   }
-  const flagIcon = (sev) => sev === 'high' ? '🚩' : (sev === 'med' || sev === 'medium') ? '⚠️' : sev === 'low' ? '⚑' : '';
+  // Severity reads as a CSS-drawn dot in the state colour, not a glyph:
+  // emoji render differently on every platform and carry a colour the
+  // design system does not own.
+  const flagIcon = (sev) => {
+    const cls = sev === 'high' ? 'high' : (sev === 'med' || sev === 'medium') ? 'med' : sev === 'low' ? 'low' : '';
+    return cls ? `<span class="flag-dot flag-${cls}" title="${cls} severity"></span>` : '';
+  };
   const tspan = (t) => `<span title="${esc(t)}">${esc(melDateTime(t))}</span>`;
   const rows = d.devices.map(dev => {
     const flaggedCount = dev.destinations.filter(t => t.flagged).length;
@@ -3350,7 +3375,7 @@ async function renderUsageDossier() {
     return `
     <details class="dossier-device">
       <summary>
-        <span class="dossier-name">${showFlag ? '🚩 ' : ''}${esc(dev.name || dev.ip)}</span>
+        <span class="dossier-name">${showFlag ? '<span class="flag-dot flag-high" title="Flagged in audit"></span>' : ''}${esc(dev.name || dev.ip)}</span>
         <span class="dossier-meta">↓${fmtBytes(dev.bytesDown)} ↑${fmtBytes(dev.bytesUp)} · ${dev.sessions.toLocaleString()} sessions · ${tspan(dev.firstSeen)}–${tspan(dev.lastSeen)}${audit ? ` · <span class="flag-text">${audit} in audit</span>` : ''}</span>
       </summary>
       <table class="eero-table audit-table">
@@ -3372,7 +3397,7 @@ async function renderUsageDossier() {
   box.innerHTML = `
     <div class="eero-card-header">
       <span>Session dossier — per device (last ${esc(String(d.days))}d)</span>
-      <span class="muted small">source: ${esc(d.source)} · 🚩/⚠️ = destination also flagged in Audit</span>
+      <span class="muted small">source: ${esc(d.source)} · a dot marks a destination also flagged in Audit</span>
     </div>
     ${rows}`;
 }
@@ -3539,7 +3564,7 @@ async function renderActivity() {
     const prev = [v.down>0?'↓ '+fmtBytes(v.down):'', v.up>0?'↑ '+fmtBytes(v.up):'', v.count+'×'].filter(Boolean).join(' · ');
     html += `<div class="md-item ${activity.selected===v.domain+v.last?'active':''}" data-id="${esc(v.domain+v.last)}">
       <div class="md-item-top"><span class="md-tag ${sevTag(v)}">${esc(v.category)}</span><span class="md-item-date">${esc(melTime(v.last))}</span></div>
-      <div class="md-item-title">${v.inAudit?'🚩 ':''}${esc(v.domain)}</div>
+      <div class="md-item-title">${v.inAudit?'<span class="flag-dot flag-high" title="Flagged in audit"></span>':''}${esc(v.domain)}</div>
       <div class="md-item-preview">${esc(prev)}</div></div>`;
   });
   list.innerHTML = html;
@@ -3557,7 +3582,7 @@ function renderActivityDetail(rows) {
     <div class="md-meta">
       <span class="k">Device</span><span class="v">${esc(activity.data.device)}</span>
       <span class="k">Site</span><span class="v">${esc(v.domain)}</span>
-      <span class="k">Category</span><span class="v"><span class="md-tag ${sev}">${esc(v.category)}</span>${v.inAudit?' <span style="color:var(--red);font-weight:600">🚩 in audit</span>':''}</span>
+      <span class="k">Category</span><span class="v"><span class="md-tag ${sev}">${esc(v.category)}</span>${v.inAudit?' <span class="md-inaudit">in audit</span>':''}</span>
       <span class="k">When</span><span class="v">${esc(win)}</span>
       <span class="k">Downloaded</span><span class="v">${v.down>0?fmtBytes(v.down):'—'}</span>
       <span class="k">Uploaded</span><span class="v">${v.up>0?fmtBytes(v.up):'—'}</span>
@@ -4417,7 +4442,7 @@ function renderNextDNS() {
       <div class="dns-row">
         <span class="dns-row-label">eero network DNS</span>
         <span class="${isPointed ? 'dns-ok' : 'dns-warn'}">
-          ${isPointed ? '✓ NextDNS' : `${esc(eeroMode)} (${esc(eeroResolvers || '—')})`}
+          ${isPointed ? 'NextDNS' : `${esc(eeroMode)} (${esc(eeroResolvers || '—')})`}
         </span>
       </div>
       <div class="dns-row">
@@ -4442,11 +4467,11 @@ async function refreshDnsTestResult() {
     const status = d.status || 'unknown';
     const cfgId = (eeroState && nextdnsState.config?.configId) || '';
     if (status === 'ok' && (d.profile === cfgId || d.config === cfgId)) {
-      el.innerHTML = `<span class="dns-ok">✓ using NextDNS · profile ${esc(d.profile || d.config || '?')}</span>`;
+      el.innerHTML = `<span class="dns-ok">using NextDNS · profile ${esc(d.profile || d.config || '?')}</span>`;
     } else if (status === 'unconfigured') {
-      el.innerHTML = `<span class="dns-warn">✗ unconfigured — resolver: ${esc(d.resolver || '?')}</span>`;
+      el.innerHTML = `<span class="dns-warn">unconfigured — resolver: ${esc(d.resolver || '?')}</span>`;
     } else if (status === 'unreachable') {
-      el.innerHTML = `<span class="dns-warn">⚠ test.nextdns.io unreachable: ${esc(d.error || '')}</span>`;
+      el.innerHTML = `<span class="dns-warn">test.nextdns.io unreachable: ${esc(d.error || '')}</span>`;
     } else {
       el.innerHTML = `<span class="dns-warn">${esc(status)} — resolver ${esc(d.resolver || '?')}</span>`;
     }
