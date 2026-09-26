@@ -101,4 +101,4 @@ The source runtime invokes Claude CLI with permission-skipping options. Do not e
 - [Google Play AccessibilityService policy](https://support.google.com/googleplay/android-developer/answer/10964491?hl=en): do not build general autonomous cross-app agent control on AccessibilityService; the policy expressly restricts autonomous initiation/planning/execution.
 - [Health Connect architecture](https://developer.android.com/health-and-fitness/health-connect/architecture) and [reading health data](https://developer.android.com/health-and-fitness/health-connect/read-data): health access, history and background reading have specific permissions. Permission does not validate medical interpretations.
 
-This inventory is paired with [the implementation-team prompt](gombwe-mobile-expert-team-prompt.md).
+This inventory is paired with the implementation-team prompt (retired 2026-09-27; superseded by docs/superpowers/specs/2026-09-27-muse-parity-design.md).

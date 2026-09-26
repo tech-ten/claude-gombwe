@@ -25,8 +25,8 @@ This is not yet proven superiority. A stronger model does not automatically fix 
 1. [Complete Apple event matrix](apple-event-complete-matrix.md): every material transcript announcement, including physical products and release claims, classified by requirement and Mac-mini-based alternative.
 2. [Existing Gombwe capability audit](gombwe-current-capability-audit.md): what source actually implements, what is an agent instruction/skill, what is missing, and what was not verified live.
 3. [AI implementation inventory](apple-event-feature-inventory.md): the focused 43-entry AI worklist retained from the previous extraction. The complete matrix is authoritative for full event coverage.
-4. [Expert-team implementation prompt](gombwe-mobile-expert-team-prompt.md): architecture, integration responsibilities, milestones, acceptance tests and release preparation.
-5. [Launch instructions](gombwe-personal-assistant-launch.md): a copy/paste agent instruction and executable local Gombwe dispatcher.
+4. Expert-team implementation prompt (retired 2026-09-27; superseded by docs/superpowers/specs/2026-09-27-muse-parity-design.md): architecture, integration responsibilities, milestones, acceptance tests and release preparation.
+5. Launch instructions (retired 2026-09-27; superseded by docs/superpowers/specs/2026-09-27-muse-parity-design.md): a copy/paste agent instruction and executable local Gombwe dispatcher.
 
 ## Build boundary: record gaps, do not chase them
 
