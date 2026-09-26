@@ -41,7 +41,7 @@
     "watch-server": "tsx watch src/index.ts",
     "watch-assets": "shx echo 'Watching assets...'",
     "prepublishOnly": "npm run clean && npm run build",
-    "test": "node --import tsx --test 'src/**/*.test.ts'"
+    "test": "node --import tsx --test 'src/**/*.test.ts' 'scripts/**/*.test.mjs'"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1053.0",
