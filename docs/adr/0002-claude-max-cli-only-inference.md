@@ -16,7 +16,7 @@ All inference goes through the Claude Code CLI under the owner's Claude Max subs
 
 ## Consequences
 
-Running cost stays flat. Model behaviour is identical across chat, tasks, goals and reflection. Capability is bounded by what the CLI can do, so concurrency and long prompts are limited by the subscription, and the CLI must be able to read the subscription token, which is why gombwe runs as a launchd user agent rather than a daemon. A subscription lapse stops all reasoning.
+Running cost stays flat. Model behaviour is identical across chat, tasks, goals and reflection. Capability is bounded by what the CLI can do, so concurrency and long prompts are limited by the subscription. The CLI must also be able to read the owner's subscription credentials wherever gombwe is deployed, which constrains how the process is launched. A subscription lapse stops all reasoning.
 
 ## Alternatives considered
 

@@ -19,6 +19,8 @@ These records capture the decisions behind the household agent build, argued fro
 | [0011](0011-remote-mcp-behind-cloudflare-access.md) | The remote MCP endpoint authenticates with Cloudflare Access through the existing tunnel. |
 | [0012](0012-dashboard-instrument-panel-design-system.md) | One instrument panel design system across every tab, mobile first, tabs gated by grants. |
 | [0013](0013-no-vm-isolation-of-the-claude-cli.md) | Isolating the Claude CLI is not built; the risk is accepted and mitigated by the tool boundary. |
+| [0014](0014-goals-engine-with-monitor-driven-resumption.md) | Goal steps run as ordinary tasks, wait on monitors without holding a session, and re-queue after a restart. |
+| [0015](0015-nightly-reflection-proposes-memory.md) | A nightly job proposes memory records from the previous day, flagged as inferred, with tombstones blocking relearning. |
 
 ## Numbering
 
