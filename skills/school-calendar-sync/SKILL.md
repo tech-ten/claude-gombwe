@@ -1,7 +1,7 @@
 ---
 name: school-calendar-sync
 description: Read iCloud Mail for ALL future school events, write actionable items to gombwe family.json AND Apple Calendar Family — alarms only for events within 14 days. Portal-stub notifications (Compass/Sentral "view news item" emails with no dates in the body) get added as same-day "check portal" prompts instead of being skipped.
-version: 1.3.0
+version: 1.4.0
 user-invocable: true
 ---
 
@@ -200,11 +200,44 @@ For events within 14 days, by event type:
 
 **Idempotency** — before creating an event in Calendar.app, check if one
 already exists for that date with the same title (or a duplicate-detection
-substring). AppleScript to check:
+substring).
+
+**NEVER match on `summary` alone, and never combine `summary` and
+`start date` in a single `whose` clause.** Both are traps:
+
+- A bare `whose summary contains "..."` sweeps the *entire* calendar
+  history. On 2026-08-22 a `whose summary contains "fire station"` also
+  matched an unrelated all-day event from **October 2023** and overwrote
+  its title and notes. The original was unrecoverable — iCloud calendars
+  keep no readable local `.ics`, so there is nothing to restore from.
+- Combining both predicates in one `whose` hangs Calendar.app.
+
+Always do it in **two steps** — narrow by date range first, then match the
+summary inside a `repeat` loop:
 
 ```applescript
-set existing to (every event of calendar "Family" whose summary contains "<distinctive substring>" and start date is greater than (current date))
+set d1 to date "Monday, 24 August 2026 at 12:00:00 AM"
+set d2 to date "Tuesday, 25 August 2026 at 12:00:00 AM"
+tell application "Calendar"
+  tell calendar "Family"
+    set candidates to (every event whose start date > d1 and start date < d2)
+    repeat with e in candidates
+      if (summary of e) contains "<distinctive substring>" then
+        -- update this one
+      end if
+    end repeat
+  end tell
+end tell
 ```
+
+The date window is what makes the match safe. Bound it to the day (or the
+few days) the incoming event belongs to — never to "everything after
+today", and never leave it off.
+
+Before any write that updates events in place, log what matched
+(`start date` + `summary` + `uid`) and confirm every hit is one you meant
+to touch. If the match count is higher than the number of events you are
+syncing, stop and re-narrow rather than writing.
 
 If the existing event is **outside the 14-day alarm window** but the
 incoming event would now be **inside** that window (the event date is
