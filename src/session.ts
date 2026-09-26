@@ -88,6 +88,18 @@ export class SessionManager {
     return this.sessions.get(key)?.claudeSessionId;
   }
 
+  /**
+   * Remember that this session has been given the household memory as it stood
+   * at `stamp`. A later message only re-sends the block when the store has
+   * moved on, so a resumed conversation is not re-primed on every turn.
+   */
+  setMemoryStamp(key: string, stamp: string): void {
+    const session = this.sessions.get(key);
+    if (!session) return;
+    session.memoryStamp = stamp;
+    this.persistIndex();
+  }
+
   setMode(key: string, mode: 'chat' | 'task'): void {
     const session = this.sessions.get(key);
     if (!session) return;

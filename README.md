@@ -378,6 +378,66 @@ Point that somewhere else with `notify.ownerChannel` in
 { "notify": { "ownerChannel": "telegram" } }
 ```
 
+## Household memory
+
+gombwe keeps a short list of things worth still knowing next week: standing
+instructions, preferences, who is who, plain facts, and what somebody is working
+towards. Each one is a single sentence filed under a **subject** — a household
+member's id, or `household` for everyone.
+
+```
+/remember household: bin night is Tuesday
+/remember household: instruction: no screens after 9pm
+/remember I prefer oat milk
+/memory
+/forget bin night is Tuesday
+```
+
+The memories a person may read are prepended to their conversation as one block,
+so gombwe starts every chat already knowing them:
+
+```
+<household-memory>
+- [instruction|household] No screens after 9pm
+- [preference|tendai] I prefer oat milk
+- [fact|household] Bin night is Tuesday
+Use memory_remember for preferences, standing instructions, facts about people and goals; memory_forget when asked to forget, or the /remember and /forget commands. A later household-memory block replaces any earlier one in this conversation.
+</household-memory>
+```
+
+A fresh conversation always gets the block. A resumed one already has it, so it
+is only sent again once something has actually changed. Every task gets it, since
+every task is a fresh agent.
+
+**Forgetting holds.** `/forget` marks the record and writes a tombstone keyed on
+what was said and who it was about. gombwe deciding on its own that something is
+worth keeping — a reflection pass reading back over transcripts — can never write
+that sentence again. Only a person can, by saying it a second time, which clears
+the tombstone. Without that asymmetry "forget my address" would last until the
+next nightly pass read it out of an old conversation.
+
+**Who sees what.** The owner sees the whole household's memory. Everybody else
+sees their own and whatever is filed under `household`, and a guest — anyone on
+the network gombwe does not recognise — sees only `household`. Reading needs the
+`memory` connector at `read`, and remembering or forgetting needs `act`; see
+[Household members and permissions](#household-members-and-permissions). A guest
+is not refused a read — they are handed the household's memories, the same as in
+chat — but they cannot remember or forget anything.
+
+```bash
+curl localhost:18790/api/memory                             # what I may see
+curl 'localhost:18790/api/memory?subject=household'         # just the household's
+curl 'localhost:18790/api/memory/recall?q=what+about+bins'  # ranked by the question
+curl -X POST localhost:18790/api/memory \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Bin night is Tuesday","subject":"household","kind":"fact"}'
+curl -X DELETE localhost:18790/api/memory/<id>              # forget it
+```
+
+Every change is one line in the action ledger, `memory.remember` or
+`memory.forget`, because forgetting is the one thing you ask for and then have to
+take on trust.
+
 ## Setting Up Telegram
 
 1. Message [@BotFather](https://t.me/botfather) on Telegram and send `/newbot`
@@ -436,6 +496,11 @@ Type `/` to see all commands with autocomplete. Key ones:
 /in <path> <message>    Run one message in <path> without changing session default
 /approve <id>           Approve a waiting action (first 8 chars of the id is enough)
 /deny <id>              Refuse a waiting action
+
+# Household memory
+/remember <text>        Keep something (household: <text> to keep it for everyone)
+/forget <text|id>       Drop it, for good
+/memory                 What gombwe remembers for you
 
 # Family
 /dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)

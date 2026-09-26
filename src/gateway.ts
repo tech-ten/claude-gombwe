@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter, LedgerActor, LedgerOutcome } from './types.js';
+import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter, LedgerActor, LedgerOutcome, Session } from './types.js';
 import { saveConfig } from './config.js';
 import { AgentRuntime } from './agent.js';
 import { SessionManager } from './session.js';
@@ -13,7 +13,7 @@ import { SkillLoader, executeSkillTool } from './skills.js';
 import { Scheduler } from './scheduler.js';
 import { TriggerEngine } from './triggers.js';
 import { WorkflowEngine } from './workflows.js';
-import { networkInterfaces, homedir } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { WebChannel } from './channels/web.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
@@ -31,6 +31,9 @@ import { createServices, type Services } from './services.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
 import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
+import { MEMORY_KINDS, mayRead, mayWriteSubject, normalise as normaliseMemory, parseRememberArgs } from './memory.js';
+import type { MemoryKind, MemoryRecord, MemorySource } from './memory.js';
+import { dataDir as gombweDataDir } from './paths.js';
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
 function localMacAddresses(): string[] {
@@ -558,7 +561,9 @@ export class Gateway {
     // --- Task mode (if session is set to task mode) ---
     if (session.mode === 'task') {
       const skillsPrompt = this.skills.buildSkillsPrompt();
-      const fullPrompt = skillsPrompt ? `${skillsPrompt}\n\n${msg.text}` : msg.text;
+      // Every task is a fresh agent, so the memory block goes in every time.
+      const memoryCtx = this.services.memory.contextBlock(this.resolvePrincipal(msg));
+      const fullPrompt = [memoryCtx, skillsPrompt, msg.text].filter(Boolean).join('\n\n');
       await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir);
       return;
     }
@@ -572,6 +577,10 @@ export class Gateway {
       const skillsCtx = this.skills.buildSkillsPrompt();
       if (skillsCtx) chatMessage = `${skillsCtx}\n\n---\n\nUser message: ${msg.text}`;
     }
+    // Household memory goes in front of the skills context: it is the standing
+    // instructions, so the agent should read it before anything else.
+    const memoryCtx = this.memoryContext(session, msg, !!claudeSessionId);
+    if (memoryCtx) chatMessage = `${memoryCtx}\n\n${chatMessage}`;
 
     let result = await this.agent.chat(chatMessage, workingDir, claudeSessionId || undefined);
 
@@ -590,7 +599,11 @@ export class Gateway {
           recent.map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`).join('\n') +
           '\n\n---\n\n'
         : '';
+      // The retry is a brand new agent session, so it needs the memory block
+      // even when the lost one had already been given it.
+      const freshMemoryCtx = memoryCtx || this.services.memory.contextBlock(this.resolvePrincipal(msg));
       const retryMessage =
+        (freshMemoryCtx ? `${freshMemoryCtx}\n\n` : '') +
         (skillsCtx ? `${skillsCtx}\n\n---\n\n` : '') +
         replay +
         `Current message: ${msg.text}`;
@@ -665,7 +678,10 @@ export class Gateway {
           `/cd <path> — set working directory for this session (alone to reset)\n` +
           `/in <path> <msg> — run one message in <path> without changing the session default\n` +
           `/approve <id> — approve a waiting action (the first 8 characters of the id is enough)\n` +
-          `/deny <id> — refuse a waiting action\n\n` +
+          `/deny <id> — refuse a waiting action\n` +
+          `/remember <text> — keep something (household: <text> for everyone)\n` +
+          `/forget <text|id> — drop it, for good\n` +
+          `/memory — what gombwe remembers for you\n\n` +
           `**Family:**\n` +
           `Just say it naturally — "add chicken curry to Wednesday dinner", "we need milk", "order the groceries"\n\n` +
           `Or use commands:\n` +
@@ -1192,6 +1208,86 @@ export class Gateway {
         return true;
       }
 
+      // /remember [household:] [<kind>:] <text> — keep one sentence for next
+      // week. Filed under whoever said it unless it is for the whole house.
+      // /forget <text|id> · /memory — what is kept, and how to drop it.
+      case 'remember': {
+        const principal = this.resolvePrincipal(msg);
+        const parsed = parseRememberArgs(args.join(' '), principal.id);
+        if (!parsed) {
+          await reply('Usage: /remember <text> — or /remember household: <text> for everyone.');
+          return true;
+        }
+        if (!mayWriteSubject(principal, parsed.subject)) {
+          await reply(`You may not file a memory under ${parsed.subject}.`);
+          return true;
+        }
+        const source: MemorySource = {
+          channel: msg.channel,
+          sessionKey: msg.sessionKey,
+          timestamp: msg.timestamp,
+          quote: msg.text,
+        };
+        try {
+          const saved = this.services.memory.remember(parsed.text, parsed.subject, parsed.kind, source);
+          this.recordMemoryChange('chat', principal.id, 'memory.remember', saved);
+          await reply(`Remembered [${saved.kind}|${saved.subject}]: ${saved.text}`);
+        } catch (err) {
+          // A tombstone only stops gombwe's own reflections, so a person
+          // reaching this means the text was empty.
+          await reply(err instanceof Error ? err.message : String(err));
+        }
+        return true;
+      }
+
+      case 'forget': {
+        const principal = this.resolvePrincipal(msg);
+        const raw = args.join(' ').trim();
+        if (!raw) {
+          await reply('Usage: /forget <text or id> — /memory lists what is kept.');
+          return true;
+        }
+        // Resolved against what this person may see, so /forget cannot reach
+        // another household member's memory by guessing its wording.
+        const visible = this.visibleMemory(principal);
+        const wanted = normaliseMemory(raw);
+        const partial = visible.filter(r => normaliseMemory(r.text).includes(wanted));
+        const target = visible.find(r => r.id === raw)
+          ?? visible.find(r => normaliseMemory(r.text) === wanted)
+          // A partial match is only acted on when it is the only one. Forgetting
+          // the wrong thing is not something an apology fixes.
+          ?? (partial.length === 1 ? partial[0] : undefined);
+        if (!target) {
+          if (partial.length > 1) {
+            await reply(
+              `"${raw}" matches ${partial.length} memories:\n` +
+              partial.map(r => `- ${r.text} · ${shortId(r.id)}`).join('\n') +
+              `\n\nUse /forget <id> for the one you mean.`);
+            return true;
+          }
+          await reply(`Nothing remembered matches "${raw}".`);
+          return true;
+        }
+        const forgotten = this.services.memory.forget(target.id);
+        if (forgotten) this.recordMemoryChange('chat', principal.id, 'memory.forget', forgotten);
+        await reply(`Forgotten: ${target.text}`);
+        return true;
+      }
+
+      case 'memory': {
+        const principal = this.resolvePrincipal(msg);
+        const records = this.visibleMemory(principal);
+        if (records.length === 0) {
+          await reply('Nothing remembered yet. /remember <text> to add something.');
+          return true;
+        }
+        await reply(
+          `**Household memory (${records.length}):**\n` +
+          records.map(r => `- [${r.kind}|${r.subject}] ${r.text} · ${shortId(r.id)}`).join('\n'),
+        );
+        return true;
+      }
+
       default: {
         // Check skills
         const skill = this.skills.getSkill(cmd);
@@ -1373,6 +1469,30 @@ export class Gateway {
   }
 
   /**
+   * The household-memory block to prepend to a chat message, or '' when there
+   * is nothing to add.
+   *
+   * A fresh session always gets it. A resumed one already has the earlier copy
+   * in its context, so it is only sent again once the store has moved on —
+   * which is what the session's `memoryStamp` records. Sending it every turn
+   * would be a growing prefix of near-identical text for the model to reread.
+   */
+  private memoryContext(session: Session, msg: IncomingMessage, resumed: boolean): string {
+    const stamp = this.services.memory.updatedAt();
+    if (resumed && session.memoryStamp === stamp) return '';
+    const block = this.services.memory.contextBlock(this.resolvePrincipal(msg));
+    // Stamped either way: nothing to say now is still the state this session
+    // has seen, so an empty store does not re-check on every turn.
+    this.sessions.setMemoryStamp(msg.sessionKey, stamp);
+    return block;
+  }
+
+  /** The memories this principal may read, newest change first. */
+  private visibleMemory(principal: Principal, opts: { subject?: string; kind?: MemoryKind } = {}): MemoryRecord[] {
+    return this.services.memory.list(opts).filter(r => mayRead(principal, r));
+  }
+
+  /**
    * Who to credit an HTTP action to. A request with an Access email or a browser
    * Origin/Referer came from a person at the dashboard; a bare curl or an
    * internal call is gombwe acting on its own, so it is recorded as 'system'.
@@ -1488,6 +1608,27 @@ export class Gateway {
       }) as Record<string, unknown>,
       outcome: 'ok',
       receipt: truncateDeep(receipt) as Record<string, unknown>,
+    });
+  }
+
+  /**
+   * One ledger line per memory change. Forgetting in particular has to be
+   * auditable: it is the one thing a household member asks for and then has to
+   * take on trust.
+   */
+  private recordMemoryChange(
+    actor: LedgerActor,
+    principal: string,
+    action: 'memory.remember' | 'memory.forget',
+    record: MemoryRecord,
+  ): void {
+    this.services.ledger.record({
+      actor,
+      principal,
+      action,
+      target: record.id,
+      params: truncateDeep({ subject: record.subject, kind: record.kind, text: record.text }) as Record<string, unknown>,
+      outcome: 'ok',
     });
   }
 
@@ -1742,6 +1883,83 @@ export class Gateway {
       if (found) res.json(found);
     });
 
+    // ── Household memory ─────────────────────────────────────────
+    // Reading needs `memory: read` and only ever hands back what the caller may
+    // see; remembering and forgetting need `memory: act`. An owner passes both,
+    // and sees the whole household.
+    this.app.get('/api/memory', (req: Request, res: Response) => {
+      const principal = this.principalFromRequest(req);
+      // A guest is not refused a read: they are handed exactly what they would
+      // see in chat, which is the household's memories and nothing else. Anyone
+      // the roster does know needs the grant.
+      if (principal.role !== 'guest' && !this.requireGrant(req, res, 'memory', 'read')) return;
+      const { subject, kind } = req.query as Record<string, string | undefined>;
+      if (kind && !MEMORY_KINDS.includes(kind as MemoryKind)) {
+        res.status(400).json({ error: `kind must be one of ${MEMORY_KINDS.join(', ')}` }); return;
+      }
+      res.json(this.visibleMemory(principal, {
+        subject: subject || undefined,
+        kind: (kind as MemoryKind | undefined) || undefined,
+      }));
+    });
+
+    // What is worth reading, given a question. Ranked, and only what the caller
+    // may see.
+    this.app.get('/api/memory/recall', (req: Request, res: Response) => {
+      if (!this.requireGrant(req, res, 'memory', 'read')) return;
+      const q = String(req.query.q ?? '').trim();
+      if (!q) { res.status(400).json({ error: 'q required' }); return; }
+      const principal = this.principalFromRequest(req);
+      const asked = parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 50) : 10;
+      // recallFor, not recall: what this caller may not read is dropped before
+      // anything is scored, so their question cannot nudge the ranking of
+      // another household member's memories.
+      res.json(this.services.memory.recallFor(principal, q, {
+        subject: (req.query.subject as string) || undefined,
+        limit,
+      }));
+    });
+
+    // POST body: { text, subject?, kind } — a person saying it, so this also
+    // clears any tombstone on that text.
+    this.app.post('/api/memory', (req: Request, res: Response) => {
+      if (!this.requireGrant(req, res, 'memory', 'act')) return;
+      const principal = this.principalFromRequest(req);
+      const { text, subject, kind } = req.body ?? {};
+      if (!text || typeof text !== 'string' || !text.trim()) {
+        res.status(400).json({ error: 'text required' }); return;
+      }
+      if (!MEMORY_KINDS.includes(kind as MemoryKind)) {
+        res.status(400).json({ error: `kind must be one of ${MEMORY_KINDS.join(', ')}` }); return;
+      }
+      const who = subject ? String(subject) : principal.id;
+      if (!mayWriteSubject(principal, who)) {
+        res.status(403).json({ error: `${principal.name} may not file a memory under ${who}` }); return;
+      }
+      try {
+        const saved = this.services.memory.remember(text, who, kind as MemoryKind, { manual: principal.id });
+        this.recordMemoryChange(this.webActor(req), principal.id, 'memory.remember', saved);
+        res.json(saved);
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // Forgetting is final: the record is marked and a tombstone stops gombwe's
+    // own reflections writing it back. A caller may only forget what they see.
+    this.app.delete('/api/memory/:id', (req: Request, res: Response) => {
+      if (!this.requireGrant(req, res, 'memory', 'act')) return;
+      const principal = this.principalFromRequest(req);
+      const id = String(req.params.id);
+      const target = this.visibleMemory(principal).find(r => r.id === id);
+      if (!target) { res.status(404).json({ error: 'not found' }); return; }
+      const forgotten = this.services.memory.forget(id);
+      if (!forgotten) { res.status(404).json({ error: 'not found' }); return; }
+      this.recordMemoryChange(this.webActor(req), principal.id, 'memory.forget', forgotten);
+      res.json(forgotten);
+    });
+
     // ── Agentsform lead form receiver ─────────────────────────────
     // Public POST endpoint for agentsform.ai contact forms. Plain HTML
     // form submission (application/x-www-form-urlencoded), no auth, no
@@ -1749,7 +1967,7 @@ export class Gateway {
     // to leads.jsonl, fires Discord notification, redirects to /thanks.
     //
     // Tunnel: route api.agentsform.ai → localhost:18790 (no Access policy).
-    const leadsFile = join(homedir(), '.claude-gombwe', 'data', 'leads.jsonl');
+    const leadsFile = join(gombweDataDir(), 'leads.jsonl');
     const leadRateLimit = new Map<string, { count: number; resetAt: number }>();
     const LEAD_LIMIT_WINDOW_MS = 60_000;
     const LEAD_LIMIT_MAX = 5;  // 5 submissions per IP per minute
@@ -2550,7 +2768,7 @@ export class Gateway {
 
         // Last-7-days DNS query counts per category
         const dnsCounts: Record<string, number> = {};
-        const dnsLogPath = (date: string) => join(homedir(), '.claude-gombwe', 'data', 'network', `dns-${date}.jsonl`);
+        const dnsLogPath = (date: string) => join(gombweDataDir(), 'network', `dns-${date}.jsonl`);
         const today = new Date();
         for (let i = 0; i < 7; i++) {
           const d = new Date(today.getTime() - i * 86400_000).toISOString().slice(0, 10);
@@ -2591,7 +2809,7 @@ export class Gateway {
         const today = new Date();
         for (let i = 0; i < days; i++) {
           const d = new Date(today.getTime() - i * 86400_000).toISOString().slice(0, 10);
-          const p = join(homedir(), '.claude-gombwe', 'data', 'network', `dns-${d}.jsonl`);
+          const p = join(gombweDataDir(), 'network', `dns-${d}.jsonl`);
           if (!existsSync(p)) continue;
           const text = readFileSync(p, 'utf-8');
           for (const line of text.split('\n')) {
