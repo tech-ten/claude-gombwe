@@ -4,11 +4,30 @@ import { Memory } from './memory.js';
 import { Principals } from './permissions.js';
 import type { GombweConfig } from './types.js';
 
+/**
+ * A bearer token minted for one agent session, held in memory only.
+ *
+ * The token is the session's whole identity at the tool surface: the CLI child
+ * process gets it in its environment and presents it on every tool call, so the
+ * gateway knows which person that call is for without trusting anything the
+ * child says. Nothing is persisted — a restart ends every session's tool
+ * access, which is the right way round: a token that outlived the gateway would
+ * outlive the roster it was checked against.
+ */
+export interface SessionToken {
+  principalId: string;
+  sessionKey: string;
+  channel?: string;
+  createdAt: string;
+}
+
 export interface Services {
   ledger: Ledger;
   principals: Principals;
   approvals: Approvals;
   memory: Memory;
+  /** Keyed by the token itself. See `SessionToken`. */
+  sessionTokens: Map<string, SessionToken>;
 }
 
 /**
@@ -42,5 +61,6 @@ export function createServices(config: GombweConfig): Services {
     principals,
     approvals: new Approvals(config.dataDir, ledger, principals),
     memory: new Memory(config.dataDir),
+    sessionTokens: new Map(),
   };
 }

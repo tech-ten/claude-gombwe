@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter, LedgerActor, LedgerOutcome, Session } from './types.js';
 import { saveConfig } from './config.js';
 import { AgentRuntime } from './agent.js';
+import type { AgentCallOptions } from './agent.js';
 import { SessionManager } from './session.js';
 import { SkillLoader, executeSkillTool } from './skills.js';
 import { Scheduler } from './scheduler.js';
@@ -28,9 +29,11 @@ import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
+import { callTool, toolManifestFor } from './gombwe-tools.js';
+import { sessionTokenFor, writeSessionMcpConfig } from './mcp-config.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction, sessionPrincipalFor } from './permissions.js';
 import { MEMORY_KINDS, mayRead, mayWriteSubject, normalise as normaliseMemory, parseRememberArgs } from './memory.js';
 import type { MemoryKind, MemoryRecord, MemorySource } from './memory.js';
 import { dataDir as gombweDataDir } from './paths.js';
@@ -526,8 +529,14 @@ export class Gateway {
     msg: IncomingMessage,
     opts: { suppressLog?: boolean } = {},
   ): Promise<void> {
-    msg.principal = this.resolvePrincipal(msg).id;
+    // The session first, so `resolvePrincipal` can see whose conversation this
+    // is before deciding who a system-originated turn speaks for.
     const session = this.sessions.getOrCreate(msg.sessionKey, msg.channel);
+    const principal = this.resolvePrincipal(msg);
+    msg.principal = principal.id;
+    // Only a person speaking changes whose conversation this is. A system
+    // message is gombwe resuming its own turn and must not reassign it.
+    if (!msg.system) this.sessions.setPrincipal(msg.sessionKey, principal.id);
     if (!opts.suppressLog) {
       this.sessions.addEntry(msg.sessionKey, {
         role: 'user',
@@ -558,13 +567,18 @@ export class Gateway {
       if (handled) return;
     }
 
+    // This session's own MCP config: the tools its principal may reach, and a
+    // bearer token minted for it. Built here rather than at the top of the
+    // method so a command that never reaches the agent does not mint one.
+    const agentOpts = this.sessionAgentOpts(msg);
+
     // --- Task mode (if session is set to task mode) ---
     if (session.mode === 'task') {
       const skillsPrompt = this.skills.buildSkillsPrompt();
       // Every task is a fresh agent, so the memory block goes in every time.
       const memoryCtx = this.services.memory.contextBlock(this.resolvePrincipal(msg));
       const fullPrompt = [memoryCtx, skillsPrompt, msg.text].filter(Boolean).join('\n\n');
-      await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir);
+      await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir, agentOpts);
       return;
     }
 
@@ -582,7 +596,7 @@ export class Gateway {
     const memoryCtx = this.memoryContext(session, msg, !!claudeSessionId);
     if (memoryCtx) chatMessage = `${memoryCtx}\n\n${chatMessage}`;
 
-    let result = await this.agent.chat(chatMessage, workingDir, claudeSessionId || undefined);
+    let result = await this.agent.chat(chatMessage, workingDir, claudeSessionId || undefined, agentOpts);
 
     // Resume failed (session gone server-side or locally). Retry fresh with
     // verbatim replay of recent turns so the new session has continuity.
@@ -612,7 +626,7 @@ export class Gateway {
         `retrying fresh with ${recent.length} turns of replayed context. ` +
         `cause=${result.error || 'unknown'}`,
       );
-      result = await this.agent.chat(retryMessage, workingDir, undefined);
+      result = await this.agent.chat(retryMessage, workingDir, undefined, agentOpts);
       if (result.ok) {
         console.log(
           `[gateway] resume retry succeeded for ${msg.sessionKey}: ` +
@@ -908,7 +922,7 @@ export class Gateway {
         if (!prompt) { await reply(`Usage: /${cmd} <what to do>`); return true; }
         const skillsPrompt = this.skills.buildSkillsPrompt();
         const fullPrompt = skillsPrompt ? `${skillsPrompt}\n\n${prompt}` : prompt;
-        await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir);
+        await this.agent.runTask(fullPrompt, msg.channel, msg.sessionKey, workingDir, this.sessionAgentOpts(msg));
         return true;
       }
 
@@ -1083,7 +1097,7 @@ export class Gateway {
         const buyPrompt = skillsPrompt
           ? `${skillsPrompt}\n\n/grocery-order ${itemsToOrder.join(', ')}`
           : `/grocery-order ${itemsToOrder.join(', ')}`;
-        await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey, workingDir);
+        await this.agent.runTask(buyPrompt, msg.channel, msg.sessionKey, workingDir, this.sessionAgentOpts(msg));
         return true;
       }
 
@@ -1309,7 +1323,7 @@ export class Gateway {
             return true;
           }
           const prompt = `${skill.instructions}\n\nUser request: ${args.join(' ')}`;
-          await this.agent.runTask(prompt, msg.channel, msg.sessionKey, workingDir);
+          await this.agent.runTask(prompt, msg.channel, msg.sessionKey, workingDir, this.sessionAgentOpts(msg));
           return true;
         }
         return false; // Not a known command
@@ -1462,10 +1476,16 @@ export class Gateway {
    * Discord and Telegram send a stable numeric user id as `sender`.
    *
    * A message with no sender at all resolves to a guest rather than to the
-   * owner: an unattributed message must not be able to approve a payment.
+   * owner: an unattributed message must not be able to approve a payment. The
+   * one exception is a system message, which speaks for whoever was last on the
+   * session — see `sessionPrincipalFor`.
    */
   private resolvePrincipal(msg: IncomingMessage): Principal {
-    return this.services.principals.resolve(msg.channel, msg.sender || 'unknown');
+    return sessionPrincipalFor(
+      this.sessions.getSession(msg.sessionKey),
+      msg,
+      this.services.principals,
+    );
   }
 
   /**
@@ -1515,6 +1535,112 @@ export class Gateway {
       req.socket?.remoteAddress,
     );
     return this.services.principals.resolve('web', identity);
+  }
+
+  // ── The agent's tool surface ─────────────────────────────────
+
+  /**
+   * Mint or reuse this session's token, write its MCP config, and say how the
+   * agent should be started.
+   *
+   * Failing to write the file is not worth losing a message over: the session
+   * falls back to the configured household servers, which is what every session
+   * had before per-session configs existed.
+   */
+  private agentOptsFor(
+    sessionKey: string,
+    principal: Principal,
+    channel?: string,
+    opts: { keepToken?: boolean } = {},
+  ): AgentCallOptions {
+    try {
+      const token = sessionTokenFor(
+        this.services.sessionTokens,
+        sessionKey,
+        principal.id,
+        channel,
+        { keepExisting: opts.keepToken },
+      );
+      const path = writeSessionMcpConfig(
+        this.config,
+        this.config.dataDir,
+        sessionKey,
+        principal,
+        token,
+        this.services.principals.mcpServersFor(principal),
+      );
+      // Only the owner keeps the third-party servers sitting in ~/.claude.json;
+      // for everyone else this file is the whole list.
+      return { mcpConfigs: [path], strictMcp: principal.role !== 'owner' };
+    } catch (err) {
+      console.error(
+        `[tools] could not write the MCP config for ${sessionKey}, falling back to the household servers: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {};
+    }
+  }
+
+  /**
+   * `agentOptsFor` for an incoming message.
+   *
+   * A system-originated turn never invalidates the session's existing token.
+   * `resolvePrincipal` already keeps the same principal for one, so the token is
+   * reused anyway; `keepToken` is the belt to that braces, for the case where
+   * the person has since been taken off the roster and the principal does come
+   * back different. Losing gombwe's own resume is not worth a rotation.
+   */
+  private sessionAgentOpts(msg: IncomingMessage): AgentCallOptions {
+    return this.agentOptsFor(
+      msg.sessionKey,
+      this.resolvePrincipal(msg),
+      msg.channel,
+      { keepToken: msg.system === true },
+    );
+  }
+
+  /**
+   * The session behind a tool call, or undefined if there is not one.
+   *
+   * Two things must both hold. The request came from a process on this machine —
+   * `isLocalProcessRequest`, the same test the script routes below use, because a
+   * request off the network arrives through cloudflared on loopback too. And it
+   * carries a token this gateway minted, which only ever reached the environment
+   * of one CLI child.
+   *
+   * Both failures are answered as one 401 rather than split into a 403 for the
+   * address and a 401 for the token: for these routes there is either a session
+   * or there is not, and saying which half failed only helps someone guessing.
+   *
+   * The principal is re-read from the roster on every call, so a demotion lands
+   * on the next tool call rather than the next session. A guest was never in the
+   * roster, so they fall back to a guest with no grants — which is what they had.
+   */
+  private sessionFromToken(
+    req: Request,
+  ): { principal: Principal; sessionKey: string; channel?: string; actor: LedgerActor } | undefined {
+    if (!isLocalProcessRequest(
+      req.headers as Record<string, string | string[] | undefined>,
+      req.socket?.remoteAddress,
+    )) return undefined;
+    const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? '').trim());
+    if (!match) return undefined;
+    const held = this.services.sessionTokens.get(match[1]);
+    if (!held) return undefined;
+    const principal = this.services.principals.get(held.principalId) ?? {
+      id: held.principalId,
+      name: held.principalId,
+      role: 'guest' as Role,
+      bindings: [],
+      grants: {},
+    };
+    const mode = this.sessions.getSession(held.sessionKey)?.mode;
+    return {
+      principal,
+      sessionKey: held.sessionKey,
+      channel: held.channel,
+      actor: mode === 'task' ? 'task' : 'chat',
+    };
   }
 
   /** Guard: 403s and returns false when this request may not act. */
@@ -1690,6 +1816,44 @@ export class Gateway {
         principal,
         limit,
       }));
+    });
+
+    // ── The agent's own tools ─────────────────────────────────────
+    // Reached only by a Claude CLI child process on this machine holding the
+    // token the gateway minted for its session. The stdio bridge in
+    // `mcp/gombwe.ts` is the only caller; see docs/developer.md.
+    const noSession = (res: Response) => res.status(401).json({
+      error: 'a live session token, presented from a process on this machine, is required',
+    });
+
+    this.app.get('/api/tools', (req: Request, res: Response) => {
+      const session = this.sessionFromToken(req);
+      if (!session) { noSession(res); return; }
+      res.json({
+        principal: session.principal.id,
+        sessionKey: session.sessionKey,
+        tools: toolManifestFor(session.principal),
+      });
+    });
+
+    this.app.post('/api/tools/:name', async (req: Request, res: Response) => {
+      const session = this.sessionFromToken(req);
+      if (!session) { noSession(res); return; }
+      const result = await callTool(String(req.params.name), req.body ?? {}, {
+        services: this.services,
+        principal: session.principal,
+        sessionKey: session.sessionKey,
+        channel: session.channel,
+        actor: session.actor,
+      });
+      // A tool that ran and said no is a 200 with ok:false — the refusal is the
+      // household's answer, not a malformed request. Only a name that does not
+      // exist is an HTTP error.
+      if (!result.ok && result.error.startsWith('unknown tool:')) {
+        res.status(404).json(result);
+        return;
+      }
+      res.json(result);
     });
 
     // ── Principals (household members + permissions) ──────────────
@@ -2972,7 +3136,8 @@ export class Gateway {
     this.app.post('/api/tasks', (req: Request, res: Response) => {
       const { prompt, channel = 'web', sessionKey = `web:${Date.now()}`, workingDir } = req.body;
       if (!prompt) { res.status(400).json({ error: 'prompt is required' }); return; }
-      this.agent.runTask(prompt, channel, sessionKey, workingDir).then(task => {
+      const opts = this.agentOptsFor(String(sessionKey), this.principalFromRequest(req), String(channel));
+      this.agent.runTask(prompt, channel, sessionKey, workingDir, opts).then(task => {
         res.status(201).json(task);
       }).catch(err => {
         res.status(503).json({ error: err.message });

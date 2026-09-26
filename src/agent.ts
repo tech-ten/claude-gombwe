@@ -5,6 +5,47 @@ import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { AgentTask, GombweConfig, TaskStatus } from './types.js';
 
+/**
+ * Per-call MCP wiring. The gateway hands one of these down so a session's agent
+ * loads only the servers that session's principal may reach; without it the
+ * configured household servers are used, which is what a cron job or a trigger
+ * gets — those run as gombwe itself, not as a person.
+ */
+export interface AgentCallOptions {
+  /** Paths or inline JSON for `--mcp-config`. Replaces the configured set. */
+  mcpConfigs?: string[];
+  /** Add `--strict-mcp-config`, so nothing from `~/.claude.json` loads too. */
+  strictMcp?: boolean;
+}
+
+/**
+ * The `--mcp-config` flags for one call.
+ *
+ * A confined session gets its own file and nothing else. An owner's session gets
+ * its file *and* the configured household configs, because those are where the
+ * third-party servers declared inline in gombwe.json live — the session file
+ * cannot name them, since it only writes servers gombwe owns. The session file
+ * goes last so it wins any name it shares with them.
+ *
+ * `--strict-mcp-config` only ever goes on alongside a session file. With the
+ * fallback configs it would cut the owner off from their own servers, which is
+ * the opposite of what it is for.
+ */
+export function mcpConfigArgs(
+  opts: AgentCallOptions | undefined,
+  configured: string[] | undefined,
+): string[] {
+  const session = opts?.mcpConfigs?.length ? opts.mcpConfigs : undefined;
+  const household = configured ?? [];
+  const configs = session
+    ? (opts?.strictMcp ? [...session] : [...household, ...session])
+    : household;
+  const args: string[] = [];
+  if (configs.length) args.push('--mcp-config', ...configs);
+  if (session && opts?.strictMcp) args.push('--strict-mcp-config');
+  return args;
+}
+
 const AUTONOMY_WRAPPER = `You are operating in FULLY AUTONOMOUS mode. You must complete the entire task without stopping to ask questions.
 
 RULES:
@@ -68,7 +109,13 @@ export class AgentRuntime extends EventEmitter {
     writeFileSync(this.tasksFile, JSON.stringify(tasks, null, 2));
   }
 
-  async runTask(prompt: string, channel: string, sessionKey: string, workingDir?: string): Promise<AgentTask> {
+  async runTask(
+    prompt: string,
+    channel: string,
+    sessionKey: string,
+    workingDir?: string,
+    opts?: AgentCallOptions,
+  ): Promise<AgentTask> {
     const runningCount = Array.from(this.tasks.values()).filter(t => t.status === 'running').length;
     if (runningCount >= this.config.agents.maxConcurrent) {
       throw new Error(`Max concurrent tasks (${this.config.agents.maxConcurrent}) reached. Wait for a task to finish.`);
@@ -88,6 +135,10 @@ export class AgentRuntime extends EventEmitter {
       continuations: 0,
       maxContinuations: 5,
       verified: false,
+      // Kept on the task so every continuation, retry and verification pass
+      // reaches the same tool surface as the first attempt.
+      mcpConfigs: opts?.mcpConfigs,
+      strictMcp: opts?.strictMcp,
     };
 
     this.tasks.set(task.id, task);
@@ -253,9 +304,10 @@ export class AgentRuntime extends EventEmitter {
         args.push('--model', this.config.agents.defaultModel);
       }
 
-      if (this.config.agents.mcpConfigs?.length) {
-        args.push('--mcp-config', ...this.config.agents.mcpConfigs);
-      }
+      args.push(...mcpConfigArgs(
+        { mcpConfigs: task.mcpConfigs, strictMcp: task.strictMcp },
+        this.config.agents.mcpConfigs,
+      ));
 
       const proc = spawn('claude', args, {
         cwd: task.workingDir,
@@ -356,6 +408,7 @@ export class AgentRuntime extends EventEmitter {
     message: string,
     workingDir: string,
     claudeSessionId?: string,
+    opts?: AgentCallOptions,
   ): Promise<{ response: string; sessionId: string | null; ok: boolean; error?: string }> {
     return new Promise((resolve) => {
       const args: string[] = [];
@@ -376,9 +429,7 @@ export class AgentRuntime extends EventEmitter {
         args.push('--model', this.config.agents.defaultModel);
       }
 
-      if (this.config.agents.mcpConfigs?.length) {
-        args.push('--mcp-config', ...this.config.agents.mcpConfigs);
-      }
+      args.push(...mcpConfigArgs(opts, this.config.agents.mcpConfigs));
 
       const proc = spawn('claude', args, {
         cwd: workingDir,
