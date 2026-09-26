@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONNECTORS, NETWORK_ACTIONS, Principals, identityFromHeaders, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, NETWORK_ACTIONS, Principals, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
 import type { Principal } from './permissions.js';
 import type { GombweConfig } from './types.js';
 
@@ -241,6 +241,39 @@ test('identityFromHeaders gives an unauthenticated LAN client its own identity',
   // An address we could not read fails closed rather than passing as local.
   assert.equal(identityFromHeaders({}), 'lan:unknown');
   assert.equal(identityFromHeaders({}, ''), 'lan:unknown');
+});
+
+test('isLocalProcessRequest passes a bare call from this machine', () => {
+  for (const addr of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '127.0.0.53']) {
+    assert.equal(isLocalProcessRequest({}, addr), true, addr);
+  }
+  // A local script's own headers are no reason to refuse it.
+  assert.equal(isLocalProcessRequest({ 'content-type': 'application/json', host: '127.0.0.1:18790' }, '127.0.0.1'), true);
+  assert.equal(isLocalProcessRequest(undefined, '127.0.0.1'), true);
+});
+
+test('isLocalProcessRequest refuses tunnel traffic, which also arrives on loopback', () => {
+  // cloudflared hands requests to 127.0.0.1, so without this every person on
+  // the Access allow-list would count as a local process.
+  const proxied = [
+    'cf-connecting-ip',
+    'cf-ray',
+    'x-forwarded-for',
+    'cf-access-jwt-assertion',
+    'cf-access-authenticated-user-email',
+    'CF-Connecting-IP',
+  ];
+  for (const header of proxied) {
+    assert.equal(isLocalProcessRequest({ [header]: 'x' }, '127.0.0.1'), false, header);
+  }
+  // Present but empty is still a proxied request: the header is the tell.
+  assert.equal(isLocalProcessRequest({ 'cf-ray': '' }, '::1'), false);
+});
+
+test('isLocalProcessRequest refuses anything off this machine', () => {
+  for (const addr of ['192.168.1.50', '10.0.0.7', '::ffff:192.168.1.50', 'fe80::1%en0', '', undefined]) {
+    assert.equal(isLocalProcessRequest({}, addr), false, String(addr));
+  }
 });
 
 test('a LAN client with no Access header resolves to a guest, not the owner', () => {

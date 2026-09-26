@@ -238,7 +238,10 @@ Approval needed [3f9a1c0d]: Grocery order at coles: 11 items, total $84.20
 Reply `/approve 3f9a1c0d` from any channel, or decide it on the dashboard. The
 request expires after 30 minutes, and a gateway that is not running is a refusal
 rather than a free pass — the cart is left staged either way, so approving and
-re-running `node scripts/grocery-buy.mjs --checkout-only <store>` places it.
+re-running `node scripts/grocery-buy.mjs --checkout-only <store>` places it. A
+cart staged more than an hour earlier has its item list ignored, since the store
+may have repriced it since; the total in the approval is always read live off
+the page.
 
 Each order writes three ledger lines: `grocery.cart` when the cart is built,
 `grocery.checkout` carrying the approval's outcome, and `grocery.order` with a
@@ -398,8 +401,8 @@ curl -X PUT localhost:18790/api/approvals/policies \
   -H 'content-type: application/json' \
   -d '{"pay":"confirm","desktop.run":"auto"}'
 
-# Raise a request, and write a ledger line — both from this machine only.
-# This is how the out-of-process scripts under scripts/ reach the gate.
+# Raise a request, and write a ledger line — both from a process on this
+# machine only. This is how the scripts under scripts/ reach the gate.
 curl -X POST localhost:18790/api/approvals/request \
   -H 'content-type: application/json' \
   -d '{"class":"pay","summary":"Grocery order at coles: 11 items, total $84.20"}'
@@ -408,10 +411,14 @@ curl -X POST localhost:18790/api/ledger \
   -d '{"action":"grocery.cart","target":"coles","outcome":"ok"}'
 ```
 
-The last two are refused off this machine: a device on the home Wi-Fi is a
-guest, and a guest must not be able to open a payment request or write the
-audit trail. The id and the timestamp on a posted ledger line are assigned by
-the gateway, so a script cannot supersede somebody else's line.
+The last two are refused to everything but a local process: a device on the
+home Wi-Fi is a guest, and a guest must not be able to open a payment request or
+write the audit trail. A loopback address is not enough on its own, because
+cloudflared hands tunnel traffic to `127.0.0.1` as well — so a request carrying
+any Cloudflare header (`cf-ray`, `cf-connecting-ip`, `x-forwarded-for`, either
+Access header) is refused too, and a local script sends none of them. The id and
+the timestamp on a posted ledger line are assigned by the gateway, so a script
+cannot supersede somebody else's line.
 
 The owner hears about other people's requests on the web dashboard by default.
 Point that somewhere else with `notify.ownerChannel` in

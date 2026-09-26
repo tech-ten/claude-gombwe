@@ -40,7 +40,7 @@ import {
   // Auth + alert
   notifyGombwe, looksLikeLoginWall, assertLoggedIn,
   // Approvals + audit + secrets
-  requestApproval, postLedger, readKeychain,
+  requestApproval, postLedger, readKeychain, stagedBasket, STAGED_BASKET_MAX_AGE_MS,
   // Search
   woolworthsSearch, discoverColesApi, colesSearch,
   // Match
@@ -388,7 +388,10 @@ async function activateEverydayRewardsBoosters(page) {
 
 async function woolworthsCheckoutAndPay(page, ctx = {}) {
   const items = Array.isArray(ctx.items) ? ctx.items : [];
-  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : items.length;
+  // Null rather than zero when nobody told us: the summary a person approves
+  // must not claim an empty cart when it simply does not know.
+  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : (items.length || null);
+  const basket = itemCount == null ? 'unknown items' : `${itemCount} items`;
   // Activate Everyday Rewards boosters first — points multipliers apply only
   // to shops placed AFTER activation, so this must run before checkout.
   // Non-blocking: any failure here is logged and we proceed regardless.
@@ -537,7 +540,7 @@ async function woolworthsCheckoutAndPay(page, ctx = {}) {
   // slot given back. The click below spends money, so `pay` needs a person.
   const approval = await requestApproval({
     cls: 'pay',
-    summary: `Grocery order at woolworths: ${itemCount} items, total $${cartTotal || '?'}`,
+    summary: `Grocery order at woolworths: ${basket}, total $${cartTotal || '?'}`,
     params: { store: 'woolworths', total: cartTotal, items },
   });
   if (approval.status !== 'approved') {
@@ -777,7 +780,10 @@ async function colesSelectDeliverySlot(page) {
 
 async function colesCheckoutAndPay(page, ctx = {}) {
   const items = Array.isArray(ctx.items) ? ctx.items : [];
-  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : items.length;
+  // Null rather than zero when nobody told us: the summary a person approves
+  // must not claim an empty cart when it simply does not know.
+  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : (items.length || null);
+  const basket = itemCount == null ? 'unknown items' : `${itemCount} items`;
   const log = [];
   const step = (msg) => { console.log(`  ${msg}`); log.push(msg); };
 
@@ -885,7 +891,7 @@ async function colesCheckoutAndPay(page, ctx = {}) {
   // Last reversible moment: the click below spends money, so a person decides.
   const approval = await requestApproval({
     cls: 'pay',
-    summary: `Grocery order at coles: ${itemCount} items, total $${total || '?'}`,
+    summary: `Grocery order at coles: ${basket}, total $${total || '?'}`,
     params: { store: 'coles', total, items },
   });
   if (approval.status !== 'approved') {
@@ -961,12 +967,21 @@ async function colesCheckoutAndPay(page, ctx = {}) {
 
 async function checkoutOnly(store) {
   // What buy() staged, so the approval summary names the real basket rather
-  // than "0 items". Absent or for another store, the gate still runs.
-  let staged = {};
+  // than "unknown items". A list older than an hour describes a cart the store
+  // may have repriced since, so it is dropped — the gate still runs either way,
+  // and the total in the summary is always read live off the page.
+  let staged = { ok: false, reason: 'missing' };
   try {
-    const parsed = JSON.parse(readFileSync(join(dataDir(), 'pending-order.json'), 'utf-8'));
-    if (parsed?.store === store) staged = parsed;
+    staged = stagedBasket(
+      JSON.parse(readFileSync(join(dataDir(), 'pending-order.json'), 'utf-8')),
+      { store },
+    );
   } catch {}
+  if (staged.reason === 'stale' || staged.reason === 'undated') {
+    const mins = Math.round(STAGED_BASKET_MAX_AGE_MS / 60000);
+    const age = Number.isFinite(staged.ageMs) ? `${Math.round(staged.ageMs / 60000)} min old` : 'undated';
+    console.log(`  Ignoring the staged item list (${age}, limit ${mins} min) — approving on the live cart total.`);
+  }
 
   const browser = await connectChrome();
   try {
@@ -974,10 +989,9 @@ async function checkoutOnly(store) {
     await assertLoggedIn(page, store);
     const checkoutFn = store === 'woolworths' ? woolworthsCheckoutAndPay : colesCheckoutAndPay;
     console.log(`\n  ── CHECKOUT ${store.toUpperCase()} ──\n`);
-    const result = await checkoutFn(page, {
-      items: Array.isArray(staged.itemNames) ? staged.itemNames : [],
-      itemCount: typeof staged.items === 'number' ? staged.items : undefined,
-    });
+    const result = await checkoutFn(page, staged.ok
+      ? { items: staged.itemNames, itemCount: staged.itemCount ?? undefined }
+      : {});
     if (result.ordered) {
       console.log(`\n  ORDER CONFIRMED`);
       console.log(`  Delivery: ASAP`);

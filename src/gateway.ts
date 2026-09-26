@@ -30,7 +30,7 @@ import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLoopback, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
 function localMacAddresses(): string[] {
@@ -1742,14 +1742,21 @@ export class Gateway {
       if (found) res.json(found);
     });
 
-    // ── Script-side approvals and ledger (loopback only) ──────────
+    // ── Script-side approvals and ledger (this machine only) ──────
     // The grocery flow is a set of ESM scripts under scripts/, not in-process
     // code, so it asks for its approval and writes its audit line over HTTP.
-    // Both routes are refused off this machine: a LAN client is a guest, and a
-    // guest must not be able to open a `pay` request or forge a ledger entry.
-    const loopbackOnly = (req: Request, res: Response): boolean => {
-      if (isLoopback(req.socket?.remoteAddress)) return true;
-      res.status(403).json({ error: 'this route is only served to this machine' });
+    // Both routes are refused to everything but a process on this machine: a
+    // LAN client is a guest, and a guest must not be able to open a `pay`
+    // request or forge a ledger entry.
+    //
+    // A loopback socket is not enough on its own, because cloudflared hands
+    // tunnel traffic to 127.0.0.1 — that would open both routes to everyone on
+    // the Access allow-list. A proxied request carries Cloudflare headers and a
+    // local script carries none, so isLocalProcessRequest checks for both.
+    const localProcessOnly = (req: Request, res: Response): boolean => {
+      const headers = req.headers as Record<string, string | string[] | undefined>;
+      if (isLocalProcessRequest(headers, req.socket?.remoteAddress)) return true;
+      res.status(403).json({ error: 'this route is only served to a process on this machine' });
       return false;
     };
 
@@ -1757,7 +1764,7 @@ export class Gateway {
     // A `confirm` class comes back with the pending approval, whose id the
     // caller then long-polls on /api/approvals/:id/wait.
     this.app.post('/api/approvals/request', (req: Request, res: Response) => {
-      if (!loopbackOnly(req, res)) return;
+      if (!localProcessOnly(req, res)) return;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const cls = typeof body.class === 'string' ? body.class.trim() : '';
       const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
@@ -1786,7 +1793,7 @@ export class Gateway {
     // POST a ledger entry (no id, no time — both are assigned here, so a script
     // cannot supersede a line somebody else wrote).
     this.app.post('/api/ledger', (req: Request, res: Response) => {
-      if (!loopbackOnly(req, res)) return;
+      if (!localProcessOnly(req, res)) return;
       const { id: _id, time: _time, ...body } = (req.body ?? {}) as Record<string, unknown>;
       const action = typeof body.action === 'string' ? body.action.trim() : '';
       if (!action) {

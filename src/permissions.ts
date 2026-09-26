@@ -71,6 +71,40 @@ export function isLoopback(remoteAddress?: string): boolean {
 }
 
 /**
+ * Headers that mean a request came through Cloudflare rather than from a
+ * process on this machine. cloudflared delivers tunnel traffic to 127.0.0.1,
+ * so any of these on a loopback socket says "someone off the network", and
+ * `cf-ray` is present even on a route with no Access policy in front of it.
+ */
+const PROXY_HEADERS = [
+  ACCESS_HEADER,
+  'cf-access-jwt-assertion',
+  'cf-connecting-ip',
+  'cf-ray',
+  'x-forwarded-for',
+];
+
+/**
+ * Is this a process on this machine talking to the gateway directly?
+ *
+ * `isLoopback` alone is not enough for a route that must never be reachable
+ * from outside: the tunnel's own traffic arrives on loopback too, so every
+ * person on the Access allow-list would pass it. A request that carries any
+ * Cloudflare header was proxied and is refused, which costs nothing — a local
+ * script sends none of them.
+ */
+export function isLocalProcessRequest(
+  headers: Record<string, string | string[] | undefined> | undefined,
+  remoteAddress?: string,
+): boolean {
+  if (!isLoopback(remoteAddress)) return false;
+  for (const key of Object.keys(headers ?? {})) {
+    if (PROXY_HEADERS.includes(key.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/**
  * The identity a web request speaks for.
  *
  * The Access email wins wherever the request came from. Without one, only a

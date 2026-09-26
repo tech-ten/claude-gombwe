@@ -8,7 +8,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requestApproval, readKeychain, postLedger } from './grocery-lib.mjs';
+import {
+  requestApproval, readKeychain, postLedger, stagedBasket, STAGED_BASKET_MAX_AGE_MS,
+} from './grocery-lib.mjs';
 
 /**
  * Run without the helpers' progress lines. They are for a person watching an
@@ -172,4 +174,71 @@ test('postLedger returns the recorded entry', async () => {
   const recorded = { id: 'l-1', time: '2026-09-27T00:00:00.000Z', action: 'grocery.cart' };
   const { fetchImpl } = stubFetch([{ body: recorded }]);
   assert.deepEqual(await postLedger({ action: 'grocery.cart' }, { fetchImpl }), recorded);
+});
+
+// ── The staged cart ─────────────────────────────────────────────────────
+
+const NOW = Date.parse('2026-09-27T12:00:00.000Z');
+const minutesAgo = (n) => new Date(NOW - n * 60_000).toISOString();
+const staged = (over = {}) => ({
+  store: 'coles',
+  items: 11,
+  itemNames: ['Milk 2L', 'Eggs 12'],
+  timestamp: minutesAgo(5),
+  ...over,
+});
+
+test('a cart staged minutes ago is believed', () => {
+  const result = stagedBasket(staged(), { store: 'coles', now: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.itemCount, 11);
+  assert.deepEqual(result.itemNames, ['Milk 2L', 'Eggs 12']);
+  assert.equal(result.ageMs, 5 * 60_000);
+});
+
+test('a cart staged over an hour ago is dropped', () => {
+  // Prices and stock move, so an old list must not appear in a summary a
+  // person is about to approve.
+  const result = stagedBasket(staged({ timestamp: minutesAgo(61) }), { store: 'coles', now: NOW });
+  assert.deepEqual(result, { ok: false, reason: 'stale', ageMs: 61 * 60_000 });
+  // The boundary itself is still inside the window.
+  assert.equal(stagedBasket(staged({ timestamp: minutesAgo(60) }), { store: 'coles', now: NOW }).ok, true);
+  assert.equal(STAGED_BASKET_MAX_AGE_MS, 60 * 60_000);
+});
+
+test('a cart dated in the future is dropped too', () => {
+  const result = stagedBasket(staged({ timestamp: minutesAgo(-120) }), { store: 'coles', now: NOW });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'stale');
+});
+
+test('a cart with no readable date is dropped', () => {
+  for (const timestamp of [undefined, '', 'yesterday', null]) {
+    const result = stagedBasket(staged({ timestamp }), { store: 'coles', now: NOW });
+    assert.deepEqual(result, { ok: false, reason: 'undated' }, String(timestamp));
+  }
+});
+
+test('a cart staged for another store is not this order', () => {
+  assert.deepEqual(
+    stagedBasket(staged(), { store: 'woolworths', now: NOW }),
+    { ok: false, reason: 'other-store' },
+  );
+});
+
+test('nothing staged at all reads as missing', () => {
+  for (const parsed of [null, undefined, 'a string', 42]) {
+    assert.deepEqual(stagedBasket(parsed, { store: 'coles', now: NOW }), { ok: false, reason: 'missing' });
+  }
+});
+
+test('a fresh cart with a junk item list still yields a usable basket', () => {
+  const result = stagedBasket(
+    staged({ items: 'eleven', itemNames: ['Milk 2L', 7, null] }),
+    { store: 'coles', now: NOW },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.itemCount, null, 'a non-number count is no count');
+  assert.deepEqual(result.itemNames, ['Milk 2L']);
+  assert.deepEqual(stagedBasket(staged({ itemNames: 'Milk' }), { store: 'coles', now: NOW }).itemNames, []);
 });

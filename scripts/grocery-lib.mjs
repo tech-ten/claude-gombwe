@@ -13,6 +13,7 @@
  *   Chrome:      connectChrome, clearBrowserCache, getPage
  *   Auth:        notifyGombwe, looksLikeLoginWall, assertLoggedIn
  *   Approvals:   requestApproval, readKeychain, postLedger
+ *   Staging:     stagedBasket
  *   Search:      woolworthsSearch, discoverColesApi, colesSearch
  *   Matching:    normaliseName, extractTokens, productMatches,
  *                pickBestProduct
@@ -274,6 +275,39 @@ export async function readKeychain(service, { exec = execFileAsync } = {}) {
   } catch {
     return null;
   }
+}
+
+/** How long a staged cart is worth believing. Prices and stock move. */
+export const STAGED_BASKET_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * What a `pending-order.json` still says about the cart, if anything.
+ *
+ * Pure, so it is tested directly. The file is written when `buy --no-checkout`
+ * stages a cart, and read back an unknown amount of time later by
+ * `--checkout-only`. An hour on, the item list describes a cart the store may
+ * have repriced or part-emptied, so it is dropped rather than shown in an
+ * approval summary that a person is about to trust.
+ *
+ * Returns `{ ok: true, itemCount, itemNames, ageMs }`, or `{ ok: false, reason }`
+ * where reason is 'missing', 'other-store', 'undated' or 'stale'.
+ */
+export function stagedBasket(parsed, { store, maxAgeMs = STAGED_BASKET_MAX_AGE_MS, now = Date.now() } = {}) {
+  if (!parsed || typeof parsed !== 'object') return { ok: false, reason: 'missing' };
+  if (store && parsed.store !== store) return { ok: false, reason: 'other-store' };
+  const at = Date.parse(parsed.timestamp ?? '');
+  // No readable timestamp means no way to tell how old this is, so it is not
+  // trusted — the same outcome as being too old.
+  if (!Number.isFinite(at)) return { ok: false, reason: 'undated' };
+  const ageMs = now - at;
+  // A time in the future by more than the window cannot be a real staging run.
+  if (ageMs > maxAgeMs || ageMs < -maxAgeMs) return { ok: false, reason: 'stale', ageMs };
+  return {
+    ok: true,
+    ageMs,
+    itemCount: Number.isFinite(parsed.items) ? parsed.items : null,
+    itemNames: Array.isArray(parsed.itemNames) ? parsed.itemNames.filter(n => typeof n === 'string') : [],
+  };
 }
 
 /**
