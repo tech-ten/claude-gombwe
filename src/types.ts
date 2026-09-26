@@ -1,3 +1,5 @@
+import type { Principal } from './permissions.js';
+
 export interface GombweConfig {
   port: number;
   host: string;
@@ -20,6 +22,8 @@ export interface GombweConfig {
   };
   /** Set at runtime by `start --headless`: this instance owns the router (may rewrite its targets). */
   routerOwner?: boolean;
+  /** Household members declared up front; upserted into principals.json on boot. */
+  principals?: Principal[];
 }
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -178,7 +182,12 @@ export interface IncomingMessage {
   channel: string;
   sessionKey: string;
   text: string;
+  /** Stable per-channel identity (Discord/Telegram user id, web Access email). */
   sender: string;
+  /** Human-readable name for the sender, for logs and replies. */
+  senderName?: string;
+  /** Resolved principal id, set by the gateway before any handling. */
+  principal?: string;
   timestamp: string;
   // One-shot working-directory override (set by /in). Does not affect
   // the session's persistent workingDir.
@@ -215,3 +224,7 @@ export interface WSEvent {
 // ── Action ledger ─────────────────────────────────────────────
 // Defined in ledger.ts; re-exported here so callers have one types entry point.
 export type { LedgerEntry, LedgerActor, LedgerOutcome, LedgerFilter } from './ledger.js';
+
+// ── Principals & permissions ──────────────────────────────────
+// Defined in permissions.ts; re-exported here so callers have one types entry point.
+export type { Role, Connector, Level, Binding, Principal } from './permissions.js';
