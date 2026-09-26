@@ -80,6 +80,15 @@ export const MEMORY_KINDS: MemoryKind[] = [
 /** The subject everyone in the household can see. */
 export const HOUSEHOLD = 'household';
 
+/**
+ * Who an unidentified caller is. A guest id resolved off a network address is
+ * not in the roster, so a lookup for it comes back undefined — and that must
+ * mean "sees only what the household would tell a visitor", not "sees all".
+ */
+const ANONYMOUS: Principal = {
+  id: 'guest', name: 'guest', role: 'guest', bindings: [], grants: {},
+};
+
 const FILE = 'memory.json';
 const TOMBSTONE_FILE = 'tombstones.json';
 const DEFAULT_BUDGET_CHARS = 2000;
@@ -98,9 +107,21 @@ const USE_CAP = 5;
 /** Read order: what to do, then what is liked, then who, then what is true. */
 const KIND_ORDER: MemoryKind[] = ['instruction', 'preference', 'relationship', 'fact', 'goal'];
 
+/**
+ * Where a kind sorts. A kind that is not in the table — a hand-edited file, or
+ * a kind added to the type but not to the order — goes last rather than ahead
+ * of the standing instructions, which is where a raw `indexOf` of -1 would put
+ * it.
+ */
+function kindRank(kind: MemoryKind): number {
+  const i = KIND_ORDER.indexOf(kind);
+  return i < 0 ? KIND_ORDER.length : i;
+}
+
 const TOOL_HINT =
   'Use memory_remember for preferences, standing instructions, facts about people and goals; ' +
-  'memory_forget when asked to forget.';
+  'memory_forget when asked to forget, or the /remember and /forget commands. ' +
+  'A later household-memory block replaces any earlier one in this conversation.';
 
 /**
  * `/remember` arguments: an optional `household:` prefix (the default subject
@@ -258,20 +279,42 @@ export class Memory {
   }
 
   /**
-   * What is worth reading, given a question.
+   * What is worth reading, given a question — across the whole household.
    *
    * The number of query terms a record contains decides the order; a record
    * that contains none is left out entirely rather than padding the answer.
    * Use count and staleness only break ties. Every record handed back is
    * counted as used, which is what makes the useful ones win next time.
+   *
+   * This reads everything, so it is for gombwe's own passes. Anything asked on
+   * behalf of a person goes through `recallFor`.
    */
   recall(query: string, opts: MemoryRecallOptions = {}): MemoryRecord[] {
+    return this.rank(this.records.filter(r => !r.forgotten), query, opts);
+  }
+
+  /**
+   * `recall` as one principal, which is what every caller outside this class
+   * wants. Records the principal may not read are dropped before anything is
+   * scored, so they are neither returned nor counted as used — a question from
+   * one household member must not nudge the ranking of another member's
+   * memories. An unknown caller is treated as a guest.
+   */
+  recallFor(
+    principal: Principal | undefined,
+    query: string,
+    opts: MemoryRecallOptions = {},
+  ): MemoryRecord[] {
+    return this.rank(this.visibleTo(principal ?? ANONYMOUS), query, opts);
+  }
+
+  /** The scoring, the cut and the use-count bump, over a pool already filtered. */
+  private rank(pool: MemoryRecord[], query: string, opts: MemoryRecallOptions): MemoryRecord[] {
     const terms = [...new Set(normalise(query).split(' ').filter(t => t.length >= MIN_TERM))];
     if (terms.length === 0) return [];
     const nowMs = this.now().getTime();
 
-    const scored = this.records
-      .filter(r => !r.forgotten)
+    const scored = pool
       .filter(r => (opts.subject ? r.subject === opts.subject : true))
       .filter(r => (opts.kind ? r.kind === opts.kind : true))
       .map(r => {
@@ -377,7 +420,7 @@ export class Memory {
    */
   contextBlock(principal: Principal, budgetChars: number = DEFAULT_BUDGET_CHARS): string {
     const visible = this.visibleTo(principal).sort((a, b) => {
-      const byKind = KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind);
+      const byKind = kindRank(a.kind) - kindRank(b.kind);
       return byKind !== 0 ? byKind : b.updatedAt.localeCompare(a.updatedAt);
     });
 

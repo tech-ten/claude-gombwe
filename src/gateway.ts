@@ -1888,12 +1888,16 @@ export class Gateway {
     // see; remembering and forgetting need `memory: act`. An owner passes both,
     // and sees the whole household.
     this.app.get('/api/memory', (req: Request, res: Response) => {
-      if (!this.requireGrant(req, res, 'memory', 'read')) return;
+      const principal = this.principalFromRequest(req);
+      // A guest is not refused a read: they are handed exactly what they would
+      // see in chat, which is the household's memories and nothing else. Anyone
+      // the roster does know needs the grant.
+      if (principal.role !== 'guest' && !this.requireGrant(req, res, 'memory', 'read')) return;
       const { subject, kind } = req.query as Record<string, string | undefined>;
       if (kind && !MEMORY_KINDS.includes(kind as MemoryKind)) {
         res.status(400).json({ error: `kind must be one of ${MEMORY_KINDS.join(', ')}` }); return;
       }
-      res.json(this.visibleMemory(this.principalFromRequest(req), {
+      res.json(this.visibleMemory(principal, {
         subject: subject || undefined,
         kind: (kind as MemoryKind | undefined) || undefined,
       }));
@@ -1908,14 +1912,13 @@ export class Gateway {
       const principal = this.principalFromRequest(req);
       const asked = parseInt(String(req.query.limit ?? ''), 10);
       const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 50) : 10;
-      // Ask for more than asked and drop what this caller may not see, so a
-      // household member is not handed a short answer because the top hits
-      // were someone else's.
-      const hits = this.services.memory.recall(q, {
+      // recallFor, not recall: what this caller may not read is dropped before
+      // anything is scored, so their question cannot nudge the ranking of
+      // another household member's memories.
+      res.json(this.services.memory.recallFor(principal, q, {
         subject: (req.query.subject as string) || undefined,
-        limit: limit * 4,
-      }).filter(r => mayRead(principal, r));
-      res.json(hits.slice(0, limit));
+        limit,
+      }));
     });
 
     // POST body: { text, subject?, kind } — a person saying it, so this also

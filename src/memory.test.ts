@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Memory, MemoryTombstonedError, mayRead, mayWriteSubject, normalise, parseRememberArgs } from './memory.js';
-import type { MemoryRecord } from './memory.js';
+import { HOUSEHOLD, Memory, MemoryTombstonedError, mayRead, mayWriteSubject, normalise, parseRememberArgs } from './memory.js';
+import type { MemoryKind, MemoryRecord } from './memory.js';
 import type { Principal } from './permissions.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'gombwe-memory-'));
@@ -162,6 +162,58 @@ test('recall breaks a tie on use count, then on recency', () => {
   assert.equal(memory.recall('peanuts')[0].text, 'peanuts are banned');
 });
 
+// ── recallFor: recall as one person ───────────────────────────
+
+test('recallFor never returns another member\'s record, or counts it as used', () => {
+  const memory = new Memory(dir());
+  const mine = memory.remember('Liam prefers oat milk', 'tendai', 'preference', chat());
+  const theirs = memory.remember('Liam prefers soy milk', 'liam', 'preference', chat());
+  const shared = memory.remember('Bin night is Tuesday', HOUSEHOLD, 'fact', chat());
+
+  const hits = memory.recallFor(who(), 'which milk does Liam prefer');
+  assert.deepEqual(hits.map(r => r.id), [mine.id]);
+
+  // Not scored, so not nudged: the unreadable record's use count is untouched.
+  const after = memory.list({ includeForgotten: true });
+  assert.equal(after.find(r => r.id === theirs.id)?.useCount, 0);
+  assert.equal(after.find(r => r.id === theirs.id)?.lastUsedAt, undefined);
+  assert.equal(after.find(r => r.id === mine.id)?.useCount, 1);
+
+  // The household's memories are everyone's.
+  assert.deepEqual(memory.recallFor(who(), 'bin night').map(r => r.id), [shared.id]);
+});
+
+test('recallFor shows an owner the whole household', () => {
+  const memory = new Memory(dir());
+  memory.remember('Liam prefers oat milk', 'tendai', 'preference', chat());
+  memory.remember('Liam prefers soy milk', 'liam', 'preference', chat());
+  memory.remember('Liam is allergic to peanuts', HOUSEHOLD, 'fact', chat());
+
+  assert.equal(memory.recallFor(owner, 'Liam').length, 3);
+});
+
+test('recallFor treats a guest, and an unknown caller, as seeing the household only', () => {
+  const memory = new Memory(dir());
+  const shared = memory.remember('Bin night is Tuesday', HOUSEHOLD, 'fact', chat());
+  memory.remember('Bin night is my job', guest.id, 'fact', chat());
+  memory.remember('Bin night is Tuesday', 'tendai', 'fact', chat());
+
+  assert.deepEqual(memory.recallFor(guest, 'bin night').map(r => r.id), [shared.id]);
+  assert.deepEqual(memory.recallFor(undefined, 'bin night').map(r => r.id), [shared.id]);
+});
+
+test('recallFor honours kind, limit and forgotten records like recall does', () => {
+  const memory = new Memory(dir());
+  memory.remember('Prefers oat milk', HOUSEHOLD, 'preference', chat());
+  memory.remember('Oat porridge for breakfast', HOUSEHOLD, 'instruction', chat());
+  const gone = memory.remember('Oat biscuits in the pantry', HOUSEHOLD, 'fact', chat());
+  memory.forget(gone.id);
+
+  assert.equal(memory.recallFor(who(), 'oat').length, 2);
+  assert.equal(memory.recallFor(who(), 'oat', { limit: 1 }).length, 1);
+  assert.deepEqual(memory.recallFor(who(), 'oat', { kind: 'instruction' }).map(r => r.kind), ['instruction']);
+});
+
 // ── forget and tombstones ─────────────────────────────────────
 
 test('forget marks the record and writes a tombstone, by id or by text', () => {
@@ -281,10 +333,26 @@ test('contextBlock orders by kind then recency and ends with the tool instructio
   assert.equal(
     lines[7],
     'Use memory_remember for preferences, standing instructions, facts about people and goals; ' +
-    'memory_forget when asked to forget.',
+    'memory_forget when asked to forget, or the /remember and /forget commands. ' +
+    'A later household-memory block replaces any earlier one in this conversation.',
   );
   assert.equal(lines[8], '</household-memory>');
   assert.equal(lines.length, 9);
+});
+
+test('contextBlock sorts a kind it does not know last, not first', () => {
+  const c = clock();
+  const memory = new Memory(dir(), { now: c.now });
+  // A hand-edited file, or a kind added to the type but not to the read order.
+  memory.remember('Something odd', HOUSEHOLD, 'mystery' as MemoryKind, chat());
+  c.advance(60_000);
+  memory.remember('Bin night is Tuesday', HOUSEHOLD, 'fact', chat());
+
+  const lines = memory.contextBlock(owner).split('\n');
+  assert.deepEqual(lines.slice(1, 3), [
+    '- [fact|household] Bin night is Tuesday',
+    '- [mystery|household] Something odd',
+  ]);
 });
 
 test('contextBlock stops adding lines at the budget', () => {
@@ -299,7 +367,7 @@ test('contextBlock stops adding lines at the budget', () => {
   assert.ok(!block.includes('No screens after 9pm'), 'the second line does not fit');
   // The wrapper and the instruction line are still there.
   assert.ok(block.startsWith('<household-memory>\n'));
-  assert.ok(block.includes('memory_forget when asked to forget.'));
+  assert.ok(block.includes('A later household-memory block replaces any earlier one'));
   assert.ok(block.endsWith('\n</household-memory>'));
 });
 

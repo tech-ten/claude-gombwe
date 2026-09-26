@@ -401,7 +401,7 @@ so gombwe starts every chat already knowing them:
 - [instruction|household] No screens after 9pm
 - [preference|tendai] I prefer oat milk
 - [fact|household] Bin night is Tuesday
-Use memory_remember for preferences, standing instructions, facts about people and goals; memory_forget when asked to forget.
+Use memory_remember for preferences, standing instructions, facts about people and goals; memory_forget when asked to forget, or the /remember and /forget commands. A later household-memory block replaces any earlier one in this conversation.
 </household-memory>
 ```
 
@@ -420,7 +420,9 @@ next nightly pass read it out of an old conversation.
 sees their own and whatever is filed under `household`, and a guest — anyone on
 the network gombwe does not recognise — sees only `household`. Reading needs the
 `memory` connector at `read`, and remembering or forgetting needs `act`; see
-[Household members and permissions](#household-members-and-permissions).
+[Household members and permissions](#household-members-and-permissions). A guest
+is not refused a read — they are handed the household's memories, the same as in
+chat — but they cannot remember or forget anything.
 
 ```bash
 curl localhost:18790/api/memory                             # what I may see
