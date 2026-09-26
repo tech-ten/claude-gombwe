@@ -13,13 +13,13 @@
 import puppeteer from 'puppeteer-core';
 import { existsSync } from 'fs';
 import { spawn } from 'child_process';
-import { homedir } from 'os';
 import { join } from 'path';
 import { findChrome, detachedSpawnOptions, browserVisibilityArgs } from './platform.mjs';
+import { configDir } from './paths.mjs';
 
 const PORT = 19222;
 const CHROME_URL = `http://127.0.0.1:${PORT}`;
-const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
+const PROFILE_DIR = join(configDir(), 'chrome-profile');
 const MIN_ORDER = 50;
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 

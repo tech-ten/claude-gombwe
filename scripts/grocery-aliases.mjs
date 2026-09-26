@@ -21,9 +21,9 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR  = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR  = dataDir();
 const WATCHLIST = join(DATA_DIR, 'grocery-watchlist.json');
 const PRICE_LOG = join(DATA_DIR, 'grocery-prices.jsonl');
 const DEALS     = join(DATA_DIR, 'grocery-deals-latest.json');

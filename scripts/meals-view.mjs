@@ -16,11 +16,11 @@
 
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { dataDir } from './paths.mjs';
 import { fileURLToPath } from 'node:url';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 
 function load(file, fallback) {
   try { return JSON.parse(readFileSync(join(DATA_DIR, file), 'utf-8')); }

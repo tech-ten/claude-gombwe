@@ -20,9 +20,9 @@
  */
 
 import { readFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { tempPath } from './platform.mjs';
+import { dataDir } from './paths.mjs';
 import {
   // Constants
   MIN_ORDER_WOOLWORTHS, MIN_ORDER_COLES,
@@ -38,7 +38,7 @@ import {
   pickBestProduct,
 } from './grocery-lib.mjs';
 
-const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
+const PREFS_FILE = join(dataDir(), 'grocery-preferences.json');
 
 // Load config (buy-script specific — not in lib)
 let PREFS = {};
@@ -813,7 +813,7 @@ async function colesCheckoutAndPay(page) {
 
   try {
     const { writeFileSync } = await import('fs');
-    writeFileSync(join(homedir(), '.claude-gombwe', 'data', 'grocery-last-run.json'), JSON.stringify(logReport, null, 2));
+    writeFileSync(join(dataDir(), 'grocery-last-run.json'), JSON.stringify(logReport, null, 2));
   } catch {}
 
   return { total, ordered: !!ordered, log };
@@ -963,9 +963,8 @@ async function buy(store, items, skipCheckout = false) {
       // Save pending order state
       const { writeFileSync } = await import('fs');
       const { join } = await import('path');
-      const { homedir } = await import('os');
       writeFileSync(
-        join(homedir(), '.claude-gombwe', 'data', 'pending-order.json'),
+        join(dataDir(), 'pending-order.json'),
         JSON.stringify({ store, items: added, total, priceComparison, timestamp: new Date().toISOString() }, null, 2)
       );
     } else {

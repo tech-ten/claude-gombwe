@@ -18,10 +18,10 @@
 import { createSocket, Socket } from 'node:dgram';
 import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
+import { dataDir } from './paths.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const PORT = 1514;
 const RING_SIZE = 5000;  // ~5–10 minutes of household DNS traffic
 

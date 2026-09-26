@@ -14,9 +14,9 @@
 import { promises as dns } from 'node:dns';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { configDir } from './paths.js';
 
-const CACHE_PATH = join(homedir(), '.claude-gombwe', 'network-ip-cache.json');
+const CACHE_PATH = join(configDir(), 'network-ip-cache.json');
 
 // ── Heuristic: known IP ranges → friendly owner ──────────────────────────
 // CIDRs are compared by checking that the candidate IP falls inside the range.

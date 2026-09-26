@@ -22,10 +22,10 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { significantWords, normaliseName, stripNotes } from './grocery-lib.mjs';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR    = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR    = dataDir();
 const WATCHLIST   = join(DATA_DIR, 'grocery-watchlist.json');
 const RESOLUTIONS = join(DATA_DIR, 'grocery-resolutions.json');
 

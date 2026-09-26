@@ -15,14 +15,14 @@
 
 import { execSync, spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import puppeteer from 'puppeteer-core';
 import { findChrome, detachedSpawnOptions, tempPath, browserVisibilityArgs } from './platform.mjs';
+import { configDir, dataDir } from './paths.mjs';
 
 const PORT = 19222;
-const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
-const LOG_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-last-run.json');
+const PREFS_FILE = join(dataDir(), 'grocery-preferences.json');
+const LOG_FILE = join(dataDir(), 'grocery-last-run.json');
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 let PREFS = {};
@@ -122,7 +122,7 @@ async function connectChrome() {
     return await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null });
   } catch {}
 
-  const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
+  const PROFILE_DIR = join(configDir(), 'chrome-profile');
   if (!existsSync(PROFILE_DIR)) { console.error('Run: gombwe grocery-setup'); process.exit(1); }
 
   const chromePath = findChrome();

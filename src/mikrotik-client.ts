@@ -5,8 +5,8 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
+import { configDir } from './paths.js';
 
 interface MtCreds { host: string; user: string; password: string; }
 
@@ -130,7 +130,7 @@ export interface MtDnsCacheEntry {
   type?: string;              // 'A' | 'AAAA' | …
 }
 
-const CREDS_PATH = join(homedir(), '.claude-gombwe', 'mikrotik.json');
+const CREDS_PATH = join(configDir(), 'mikrotik.json');
 
 export class MikroTikClient {
   private creds: MtCreds | null = null;

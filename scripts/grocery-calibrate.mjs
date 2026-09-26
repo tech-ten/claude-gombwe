@@ -31,9 +31,9 @@ import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-re
 import { newObservationCollector } from './grocery-products.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 const WATCHLIST = join(DATA_DIR, 'grocery-watchlist.json');
 const LATEST = join(DATA_DIR, 'grocery-calibration-latest.json');
 const TOP_N_CANDIDATES = 5;

@@ -13,7 +13,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync, statSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
-import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
+import { hostname as osHostname, networkInterfaces } from 'node:os';
 
 // Domain → category for the per-child activity log. Order matters: the
 // "concerning" categories (concern=true) are tested first. These let a parent
@@ -38,20 +38,21 @@ import { mikrotik, MtConnection, MtLease, MtArp, MtDnsCacheEntry, MtFirewallRule
 import { dnsIndex } from './dns-index.js';
 import { ipResolver } from './ip-name-resolver.js';
 import { mdnsListener } from './mdns-listener.js';
+import { configDir, dataDir } from './paths.js';
 // IEEE OUI registry, ~37k vendors keyed by 6-hex-digit prefix (no separators).
 // Each value is a multi-line string; the first line is the vendor name.
 // Loaded via createRequire so we don't need TS import-attribute support.
 const ouiData = createRequire(import.meta.url)('oui-data') as Record<string, string>;
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
-const ALIASES_PATH = join(homedir(), '.claude-gombwe', 'network-aliases.json');
-const OWNERS_PATH = join(homedir(), '.claude-gombwe', 'network-owners.json');
-const BLOCKS_PATH = join(homedir(), '.claude-gombwe', 'network-blocks.json');
-const KIDLIST_PATH = join(homedir(), '.claude-gombwe', 'network-kid-list.json');
-const DEVICE_POLICY_PATH = join(homedir(), '.claude-gombwe', 'network-device-policy.json');
-const POLICY_ACTIONS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-actions.jsonl');
-const FLAGS_PATH = join(homedir(), '.claude-gombwe', 'network-policy-flags.jsonl');
-const DOSSIER_CACHE_PATH = join(homedir(), '.claude-gombwe', 'network-dossier-cache.json');
+const DATA_DIR = join(dataDir(), 'network');
+const ALIASES_PATH = join(configDir(), 'network-aliases.json');
+const OWNERS_PATH = join(configDir(), 'network-owners.json');
+const BLOCKS_PATH = join(configDir(), 'network-blocks.json');
+const KIDLIST_PATH = join(configDir(), 'network-kid-list.json');
+const DEVICE_POLICY_PATH = join(configDir(), 'network-device-policy.json');
+const POLICY_ACTIONS_PATH = join(configDir(), 'network-policy-actions.jsonl');
+const FLAGS_PATH = join(configDir(), 'network-policy-flags.jsonl');
+const DOSSIER_CACHE_PATH = join(configDir(), 'network-dossier-cache.json');
 
 // Per-device blocked-category map. Default for adults: none.
 // Default applied automatically when a device is added to the kid list:

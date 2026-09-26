@@ -22,8 +22,8 @@
  * snapshot; the alerter decides who to nudge.
  */
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
 import { join, dirname } from 'path';
+import { dataDir } from './paths.mjs';
 import {
   wait, jitter,
   connectChrome, getPage,
@@ -37,7 +37,7 @@ import { resolveBestMatch, loadResolutions, saveResolutions } from './grocery-re
 import { newObservationCollector } from './grocery-products.mjs';
 import { fetchSpotPrice } from './grocery-spot-price.mjs';
 
-const DATA_DIR     = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR     = dataDir();
 const WATCHLIST    = join(DATA_DIR, 'grocery-watchlist.json');
 const PRICE_LOG    = join(DATA_DIR, 'grocery-prices.jsonl');
 const DEALS_OUT    = join(DATA_DIR, 'grocery-deals-latest.json');

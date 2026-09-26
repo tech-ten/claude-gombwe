@@ -35,10 +35,10 @@
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { connectChrome, jitter } from './grocery-lib.mjs';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR   = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR   = dataDir();
 const CATALOG    = join(DATA_DIR, 'grocery-products.json');
 const DETAILS_LOG= join(DATA_DIR, 'grocery-product-details.jsonl');
 

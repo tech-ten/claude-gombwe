@@ -13,9 +13,9 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const INDEX_PATH = join(DATA_DIR, 'dns-index.json');
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 

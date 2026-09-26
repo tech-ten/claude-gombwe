@@ -15,11 +15,11 @@
  */
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { mikrotik } from './mikrotik-client.js';
+import { dataDir } from './paths.js';
 import { dnsIndex } from './dns-index.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const POLL_MS = 60_000;
 
 const LEASE_FIELDS = ['address','mac-address','host-name','status','comment','server'] as const;

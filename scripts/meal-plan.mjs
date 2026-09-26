@@ -38,10 +38,10 @@
  *   node scripts/meal-plan.mjs --dry-run    → show pick but don't write
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
 import { join, dirname } from 'path';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 const FAMILY      = join(DATA_DIR, 'family.json');
 const RECIPES     = join(DATA_DIR, 'recipes.json');
 const DEALS       = join(DATA_DIR, 'grocery-deals-latest.json');

@@ -21,12 +21,12 @@
 
 import { mkdir, readFile, writeFile, chmod } from 'fs/promises';
 import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
+import { dataDir } from './paths.mjs';
 
 const API = 'https://api-user.e2ro.com';
 const UA = 'eero/6.18.0 (iPhone; iOS 17.4)';
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 const SESSION_FILE = join(DATA_DIR, 'eero-session');
 
 async function loadSession() {
