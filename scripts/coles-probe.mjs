@@ -21,7 +21,7 @@
 import { connectChrome, discoverColesApi, colesSearch } from './grocery-lib.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
 const PROBES = [
   'Finish Quantum Ultimate 38 tabs',
@@ -103,7 +103,7 @@ async function main() {
     });
   }
 
-  const outPath = join(homedir(), '.claude-gombwe', 'data',
+  const outPath = join(dataDir(),
     `coles-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   writeFileSync(outPath, JSON.stringify({
     probedAt: new Date().toISOString(),

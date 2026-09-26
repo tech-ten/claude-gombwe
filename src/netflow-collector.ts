@@ -15,10 +15,10 @@
 import { createSocket, Socket } from 'node:dgram';
 import { appendFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.js';
 
 const PORT = 2055;
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const RETENTION_DAYS = 90;
 
 // NetFlow v9 field type IDs we care about.

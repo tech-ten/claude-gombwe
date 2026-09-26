@@ -10,10 +10,10 @@
  */
 import { readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { gzipSync } from 'node:zlib';
+import { dataDir } from './paths.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const AGE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 function ymd(d: Date): string { return d.toISOString().slice(0, 10); }

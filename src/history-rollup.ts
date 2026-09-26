@@ -34,16 +34,17 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, createReadStream } from 'node:fs';
 import { join } from 'node:path';
-import { homedir, hostname as osHostname, networkInterfaces } from 'node:os';
+import { hostname as osHostname, networkInterfaces } from 'node:os';
 import { createGunzip } from 'node:zlib';
 import { categorize, AppCategory } from './app-categories.js';
 import { guessOwner } from './owner-heuristic.js';
 import { mdnsListener } from './mdns-listener.js';
+import { configDir, dataDir } from './paths.js';
 
-const DATA_DIR    = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR    = join(dataDir(), 'network');
 const ROLLUP_DIR  = join(DATA_DIR, 'rollups');
-const ALIASES_PATH= join(homedir(), '.claude-gombwe', 'network-aliases.json');
-const OWNERS_PATH = join(homedir(), '.claude-gombwe', 'network-owners.json');
+const ALIASES_PATH= join(configDir(), 'network-aliases.json');
+const OWNERS_PATH = join(configDir(), 'network-owners.json');
 
 export interface DeviceRollup {
   mac: string;

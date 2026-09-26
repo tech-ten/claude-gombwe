@@ -26,10 +26,10 @@
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { productKey } from './grocery-resolutions.mjs';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR    = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR    = dataDir();
 const CATALOG     = join(DATA_DIR, 'grocery-products.json');
 const PRICE_LOG   = join(DATA_DIR, 'grocery-product-prices.jsonl');
 

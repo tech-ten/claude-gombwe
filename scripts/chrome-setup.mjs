@@ -11,11 +11,11 @@
 
 import { execSync, spawn } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { findChrome, killPort, detachedSpawnOptions } from './platform.mjs';
+import { configDir } from './paths.mjs';
 
-const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
+const PROFILE_DIR = join(configDir(), 'chrome-profile');
 const PORT = 19222;
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));

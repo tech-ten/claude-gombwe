@@ -30,9 +30,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
-const CACHE_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-coles-api.json');
+const CACHE_FILE = join(dataDir(), 'grocery-coles-api.json');
 const VALIDATION_QUERY = 'milk';
 
 function load() {

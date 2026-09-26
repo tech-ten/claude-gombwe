@@ -28,9 +28,9 @@
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 const SEARCH_LOG = join(DATA_DIR, 'grocery-searches.jsonl');
 const CLASSIFIER_LOG = join(DATA_DIR, 'grocery-classifier-decisions.jsonl');
 const DISCOVERY_LOG = join(DATA_DIR, 'grocery-api-discovery.jsonl');

@@ -27,12 +27,13 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir, networkInterfaces } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { mikrotik } from './mikrotik-client.js';
 import { loadConfig } from './config.js';
+import { dataDir } from './paths.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const SCHEDULES_PATH = join(DATA_DIR, 'schedules.json');
 
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';

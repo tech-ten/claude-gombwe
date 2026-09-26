@@ -10,13 +10,13 @@
 import puppeteer from 'puppeteer-core';
 import { existsSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
-import { homedir } from 'os';
 import { join } from 'path';
 import { findChrome, detachedSpawnOptions } from './platform.mjs';
+import { configDir, dataDir } from './paths.mjs';
 
 const PORT = 19222;
-const PROFILE_DIR = join(homedir(), '.claude-gombwe', 'chrome-profile');
-const PREFS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-preferences.json');
+const PROFILE_DIR = join(configDir(), 'chrome-profile');
+const PREFS_FILE = join(dataDir(), 'grocery-preferences.json');
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 let PREFS = {};

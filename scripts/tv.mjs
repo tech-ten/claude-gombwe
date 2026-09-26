@@ -32,9 +32,9 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from './paths.mjs';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = dataDir();
 const CONFIG_FILE = join(DATA_DIR, 'tv-config.json');
 
 // NextDNS DoT/DoH hostname for the user's config — pulled from the existing

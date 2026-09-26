@@ -19,10 +19,10 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { BLOCKLIST_SOURCES } from './blocklist-sources.js';
+import { dataDir } from './paths.js';
 
-const DATA_DIR = join(homedir(), '.claude-gombwe', 'data', 'network');
+const DATA_DIR = join(dataDir(), 'network');
 const CACHE_FILE = join(DATA_DIR, 'blocklist-cache.json');
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 60_000;

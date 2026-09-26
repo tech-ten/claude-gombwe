@@ -22,16 +22,16 @@
  */
 import puppeteer from 'puppeteer-core';
 import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { findChrome, detachedSpawnOptions, browserVisibilityArgs } from './platform.mjs';
 import { logSearch, logDiscoveryAttempt } from './grocery-forensics.mjs';
+import { configDir } from './paths.mjs';
 
 // ── constants ────────────────────────────────────────────────────────
 
 export const PORT                  = 19222;
-export const PROFILE_DIR           = join(homedir(), '.claude-gombwe', 'chrome-profile');
+export const PROFILE_DIR           = join(configDir(), 'chrome-profile');
 export const GOMBWE_PORT_ENV       = process.env.GOMBWE_PORT || '18790';
 export const MIN_ORDER_WOOLWORTHS  = 75;
 export const MIN_ORDER_COLES       = 50;

@@ -298,10 +298,10 @@ DEFAULT_ENTRIES.sort((a, b) => b.suffix.length - a.suffix.length);
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { categoryFor } from './blocklist-cache.js';
+import { configDir } from './paths.js';
 
-const CATEGORIES_PATH = join(homedir(), '.claude-gombwe', 'network-categories.json');
+const CATEGORIES_PATH = join(configDir(), 'network-categories.json');
 
 interface UserOverlay {
   entries: AppEntry[];      // sorted longest-first, like defaults
@@ -340,7 +340,7 @@ function getOverlay(): UserOverlay {
 function invalidateOverlay(): void { _overlay = null; }
 
 function writeUserEntries(entries: AppEntry[]): void {
-  mkdirSync(join(homedir(), '.claude-gombwe'), { recursive: true });
+  mkdirSync(configDir(), { recursive: true });
   writeFileSync(CATEGORIES_PATH, JSON.stringify(entries, null, 2), { mode: 0o600 });
   invalidateOverlay();
 }

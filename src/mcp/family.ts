@@ -14,10 +14,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dataDir } from '../paths.js';
 
 // ── Config ──────────────────────────────────────────────────
-const DATA_DIR = process.env.GOMBWE_DATA_DIR || join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR = process.env.GOMBWE_DATA_DIR || dataDir();
 const FAMILY_FILE = join(DATA_DIR, 'family.json');
 const RECIPES_FILE = join(DATA_DIR, 'recipes.json');
 const GATEWAY_PORT = process.env.GOMBWE_PORT || '18790';

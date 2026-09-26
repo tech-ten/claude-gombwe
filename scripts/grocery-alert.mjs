@@ -22,12 +22,12 @@
  *   - With --dry-run: read snapshot + print what it WOULD send, no transport.
  */
 import { readFileSync, existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
+import { configDir, dataDir } from './paths.mjs';
 
-const DATA_DIR   = join(homedir(), '.claude-gombwe', 'data');
+const DATA_DIR   = dataDir();
 const SNAPSHOT   = join(DATA_DIR, 'grocery-deals-latest.json');
-const CONFIG     = join(homedir(), '.claude-gombwe', 'notify-config.json');
+const CONFIG     = join(configDir(), 'notify-config.json');
 const GW_PORT    = process.env.GOMBWE_PORT || '18790';
 
 // ── Config + snapshot ────────────────────────────────────────────────

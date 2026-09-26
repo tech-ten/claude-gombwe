@@ -28,10 +28,10 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { classifyMatch } from './grocery-classifier.mjs';
+import { dataDir } from './paths.mjs';
 
-const RESOLUTIONS_FILE = join(homedir(), '.claude-gombwe', 'data', 'grocery-resolutions.json');
+const RESOLUTIONS_FILE = join(dataDir(), 'grocery-resolutions.json');
 
 export function loadResolutions() {
   if (!existsSync(RESOLUTIONS_FILE)) return { updated_at: null, resolutions: {} };
