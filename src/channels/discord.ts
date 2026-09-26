@@ -39,7 +39,9 @@ export class DiscordChannel implements ChannelAdapter {
         channel: 'discord',
         sessionKey,
         text: message.content,
-        sender: message.author.username,
+        // Stable identity for principal binding — usernames can change.
+        sender: message.author.id,
+        senderName: message.author.username,
         timestamp: new Date().toISOString(),
       };
 

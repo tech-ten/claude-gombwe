@@ -223,3 +223,64 @@ function normalise(p: Principal): Principal {
     grants: { ...(p.grants ?? {}) },
   };
 }
+
+/**
+ * Every mutating `/api/network/*` route and the ledger action it records.
+ * Paths are relative to the mount point; `:name` segments become params.
+ */
+export const NETWORK_ACTIONS: Array<{ method: string; path: string; action: string }> = [
+  { method: 'POST',   path: '/devices/:mac/block',            action: 'network.device.block' },
+  { method: 'POST',   path: '/devices/:mac/unblock',          action: 'network.device.unblock' },
+  { method: 'POST',   path: '/devices/:mac/name',             action: 'network.device.name' },
+  { method: 'POST',   path: '/devices/:mac/owner',            action: 'network.device.owner' },
+  { method: 'POST',   path: '/devices/:mac/kid',              action: 'network.device.kid' },
+  { method: 'PUT',    path: '/devices/:mac/policy',           action: 'network.policy.put' },
+  { method: 'POST',   path: '/screentime/:mac/allow',         action: 'network.screentime.allow' },
+  { method: 'POST',   path: '/screentime/:mac/block',         action: 'network.screentime.block' },
+  { method: 'POST',   path: '/screentime/:mac/resume',        action: 'network.screentime.resume' },
+  { method: 'PUT',    path: '/screentime/:mac/schedule',      action: 'network.screentime.schedule' },
+  { method: 'POST',   path: '/firewall/:id/toggle',           action: 'network.firewall.toggle' },
+  { method: 'DELETE', path: '/firewall/:id',                  action: 'network.firewall.delete' },
+  { method: 'POST',   path: '/adlist',                        action: 'network.adlist.add' },
+  { method: 'DELETE', path: '/adlist/:id',                    action: 'network.adlist.delete' },
+  { method: 'POST',   path: '/adlist/refresh',                action: 'network.adlist.refresh' },
+  { method: 'POST',   path: '/nat/port-forward',              action: 'network.nat.add' },
+  { method: 'DELETE', path: '/nat/:id',                       action: 'network.nat.delete' },
+  { method: 'POST',   path: '/dhcp-leases',                   action: 'network.dhcp.add' },
+  { method: 'DELETE', path: '/dhcp-leases/:id',               action: 'network.dhcp.delete' },
+  { method: 'POST',   path: '/dhcp-leases/:id/make-static',   action: 'network.dhcp.static' },
+  { method: 'POST',   path: '/mt-raw',                        action: 'network.mt.raw' },
+  { method: 'POST',   path: '/strands/cut',                   action: 'network.strands.cut' },
+  { method: 'POST',   path: '/strands/reconnect',             action: 'network.strands.reconnect' },
+  { method: 'POST',   path: '/dns-guard',                     action: 'network.dns-guard' },
+  { method: 'DELETE', path: '/router-timers/:id',             action: 'network.router-timer.delete' },
+  { method: 'POST',   path: '/schedules',                     action: 'network.schedule.add' },
+  { method: 'PUT',    path: '/schedules/:id',                 action: 'network.schedule.update' },
+  { method: 'DELETE', path: '/schedules/:id',                 action: 'network.schedule.delete' },
+  { method: 'POST',   path: '/policy/scan',                   action: 'network.policy.scan' },
+  { method: 'POST',   path: '/category-enforcer/test',        action: 'network.category-enforcer.test' },
+  { method: 'POST',   path: '/blocklist-cache/refresh',       action: 'network.blocklist-cache.refresh' },
+  { method: 'POST',   path: '/categories',                    action: 'network.categories.update' },
+  { method: 'POST',   path: '/history/rollup/:date',          action: 'network.history.rollup' },
+];
+
+/** Match a mutating network request against the table above. */
+export function matchNetworkAction(
+  method: string,
+  path: string,
+): { action: string; params: Record<string, string> } | undefined {
+  const parts = path.replace(/\/+$/, '').split('/').filter(Boolean);
+  for (const route of NETWORK_ACTIONS) {
+    if (route.method !== method.toUpperCase()) continue;
+    const pattern = route.path.split('/').filter(Boolean);
+    if (pattern.length !== parts.length) continue;
+    const params: Record<string, string> = {};
+    let ok = true;
+    for (let i = 0; i < pattern.length; i++) {
+      if (pattern[i].startsWith(':')) params[pattern[i].slice(1)] = decodeURIComponent(parts[i]);
+      else if (pattern[i] !== parts[i]) { ok = false; break; }
+    }
+    if (ok) return { action: route.action, params };
+  }
+  return undefined;
+}

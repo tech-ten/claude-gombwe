@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONNECTORS, Principals, identityFromHeaders } from './permissions.js';
+import { CONNECTORS, NETWORK_ACTIONS, Principals, identityFromHeaders, matchNetworkAction } from './permissions.js';
 import type { Principal } from './permissions.js';
 import type { GombweConfig } from './types.js';
 
@@ -224,4 +224,64 @@ test('identityFromHeaders falls back to local when the Access header is absent o
   assert.equal(identityFromHeaders({}), 'local');
   assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '' }), 'local');
   assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '   ' }), 'local');
+});
+
+// ── Network route → ledger action map ────────────────────────────
+
+test('every named network action is mapped exactly once', () => {
+  // Verbatim from the task brief: the audit names the household relies on.
+  const required = [
+    'network.device.block', 'network.device.unblock',
+    'network.screentime.allow', 'network.screentime.block',
+    'network.screentime.resume', 'network.screentime.schedule',
+    'network.firewall.toggle', 'network.firewall.delete',
+    'network.adlist.add', 'network.adlist.delete',
+    'network.nat.add', 'network.nat.delete',
+    'network.dhcp.add', 'network.dhcp.delete', 'network.dhcp.static',
+    'network.mt.raw',
+    'network.strands.cut', 'network.strands.reconnect',
+    'network.policy.put', 'network.dns-guard', 'network.router-timer.delete',
+  ];
+  const actions = NETWORK_ACTIONS.map(r => r.action);
+  for (const name of required) {
+    assert.equal(actions.filter(a => a === name).length, 1, `${name} should be mapped once`);
+  }
+  assert.equal(new Set(actions).size, actions.length, 'no duplicate action names');
+  for (const r of NETWORK_ACTIONS) {
+    assert.ok(r.path.startsWith('/'), `${r.path} should be mount-relative`);
+    assert.ok(['POST', 'PUT', 'DELETE', 'PATCH'].includes(r.method), `${r.method} should mutate`);
+  }
+});
+
+test('matchNetworkAction resolves route params', () => {
+  assert.deepEqual(matchNetworkAction('POST', '/devices/AA:BB:CC:DD:EE:FF/block'),
+    { action: 'network.device.block', params: { mac: 'AA:BB:CC:DD:EE:FF' } });
+  assert.deepEqual(matchNetworkAction('PUT', '/screentime/AA:BB/schedule'),
+    { action: 'network.screentime.schedule', params: { mac: 'AA:BB' } });
+  assert.deepEqual(matchNetworkAction('DELETE', '/router-timers/*7'),
+    { action: 'network.router-timer.delete', params: { id: '*7' } });
+  assert.deepEqual(matchNetworkAction('POST', '/dhcp-leases/*3/make-static'),
+    { action: 'network.dhcp.static', params: { id: '*3' } });
+  assert.deepEqual(matchNetworkAction('POST', '/mt-raw'),
+    { action: 'network.mt.raw', params: {} });
+});
+
+test('matchNetworkAction is method-specific and decodes percent-escaped ids', () => {
+  assert.equal(matchNetworkAction('GET', '/devices/AA/block'), undefined);
+  assert.equal(matchNetworkAction('POST', '/firewall/*5'), undefined);
+  assert.equal(matchNetworkAction('DELETE', '/firewall/*5')?.action, 'network.firewall.delete');
+  assert.equal(matchNetworkAction('POST', '/devices/AA%3ABB/name')?.params.mac, 'AA:BB');
+});
+
+test('matchNetworkAction returns undefined for an unmapped path', () => {
+  assert.equal(matchNetworkAction('POST', '/not-a-route'), undefined);
+  assert.equal(matchNetworkAction('POST', '/devices/AA/block/extra'), undefined);
+});
+
+test('a collection route and its item route do not shadow each other', () => {
+  assert.equal(matchNetworkAction('POST', '/adlist')?.action, 'network.adlist.add');
+  assert.equal(matchNetworkAction('POST', '/adlist/refresh')?.action, 'network.adlist.refresh');
+  assert.equal(matchNetworkAction('DELETE', '/adlist/*2')?.action, 'network.adlist.delete');
+  assert.equal(matchNetworkAction('POST', '/dhcp-leases')?.action, 'network.dhcp.add');
+  assert.equal(matchNetworkAction('DELETE', '/dhcp-leases/*1')?.action, 'network.dhcp.delete');
 });
