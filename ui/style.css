@@ -522,6 +522,106 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   color: var(--text-3);
   }
 
+/* ── Approval card in a chat thread ───────────────────────────────────
+   A pending approval is the one thing in a thread that is waiting on the
+   reader, so it gets the alert treatment: a hairline box with a 2 px warn
+   edge, not a tinted block. Once decided it collapses to a single line —
+   the outcome is settled, and a settled thing should not keep taking up
+   the height of a card.
+
+   `white-space: normal` undoes the `pre-wrap` that .msg needs for plain
+   text; without it the indentation of the card's own markup would render
+   as visible gaps. */
+.chat-appr {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 52ch;
+  white-space: normal;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--r);
+  padding: var(--s2) var(--s3);
+}
+
+.chat-appr-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.chat-appr-class {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.chat-appr-summary {
+  font-size: 13px;
+  color: var(--text);
+  margin: var(--s1) 0 var(--s2);
+}
+
+.chat-appr-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.chat-appr-who { font-size: 11px; color: var(--text-3); }
+
+.chat-appr-actions { display: flex; gap: var(--s1); }
+
+/* Decided: one line, no box. The chip carries which way it went. */
+.chat-appr.is-decided {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  max-width: 68ch;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 2px 0;
+  overflow: hidden;
+}
+
+.chat-appr-line {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── "acted" chip under an assistant message ──────────────────────────
+   The thread says what the agent said; this says what it did. A button
+   because it goes somewhere: Activity, narrowed to that one entry. */
+.chat-acted { align-self: flex-start; }
+
+.chat-acted-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 2px var(--s2);
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color var(--t), color var(--t);
+}
+
+.chat-acted-chip:hover { color: var(--text); border-color: var(--accent); }
+.chat-acted-chip.is-static { cursor: default; }
+.chat-acted-chip.is-static:hover { color: var(--text-2); border-color: var(--border); }
+.chat-acted-label { font-size: 11px; }
+
 /* ── Composer ─────────────────────────────────────────────── */
 
 .composer {
@@ -883,6 +983,262 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   .home-cols { grid-template-columns: 1fr; gap: var(--s5); }
   .home-alert { flex-direction: column; gap: 1px; }
   .home-alert-detail { white-space: normal; }
+}
+
+
+/* ── Activity ─────────────────────────────────────────────────────────
+   The action ledger. Pending decisions pin above a table that is the
+   whole rest of the page. Nothing here is a card: a label, a hairline,
+   rows. */
+
+.led-pending { margin-bottom: var(--s5); }
+
+.led-pending-body { padding-top: var(--s2); }
+
+/* A row, not a block: summary on the left, the two buttons on the right,
+   and the meta line under the summary in 11 px. */
+.led-pend {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.led-pend:last-child { border-bottom: none; }
+
+.led-pend-main { min-width: 0; flex: 1; }
+
+.led-pend-summary { font-size: 13px; color: var(--text); }
+
+.led-pend-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.led-pend-actions { display: flex; gap: var(--s1); flex: none; }
+
+/* ── Toolbar ── */
+
+.led-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s3);
+}
+
+.led-toolbar select,
+.led-toolbar input {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 4px var(--s2);
+}
+
+.led-toolbar input { min-width: 180px; }
+.led-toolbar input::placeholder { color: var(--text-3); }
+.led-toolbar select:focus,
+.led-toolbar input:focus { outline: none; border-color: var(--accent); }
+
+.led-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* One entry, reached from a chat chip. Says so, and offers the way back. */
+.led-focus {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  margin-bottom: var(--s2);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.led-focus-clear {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Ledger table ── */
+
+.led-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.led-table th {
+  padding: 0 var(--s3) var(--s2) 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.led-table td {
+  padding: var(--s2) var(--s3) var(--s2) 0;
+  font-size: 12px;
+  color: var(--text);
+  vertical-align: baseline;
+  border-bottom: 1px solid var(--border-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.led-table td:last-child,
+.led-table th:last-child { padding-right: 0; }
+
+.led-row { cursor: pointer; }
+.led-row:hover td { background: var(--bg-soft); }
+.led-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.led-row.is-open td { background: var(--bg-soft); border-bottom-color: transparent; }
+
+/* Fixed widths so the action column starts on the same x in every row.
+   The time column is monospace and left-aligned: a ragged right edge reads
+   better than "2m ago" and "3d ago" disagreeing about which edge they hang
+   from. */
+.led-c-time    { width: 84px; }
+.led-c-actor   { width: 92px; }
+.led-c-who     { width: 110px; }
+.led-c-action  { width: 210px; }
+.led-c-outcome { width: 88px; }
+.led-c-receipt { width: auto; }
+
+.led-table td.led-c-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.led-table td.led-c-actor,
+.led-table td.led-c-who { font-size: 11px; color: var(--text-3); }
+.led-table td.led-c-action { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+.led-table td.led-c-target { color: var(--text-2); }
+.led-table td.led-c-receipt {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ── Expanded row ── */
+
+.led-detail td {
+  padding: 0 0 var(--s3);
+  background: var(--bg-soft);
+  white-space: normal;
+}
+
+.led-detail-body { padding: 0 var(--s3) var(--s2); }
+
+.led-kv {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 2px var(--s3);
+  font-size: 11px;
+}
+
+.led-kv dt { color: var(--text-3); }
+.led-kv dd { color: var(--text-2); word-break: break-all; }
+
+.led-blob { margin-top: var(--s3); }
+
+.led-blob pre {
+  margin-top: var(--s1);
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.led-empty { font-size: 12px; color: var(--text-3); padding: var(--s3) 0; }
+
+/* ── Outcome chips ────────────────────────────────────────────────────
+   A chip is a state swatch, not a pill of emphasis: the soft tint of the
+   state colour behind the state's own word, at the control radius. */
+.chip {
+  display: inline-block;
+  padding: 1px var(--s2);
+  border-radius: var(--r);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--text-3);
+  background: var(--bg-soft);
+}
+
+.chip-ok      { color: var(--ok);     background: var(--ok-soft); }
+.chip-failed,
+.chip-denied  { color: var(--danger); background: var(--danger-soft); }
+.chip-pending { color: var(--warn);   background: var(--warn-soft); }
+.chip-expired { color: var(--text-3); background: var(--bg-soft); }
+
+@media (max-width: 900px) {
+  /* Principal and receipt go first: both are in the expanded row, and the
+     four that remain are what the page is scanned for. Target keeps the
+     one `auto` width: under a fixed layout the column a reader scans must
+     be stated in a length, or the detail row's full-width cell takes its
+     space back the moment a row is expanded. */
+  .led-c-who, .led-c-receipt { display: none; }
+  .led-c-time { width: 12%; }
+  .led-c-actor { width: 13%; }
+  .led-c-action { width: 27%; }
+  .led-c-target { width: 33%; }
+  .led-c-outcome { width: 15%; }
+}
+
+@media (max-width: 767px) {
+  .led-c-target { display: none; }
+  .led-table th, .led-table td { padding-right: var(--s2); }
+  /* Four columns and nothing left over, so every width is a share of the
+     table and they add to 100. A dotted action cut off at 114 px is
+     ambiguous — two `network.device…` rows read as the same row — so this
+     column wraps rather than truncating. */
+  .led-table td.led-c-action { white-space: normal; word-break: break-word; }
+  .led-c-time { width: 21%; }
+  .led-c-actor { width: 22%; }
+  .led-c-action { width: 34%; }
+  .led-c-outcome { width: 23%; }
+  .led-toolbar { gap: var(--s1); }
+  .led-toolbar input { min-width: 0; flex: 1; }
+  .led-count { margin-left: 0; width: 100%; }
+  .led-pend { flex-direction: column; gap: var(--s2); }
+  .led-pend-actions { align-self: flex-start; }
+  .led-kv { grid-template-columns: 76px minmax(0, 1fr); }
 }
 
 

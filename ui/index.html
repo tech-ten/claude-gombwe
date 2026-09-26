@@ -12,7 +12,7 @@
        instantly and matches the OS, which is what an instrument panel
        should look like. -->
   <link rel="stylesheet" href="theme.css?v=1">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <!-- Top Bar -->
@@ -978,13 +978,87 @@
         </div>
       </section>
 
+      <!-- Activity — the action ledger. One row per side effect, newest
+           first. Pending approvals pin above the log: a decision the
+           household still owes outranks the record of decisions made. The
+           table is the page; the toolbar narrows it. -->
       <section id="tab-activity" class="tab-content">
         <div class="page-view">
-          <div class="page-header"><div>
-            <h1 class="page-title">Activity</h1>
-            <p class="page-desc">Every action the agent took, who asked for it, and how it ended.</p>
-          </div></div>
-          <p class="coming-soon">Coming in this build.</p>
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Activity</h1>
+              <p class="page-desc">Every action the agent took, who asked for it, and how it ended.</p>
+            </div>
+            <div class="home-toolbar">
+              <span class="home-stamp" id="ledgerStamp"></span>
+              <button class="btn-ghost btn-sm" id="ledgerRefreshBtn">Refresh</button>
+            </div>
+          </div>
+
+          <!-- Pinned decisions. Hidden entirely when nothing is pending,
+               which is the normal state. -->
+          <section class="led-pending" id="ledgerPendingPanel" hidden>
+            <header class="home-panel-head">
+              <span class="label">Needs a decision</span>
+              <span class="home-panel-count" id="ledgerPendingCount"></span>
+            </header>
+            <div class="led-pending-body" id="ledgerPending"></div>
+          </section>
+
+          <div class="led-toolbar">
+            <select id="ledgerActor" aria-label="Actor">
+              <option value="">All actors</option>
+              <option value="chat">chat</option>
+              <option value="task">task</option>
+              <option value="cron">cron</option>
+              <option value="trigger">trigger</option>
+              <option value="goal">goal</option>
+              <option value="monitor">monitor</option>
+              <option value="dashboard">dashboard</option>
+              <option value="skill">skill</option>
+              <option value="script">script</option>
+              <option value="remote">remote</option>
+              <option value="system">system</option>
+            </select>
+            <select id="ledgerOutcome" aria-label="Outcome">
+              <option value="">All outcomes</option>
+              <option value="ok">ok</option>
+              <option value="failed">failed</option>
+              <option value="denied">denied</option>
+              <option value="pending">pending</option>
+              <option value="expired">expired</option>
+            </select>
+            <select id="ledgerRange" aria-label="Time range">
+              <option value="1h">Last hour</option>
+              <option value="24h" selected>Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+              <option value="all">All time</option>
+            </select>
+            <input type="search" id="ledgerAction" placeholder="Action starts with" autocomplete="off" aria-label="Action prefix">
+            <span class="led-count" id="ledgerCount"></span>
+          </div>
+
+          <!-- Set when a chat chip deep-links to one entry. -->
+          <div class="led-focus hidden" id="ledgerFocus">
+            <span id="ledgerFocusText"></span>
+            <button class="led-focus-clear" id="ledgerFocusClear">Show all</button>
+          </div>
+
+          <table class="led-table">
+            <thead>
+              <tr>
+                <th class="led-c-time">Time</th>
+                <th class="led-c-actor">Actor</th>
+                <th class="led-c-who">Principal</th>
+                <th class="led-c-action">Action</th>
+                <th class="led-c-target">Target</th>
+                <th class="led-c-outcome">Outcome</th>
+                <th class="led-c-receipt">Receipt</th>
+              </tr>
+            </thead>
+            <tbody id="ledgerRows"></tbody>
+          </table>
+          <p class="led-empty hidden" id="ledgerEmpty"></p>
         </div>
       </section>
 
@@ -1029,6 +1103,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

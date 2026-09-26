@@ -81,6 +81,23 @@ function handleWSEvent(event) {
       if (d.sessionKey === activeSessionKey) addChatMsg('assistant', d.message);
       break;
     }
+    // An approval is both a thread event and a ledger event: the chat it was
+    // raised in gets an inline card, and Home and Activity refresh their
+    // pending lists without waiting for the next poll.
+    case 'approval:requested':
+      noteApprovalRequested(d);
+      refreshApprovalViews();
+      break;
+    case 'approval:decided':
+      noteApprovalDecided(d);
+      refreshApprovalViews();
+      break;
+    // Not broadcast by the gateway today. Handled anyway, so the moment it
+    // is, Activity stops waiting for its poll and the thread gets its chip.
+    case 'ledger:record':
+      noteLedgerRecord(d);
+      if (ledgerOnScreen()) loadLedgerAll();
+      break;
   }
 }
 
@@ -153,6 +170,18 @@ function renderChatThread() {
   document.getElementById('threadMeta').textContent = `${conv.channel} · chat mode · ${conv.key}`;
 
   for (const msg of conv.messages) {
+    // An approval card and an "acted" chip are entries in the thread, not
+    // text, so they are stored alongside the messages and replayed in
+    // order. That way switching away from a conversation and back does not
+    // lose the decision that was sitting in it.
+    if (msg.role === 'approval') {
+      if (msg.approval) container.insertAdjacentHTML('beforeend', approvalCardHTML(msg.approval));
+      continue;
+    }
+    if (msg.role === 'acted') {
+      if (msg.entry) container.insertAdjacentHTML('beforeend', actedChipHTML(msg.entry));
+      continue;
+    }
     if (!msg.text) continue;
     const div = document.createElement('div');
     div.className = `msg ${msg.role}`;
@@ -162,12 +191,134 @@ function renderChatThread() {
   container.scrollTop = container.scrollHeight;
 }
 
-function addChatMsg(role, text) {
+// The empty state and the help text live inside the message container, so
+// anything appended to a thread that has neither messages nor a placeholder
+// cleared first would sit next to "Start a conversation".
+function chatThreadBody() {
   const container = document.getElementById('chatMessages');
+  if (!container) return null;
+  container.querySelector('.system-msg')?.remove();
+  container.querySelector('.empty-state')?.remove();
+  return container;
+}
+
+function addChatMsg(role, text) {
+  const container = chatThreadBody();
+  if (!container) return;
   const div = document.createElement('div');
   div.className = `msg ${role}`;
   div.innerHTML = `${esc(text)}<div class="msg-time">${formatTime(new Date().toISOString())}</div>`;
   container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+// ── Approvals inside a chat thread ────────────────────────────────────
+// A pending approval is the one thing in a thread waiting on the reader, so
+// it gets a card with the two buttons. Once decided it collapses to a line:
+// the thread should record what happened without holding the height of a
+// decision that is already made.
+
+function approvalCardHTML(a) {
+  const id = esc(a.id || '');
+  if (a.status && a.status !== 'pending') {
+    const chip = a.status === 'approved' ? 'ok' : a.status === 'denied' ? 'denied' : 'expired';
+    return `<div class="msg chat-appr is-decided" data-approval-card="${id}">
+      <span class="chip chip-${chip}">${esc(a.status)}</span>
+      <span class="chat-appr-line">${esc(a.summary || '')}</span>
+      ${a.decidedBy ? `<span class="chat-appr-who">by ${esc(a.decidedBy)}</span>` : ''}
+    </div>`;
+  }
+  return `<div class="msg chat-appr" data-approval-card="${id}" data-approval-row="${id}">
+    <div class="chat-appr-head">
+      <span class="label">Needs your approval</span>
+      <span class="chat-appr-class mono">${esc(a.class || 'action')}</span>
+    </div>
+    <p class="chat-appr-summary">${esc(a.summary || 'An action is waiting on a decision')}</p>
+    <div class="chat-appr-foot">
+      <span class="chat-appr-who">${esc(a.principal || 'unknown')}${
+        a.expiresAt ? ` · expires ${esc(relTime(a.expiresAt))}` : ''}</span>
+      <span class="chat-appr-actions">
+        <button class="btn-ghost btn-sm" data-approval-deny="${id}">Deny</button>
+        <button class="btn-primary btn-sm" data-approval-approve="${id}">Approve</button>
+      </span>
+    </div>
+  </div>`;
+}
+
+function findApprovalMessage(id) {
+  for (const conv of chatConversations.values()) {
+    for (const msg of conv.messages) {
+      if (msg.role === 'approval' && msg.approval && msg.approval.id === id) return msg;
+    }
+  }
+  return null;
+}
+
+// Attach a request to its thread. A request that belongs to a conversation
+// this dashboard has never seen is left alone unless it is the open one:
+// the queue on Home and in Activity is where those belong.
+function noteApprovalRequested(a) {
+  if (!a || !a.id || !a.sessionKey) return;
+  const conv = chatConversations.get(a.sessionKey)
+    || (a.sessionKey === activeSessionKey ? getOrCreateChat(a.sessionKey) : null);
+  if (!conv) return;
+  if (findApprovalMessage(a.id)) return;                 // a re-broadcast, not a second ask
+  conv.messages.push({ role: 'approval', approval: { ...a }, time: a.createdAt || new Date().toISOString() });
+  conv.lastActiveAt = new Date().toISOString();
+  renderChatSidebar();
+  if (a.sessionKey !== activeSessionKey) return;
+  const container = chatThreadBody();
+  if (!container) return;
+  container.insertAdjacentHTML('beforeend', approvalCardHTML(a));
+  container.scrollTop = container.scrollHeight;
+}
+
+// Collapse the card wherever it is on screen, and remember the outcome so a
+// re-render of the thread shows the collapsed line rather than the buttons.
+function noteApprovalDecided(a) {
+  if (!a || !a.id) return;
+  const msg = findApprovalMessage(a.id);
+  if (msg) Object.assign(msg.approval, a);
+  for (const el of document.querySelectorAll(`[data-approval-card="${CSS.escape(a.id)}"]`)) {
+    el.outerHTML = approvalCardHTML(msg ? msg.approval : a);
+  }
+}
+
+// ── "acted" chips ─────────────────────────────────────────────────────
+// The thread says what the agent said; this says what it did, and links to
+// the one ledger row it did it on.
+
+function actedChipHTML(e) {
+  const outcome = LEDGER_OUTCOMES.includes(e.outcome) ? e.outcome : '';
+  const inner = `<span class="chat-acted-label mono">acted: ${esc(e.action || 'action')}</span>`
+    + (e.outcome ? `<span class="chip${outcome ? ` chip-${outcome}` : ''}">${esc(e.outcome)}</span>` : '');
+  // Without the Activity grant there is nowhere to send the reader, so the
+  // chip states the action and stops being a button.
+  return hasGrant('activity')
+    ? `<div class="chat-acted" data-acted-id="${esc(e.id || '')}"><button class="chat-acted-chip" data-ledger-focus="${esc(e.id || '')}" title="Show this in Activity">${inner}</button></div>`
+    : `<div class="chat-acted" data-acted-id="${esc(e.id || '')}"><span class="chat-acted-chip is-static">${inner}</span></div>`;
+}
+
+function noteLedgerRecord(e) {
+  if (!e || !e.id || !e.sessionKey) return;
+  const conv = chatConversations.get(e.sessionKey)
+    || (e.sessionKey === activeSessionKey ? getOrCreateChat(e.sessionKey) : null);
+  if (!conv) return;
+  const existing = conv.messages.find(m => m.role === 'acted' && m.entry && m.entry.id === e.id);
+  if (existing) {
+    // A ledger line is superseded in place: the same id closes as ok after
+    // opening as pending. Update the chip rather than adding a second one.
+    existing.entry = { ...e };
+    for (const el of document.querySelectorAll(`.chat-acted[data-acted-id="${CSS.escape(e.id)}"]`)) {
+      el.outerHTML = actedChipHTML(e);
+    }
+    return;
+  }
+  conv.messages.push({ role: 'acted', entry: { ...e }, time: e.time || new Date().toISOString() });
+  if (e.sessionKey !== activeSessionKey) return;
+  const container = chatThreadBody();
+  if (!container) return;
+  container.insertAdjacentHTML('beforeend', actedChipHTML(e));
   container.scrollTop = container.scrollHeight;
 }
 
@@ -506,7 +657,7 @@ const TABS = {
   family:      { grant: 'family',  load: () => loadFamily() },
   goals:       { grant: 'goals' },
   eero:        { grant: 'network', load: () => loadEero() },
-  activity:    { grant: 'activity' },
+  activity:    { grant: 'activity', load: () => startLedger() },
   memory:      { grant: 'memory' },
   monitors:    { grant: 'monitors' },
   permissions: { grant: 'owner' },
@@ -649,7 +800,7 @@ async function loadHomeApprovals() {
   if (count) count.textContent = String(list.length);
 
   body.innerHTML = list.map(a => `
-    <article class="home-approval" data-id="${esc(a.id)}">
+    <article class="home-approval" data-id="${esc(a.id)}" data-approval-row="${esc(a.id)}">
       <div class="home-approval-head">
         <span class="home-approval-class">${esc(a.class || 'action')}</span>
         <span class="home-approval-expiry num">${a.expiresAt ? esc(relTime(a.expiresAt)) : ''}</span>
@@ -665,17 +816,20 @@ async function loadHomeApprovals() {
     </article>`).join('');
 }
 
+// The same request can be on screen in three places at once — the Home
+// queue, the Activity queue and the card in the thread that raised it — so
+// the decision is sent once and every copy is told the outcome.
 async function decideApproval(id, verdict) {
-  const row = document.querySelector(`.home-approval[data-id="${CSS.escape(id)}"]`);
-  row?.querySelector('.inline-error')?.remove();
+  const rows = [...document.querySelectorAll(`[data-approval-row="${CSS.escape(id)}"]`)];
+  for (const row of rows) row.querySelector('.inline-error')?.remove();
   try {
     const res = await fetch(`${API}/api/approvals/${encodeURIComponent(id)}/${verdict}`, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (err) {
-    console.warn('[home] approval failed:', err);
+    console.warn('[approvals] decision failed:', err);
     // Say so where the decision was made, and leave the row in place so the
     // buttons can be pressed again. Reloading here would wipe the message.
-    if (row) {
+    for (const row of rows) {
       const msg = document.createElement('p');
       msg.className = 'inline-error';
       msg.textContent = 'Could not send. Try again.';
@@ -683,15 +837,40 @@ async function decideApproval(id, verdict) {
     }
     return;
   }
-  loadHomeApprovals();
+  // Collapse the thread card now rather than waiting for the broadcast to
+  // come back, so the press has a visible effect on a slow link. The
+  // broadcast, when it lands, names the decider and supersedes this.
+  const msg = findApprovalMessage(id);
+  noteApprovalDecided({
+    ...(msg ? msg.approval : { id }),
+    id,
+    status: verdict === 'approve' ? 'approved' : 'denied',
+    decidedBy: 'you',
+    decidedAt: new Date().toISOString(),
+  });
+  refreshApprovalViews();
 }
 
-// Delegated, because the list is replaced on every refresh.
-document.getElementById('homeApprovals')?.addEventListener('click', (e) => {
+// Refresh every list that shows pending approvals, but only the ones on
+// screen: a fetch for a tab nobody is looking at is a fetch for nothing.
+function refreshApprovalViews() {
+  if (tabOnScreen('home') && hasGrant('activity')) loadHomeApprovals();
+  if (ledgerOnScreen()) loadLedgerAll();
+}
+
+function tabOnScreen(name) {
+  return !!document.getElementById(`tab-${name}`)?.classList.contains('active');
+}
+
+// Delegated on the document, because an approval's buttons can be in any of
+// three lists and every one of them is replaced on refresh.
+document.addEventListener('click', (e) => {
   const approve = e.target.closest('[data-approval-approve]');
   if (approve) { decideApproval(approve.dataset.approvalApprove, 'approve'); return; }
   const deny = e.target.closest('[data-approval-deny]');
-  if (deny) decideApproval(deny.dataset.approvalDeny, 'deny');
+  if (deny) { decideApproval(deny.dataset.approvalDeny, 'deny'); return; }
+  const focus = e.target.closest('[data-ledger-focus]');
+  if (focus) focusLedgerEntry(focus.dataset.ledgerFocus);
 });
 
 // ── Active goals ──────────────────────────────────────────────────────
@@ -774,6 +953,294 @@ function relTime(iso) {
   if (body === 'now') return 'now';
   return past ? `${body} ago` : `in ${body}`;
 }
+
+// ========== ACTIVITY: THE ACTION LEDGER ==========
+// One row per side effect the agent took, newest first. The toolbar narrows
+// it; pending approvals pin above it, because a decision the household still
+// owes outranks the record of decisions already made.
+//
+// Refreshing is a poll, not a push. The gateway broadcasts approvals but not
+// (yet) every ledger line, so the table polls while it is on screen and
+// refreshes the moment an approval event lands. A `ledger:record` event, if a
+// later task adds one, is treated as the same trigger.
+//
+// The poll refetches the window rather than asking for rows newer than the
+// last one seen. A ledger line is superseded in place — an entry opened as
+// `pending` closes as `ok` under its original timestamp — so an incremental
+// `since=<last seen>` read would never see an outcome change. The window is
+// bounded and folded by id on the server, so the whole read is small.
+
+const LEDGER_POLL_MS = 10000;
+const LEDGER_LIMIT = 300;
+const LEDGER_OUTCOMES = ['ok', 'failed', 'denied', 'pending', 'expired'];
+const LEDGER_RANGES = { '1h': 3600e3, '24h': 86400e3, '7d': 7 * 86400e3, all: 0 };
+
+const ledgerView = {
+  rows: [],
+  expanded: new Set(),   // row ids showing their detail
+  focusId: null,         // set by a chat chip: one entry, whatever the filters say
+  signature: '',         // last painted state, so a poll that changes nothing repaints nothing
+  pendingSignature: '',
+  timer: null,
+  inflight: false,
+  reachable: true,
+};
+
+// Every row carries a relative time, so a paint is stale the moment the
+// minute rolls over — but only then. Folding the minute into the signature
+// keeps the times honest without repainting on every ten-second poll.
+function ledgerMinute() { return Math.floor(Date.now() / 60000); }
+
+function ledgerOnScreen() {
+  return !document.hidden && tabOnScreen('activity');
+}
+
+function ledgerFilters() {
+  return {
+    actor: document.getElementById('ledgerActor')?.value || '',
+    outcome: document.getElementById('ledgerOutcome')?.value || '',
+    action: (document.getElementById('ledgerAction')?.value || '').trim(),
+    range: document.getElementById('ledgerRange')?.value || '24h',
+  };
+}
+
+function ledgerQuery() {
+  const p = new URLSearchParams();
+  p.set('limit', String(LEDGER_LIMIT));
+  // Focused on one entry: ask unfiltered, because the entry the reader
+  // followed a link to may not match the filters or fall inside the window.
+  if (ledgerView.focusId) return p.toString();
+  const f = ledgerFilters();
+  if (f.actor) p.set('actor', f.actor);
+  if (f.outcome) p.set('outcome', f.outcome);
+  if (f.action) p.set('action', f.action);
+  const span = LEDGER_RANGES[f.range] ?? 0;
+  if (span) p.set('since', new Date(Date.now() - span).toISOString());
+  return p.toString();
+}
+
+function loadLedgerAll() {
+  loadLedgerPending();
+  loadLedger();
+  const stamp = document.getElementById('ledgerStamp');
+  if (stamp) {
+    const now = new Date();
+    stamp.textContent = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    stamp.title = now.toISOString();
+  }
+}
+
+// Called every time the tab is opened. The interval is created once and
+// checks for itself whether the tab is still the one on screen — cheaper
+// than tearing a timer down and standing it back up on every navigation.
+function startLedger() {
+  loadLedgerAll();
+  if (ledgerView.timer) return;
+  ledgerView.timer = setInterval(() => { if (ledgerOnScreen()) loadLedgerAll(); }, LEDGER_POLL_MS);
+}
+
+async function loadLedger() {
+  if (ledgerView.inflight) return;
+  ledgerView.inflight = true;
+  const rows = await getJSON(`/api/ledger?${ledgerQuery()}`);
+  ledgerView.inflight = false;
+  if (!Array.isArray(rows)) {
+    // The ledger is the whole page, so it cannot hide itself the way a panel
+    // does. It says it is unreachable and keeps the last rows it had.
+    ledgerView.reachable = false;
+    ledgerView.signature = '';
+    renderLedger();
+    return;
+  }
+  ledgerView.reachable = true;
+  ledgerView.rows = ledgerView.focusId ? rows.filter(r => r.id === ledgerView.focusId) : rows;
+  renderLedger();
+}
+
+function renderLedger() {
+  const body = document.getElementById('ledgerRows');
+  const empty = document.getElementById('ledgerEmpty');
+  const count = document.getElementById('ledgerCount');
+  if (!body) return;
+
+  const rows = ledgerView.rows;
+  // A ten-second poll must not repaint under the reader's cursor when
+  // nothing moved, so the paint is keyed on everything it depends on.
+  const sig = JSON.stringify([ledgerMinute(), ledgerView.focusId, ledgerView.reachable,
+    [...ledgerView.expanded].sort(), rows]);
+  if (sig === ledgerView.signature) return;
+  ledgerView.signature = sig;
+
+  body.innerHTML = rows.map(ledgerRowHTML).join('');
+  if (count) count.textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'action' : 'actions'}` : '';
+
+  if (empty) {
+    const message = !ledgerView.reachable ? 'The action log is not available.'
+      : ledgerView.focusId ? 'That action is not in the recent log.'
+      : 'No actions in this window.';
+    empty.textContent = message;
+    empty.classList.toggle('hidden', rows.length > 0);
+  }
+
+  const focus = document.getElementById('ledgerFocus');
+  const focusText = document.getElementById('ledgerFocusText');
+  if (focus) focus.classList.toggle('hidden', !ledgerView.focusId);
+  if (focusText) focusText.textContent = ledgerView.focusId ? 'Showing one action, followed from a conversation.' : '';
+}
+
+function ledgerRowHTML(e) {
+  const open = ledgerView.expanded.has(e.id);
+  const receipt = ledgerOneLine(e.receipt, 90) || (e.error ? ledgerOneLine(e.error, 90) : '');
+  return `
+    <tr class="led-row${open ? ' is-open' : ''}" data-ledger-row="${esc(e.id || '')}" tabindex="0" aria-expanded="${open}">
+      <td class="led-c-time" title="${esc(e.time || '')}">${esc(relTime(e.time) || e.time || '')}</td>
+      <td class="led-c-actor">${esc(e.actor || '')}</td>
+      <td class="led-c-who">${esc(e.principal || '')}</td>
+      <td class="led-c-action" title="${esc(e.action || '')}">${esc(e.action || '')}</td>
+      <td class="led-c-target" title="${esc(e.target || '')}">${esc(e.target || '')}</td>
+      <td class="led-c-outcome">${outcomeChipHTML(e.outcome)}</td>
+      <td class="led-c-receipt" title="${esc(receipt)}">${esc(receipt)}</td>
+    </tr>${open ? `
+    <tr class="led-detail"><td colspan="7"><div class="led-detail-body">${ledgerDetailHTML(e)}</div></td></tr>` : ''}`;
+}
+
+function outcomeChipHTML(outcome) {
+  const known = LEDGER_OUTCOMES.includes(outcome);
+  return `<span class="chip${known ? ` chip-${outcome}` : ''}">${esc(outcome || 'unknown')}</span>`;
+}
+
+// A receipt on one line. JSON, because that is what it is, with the
+// whitespace collapsed and a tail cut off rather than wrapped.
+function ledgerOneLine(value, max) {
+  if (value === null || value === undefined) return '';
+  let s;
+  try { s = typeof value === 'string' ? value : JSON.stringify(value); } catch { return ''; }
+  if (!s || s === '{}' || s === '[]' || s === 'null') return '';
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function ledgerDetailHTML(e) {
+  const pairs = [
+    ['id', e.id], ['time', e.time], ['actor', e.actor], ['principal', e.principal],
+    ['action', e.action], ['target', e.target], ['outcome', e.outcome],
+    ['approval', e.approvalId], ['session', e.sessionKey], ['task', e.taskId], ['goal', e.goalId],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== '');
+
+  let html = `<dl class="led-kv">${pairs
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(String(v))}</dd>`).join('')}</dl>`;
+  if (e.error) html += `<p class="inline-error">${esc(String(e.error))}</p>`;
+  for (const [label, value] of [['params', e.params], ['receipt', e.receipt]]) {
+    const blob = ledgerBlob(value);
+    if (blob) html += `<div class="led-blob"><span class="label">${label}</span><pre>${esc(blob)}</pre></div>`;
+  }
+  return html;
+}
+
+function ledgerBlob(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return String(value);
+  if (!Object.keys(value).length) return '';
+  try { return JSON.stringify(value, null, 2); } catch { return ''; }
+}
+
+function toggleLedgerRow(id) {
+  if (!id) return;
+  if (ledgerView.expanded.has(id)) ledgerView.expanded.delete(id);
+  else ledgerView.expanded.add(id);
+  renderLedger();
+}
+
+// ── Pending approvals, pinned above the log ───────────────────────────
+async function loadLedgerPending() {
+  const panel = document.getElementById('ledgerPendingPanel');
+  const body = document.getElementById('ledgerPending');
+  const count = document.getElementById('ledgerPendingCount');
+  if (!panel || !body) return;
+
+  const list = await getJSON('/api/approvals');
+  if (!Array.isArray(list) || list.length === 0) {
+    // Nothing pending is the normal state, and an empty panel is noise.
+    panel.hidden = true;
+    body.innerHTML = '';
+    ledgerView.pendingSignature = '';
+    return;
+  }
+  panel.hidden = false;
+  if (count) count.textContent = String(list.length);
+
+  // A failed decision leaves an .inline-error under its row and the row
+  // stays put so it can be pressed again. A poll must not rewrite that
+  // away, so while a message is on screen this list holds still.
+  if (body.querySelector('.inline-error')) return;
+
+  const sig = JSON.stringify([ledgerMinute(), list]);
+  if (sig === ledgerView.pendingSignature) return;
+  ledgerView.pendingSignature = sig;
+
+  body.innerHTML = list.map(a => `
+    <article class="led-pend" data-approval-row="${esc(a.id)}">
+      <div class="led-pend-main">
+        <p class="led-pend-summary">${esc(a.summary || 'An action is waiting on a decision')}</p>
+        <div class="led-pend-meta">
+          <span class="mono">${esc(a.class || 'action')}</span>
+          <span>${esc(a.principal || 'unknown')}</span>
+          ${a.createdAt ? `<span title="${esc(a.createdAt)}">asked ${esc(relTime(a.createdAt))}</span>` : ''}
+          ${a.expiresAt ? `<span title="${esc(a.expiresAt)}">expires ${esc(relTime(a.expiresAt))}</span>` : ''}
+        </div>
+      </div>
+      <div class="led-pend-actions">
+        <button class="btn-ghost btn-sm" data-approval-deny="${esc(a.id)}">Deny</button>
+        <button class="btn-primary btn-sm" data-approval-approve="${esc(a.id)}">Approve</button>
+      </div>
+    </article>`).join('');
+}
+
+// ── Deep link from a chat chip ────────────────────────────────────────
+function focusLedgerEntry(id) {
+  if (!id || !hasGrant('activity')) return;
+  ledgerView.focusId = id;
+  ledgerView.expanded.add(id);
+  ledgerView.signature = '';
+  switchTab('activity');           // which calls startLedger and refetches
+}
+
+function clearLedgerFocus() {
+  ledgerView.focusId = null;
+  ledgerView.signature = '';
+  loadLedger();
+}
+
+// ── Wiring ────────────────────────────────────────────────────────────
+// A filter change drops the focus: the reader has asked for a set of rows,
+// not the single one they followed a link to.
+for (const id of ['ledgerActor', 'ledgerOutcome', 'ledgerRange']) {
+  document.getElementById(id)?.addEventListener('change', () => { ledgerView.focusId = null; loadLedger(); });
+}
+
+let ledgerActionTimer = null;
+document.getElementById('ledgerAction')?.addEventListener('input', () => {
+  clearTimeout(ledgerActionTimer);
+  ledgerActionTimer = setTimeout(() => { ledgerView.focusId = null; loadLedger(); }, 200);
+});
+
+document.getElementById('ledgerRefreshBtn')?.addEventListener('click', loadLedgerAll);
+document.getElementById('ledgerFocusClear')?.addEventListener('click', clearLedgerFocus);
+
+// Delegated: the rows are replaced on every paint. A row is a control, so
+// it answers the keyboard as well as the pointer.
+document.getElementById('ledgerRows')?.addEventListener('click', (e) => {
+  const row = e.target.closest('.led-row');
+  if (row) toggleLedgerRow(row.dataset.ledgerRow);
+});
+
+document.getElementById('ledgerRows')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.led-row');
+  if (!row) return;
+  e.preventDefault();
+  toggleLedgerRow(row.dataset.ledgerRow);
+});
 
 // ========== IDENTITY AND GRANTS ==========
 // /api/me is owned by a parallel task. Until it exists the dashboard is
@@ -1065,12 +1532,16 @@ async function loadAllSessions() {
           if (full.transcript && full.transcript.length > 0) {
             const firstUser = full.transcript.find(t => t.role === 'user');
             if (firstUser) conv.title = firstUser.content.slice(0, 50);
-            // Load messages
-            conv.messages = full.transcript.map(t => ({
-              role: t.role === 'user' ? 'user' : 'assistant',
-              text: t.content,
-              time: t.timestamp,
-            }));
+            // Load messages. Only into an empty thread: this runs async at
+            // startup, and an approval card that arrived in the meantime is
+            // not in the transcript, so assigning over it would drop it.
+            if (conv.messages.length === 0) {
+              conv.messages = full.transcript.map(t => ({
+                role: t.role === 'user' ? 'user' : 'assistant',
+                text: t.content,
+                time: t.timestamp,
+              }));
+            }
           }
         } catch {}
       }
