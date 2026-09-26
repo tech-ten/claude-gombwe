@@ -405,9 +405,9 @@ async function refreshJobs() {
     div.className = 'cron-item';
     div.innerHTML = `
       <div>
-        <div class="cron-expr">${esc(job.expression)} <span style="color:var(--ink-faint);font-size:11px">${cronToHuman(job.expression)}</span></div>
+        <div class="cron-expr">${esc(job.expression)} <span style="color:var(--text-3);font-size:11px">${cronToHuman(job.expression)}</span></div>
         <div class="cron-prompt">${esc(job.prompt.slice(0, 100))}</div>
-        ${job.nextRun ? `<div style="font-size:10px;color:var(--ink-faint);margin-top:2px">Next: ${new Date(job.nextRun).toLocaleString()}</div>` : ''}
+        ${job.nextRun ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px">Next: ${new Date(job.nextRun).toLocaleString()}</div>` : ''}
       </div>
       <div class="cron-actions">
         <button onclick="toggleJob('${job.id}', ${!job.enabled})">${job.enabled ? 'Pause' : 'Resume'}</button>
@@ -472,7 +472,7 @@ function refreshServices() {
         <div class="service-name">${svc.name}</div>
         <div class="service-desc">${svc.desc}</div>
       </div>
-      <code style="font-size:10px;color:var(--ink-faint)">gombwe connect ${id}</code>
+      <code style="font-size:10px;color:var(--text-3)">gombwe connect ${id}</code>
     `;
     container.appendChild(div);
   }
@@ -872,6 +872,7 @@ function timeAgo(iso) {
 }
 function formatTime(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function cronToHuman(expr) {
+  if (typeof expr !== 'string') return '';
   const p = expr.split(' ');
   if (p.length !== 5) return '';
   const [min, hr, , , dow] = p;

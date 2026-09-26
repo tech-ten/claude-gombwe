@@ -2449,7 +2449,7 @@ body, table, input, select, textarea, button { font-variant-numeric: tabular-num
   font-size: 12.5px;
 }
 .dd-k { color: var(--text-3); }
-.dd-v { color: var(--text-1); overflow: hidden; text-overflow: ellipsis; }
+.dd-v { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .dd-v code { font-family: monospace; font-size: 11.5px; }
 .dd-title {
   font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
