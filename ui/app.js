@@ -219,13 +219,14 @@ function addChatMsg(role, text) {
 // decision that is already made.
 
 function approvalCardHTML(a) {
-  const id = esc(a.id || '');
+  const id = escAttr(a.id || '');
   if (a.status && a.status !== 'pending') {
     const chip = a.status === 'approved' ? 'ok' : a.status === 'denied' ? 'denied' : 'expired';
+    const by = a.decidedBy ? principalName(a.decidedBy) : '';
     return `<div class="msg chat-appr is-decided" data-approval-card="${id}">
       <span class="chip chip-${chip}">${esc(a.status)}</span>
       <span class="chat-appr-line">${esc(a.summary || '')}</span>
-      ${a.decidedBy ? `<span class="chat-appr-who">by ${esc(a.decidedBy)}</span>` : ''}
+      ${by ? `<span class="chat-appr-who">by ${esc(by)}</span>` : ''}
     </div>`;
   }
   return `<div class="msg chat-appr" data-approval-card="${id}" data-approval-row="${id}">
@@ -235,7 +236,7 @@ function approvalCardHTML(a) {
     </div>
     <p class="chat-appr-summary">${esc(a.summary || 'An action is waiting on a decision')}</p>
     <div class="chat-appr-foot">
-      <span class="chat-appr-who">${esc(a.principal || 'unknown')}${
+      <span class="chat-appr-who">${esc(principalName(a.principal) || 'unknown')}${
         a.expiresAt ? ` · expires ${esc(relTime(a.expiresAt))}` : ''}</span>
       <span class="chat-appr-actions">
         <button class="btn-ghost btn-sm" data-approval-deny="${id}">Deny</button>
@@ -294,9 +295,10 @@ function actedChipHTML(e) {
     + (e.outcome ? `<span class="chip${outcome ? ` chip-${outcome}` : ''}">${esc(e.outcome)}</span>` : '');
   // Without the Activity grant there is nowhere to send the reader, so the
   // chip states the action and stops being a button.
+  const id = escAttr(e.id || '');
   return hasGrant('activity')
-    ? `<div class="chat-acted" data-acted-id="${esc(e.id || '')}"><button class="chat-acted-chip" data-ledger-focus="${esc(e.id || '')}" title="Show this in Activity">${inner}</button></div>`
-    : `<div class="chat-acted" data-acted-id="${esc(e.id || '')}"><span class="chat-acted-chip is-static">${inner}</span></div>`;
+    ? `<div class="chat-acted" data-acted-id="${id}"><button class="chat-acted-chip" data-ledger-focus="${id}" title="Show this in Activity">${inner}</button></div>`
+    : `<div class="chat-acted" data-acted-id="${id}"><span class="chat-acted-chip is-static">${inner}</span></div>`;
 }
 
 function noteLedgerRecord(e) {
@@ -651,13 +653,15 @@ async function refreshStatus() {
 //   grant  — the permission a principal must hold for the tab to appear.
 //            Must match the data-grant attribute on the nav row.
 //   load   — called each time the tab is opened. Optional.
+//   unload — called when the tab is left. Optional. For tabs that poll, so
+//            the timer goes away with the page it was feeding.
 const TABS = {
   home:        { load: () => loadHome() },
   chat:        {},
   family:      { grant: 'family',  load: () => loadFamily() },
   goals:       { grant: 'goals' },
   eero:        { grant: 'network', load: () => loadEero() },
-  activity:    { grant: 'activity', load: () => startLedger() },
+  activity:    { grant: 'activity', load: () => startLedger(), unload: () => stopLedger() },
   memory:      { grant: 'memory' },
   monitors:    { grant: 'monitors' },
   permissions: { grant: 'owner' },
@@ -679,6 +683,12 @@ function switchTab(name) {
   if (!section || (navItem && navItem.hidden)) {
     if (name !== DEFAULT_TAB) switchTab(DEFAULT_TAB);
     return;
+  }
+  // A tab that polls gets told it is being left, so its timer stops with it
+  // rather than living for the rest of the session.
+  const leaving = document.querySelector('.tab-content.active')?.id.replace(/^tab-/, '');
+  if (leaving && leaving !== name) {
+    try { TABS[leaving]?.unload?.(); } catch (err) { console.warn(`[nav] ${leaving} unload failed:`, err); }
   }
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -710,6 +720,36 @@ async function getJSON(path) {
     if (!res.ok) return null;          // 404 / 503 from an endpoint not yet built
     return await res.json();
   } catch { return null; }             // offline, or the daemon went away
+}
+
+// Same fetch, but the status comes back with it. A caller that must tell
+// "this endpoint does not exist yet" (hide the panel) from "this endpoint
+// exists and failed" (say so) cannot do it from a null.
+async function fetchJSON(path) {
+  try {
+    const res = await fetch(`${API}${path}`);
+    if (!res.ok) return { ok: false, status: res.status, data: null };
+    return { ok: true, status: res.status, data: await res.json() };
+  } catch {
+    return { ok: false, status: 0, data: null };   // offline, or the daemon went away
+  }
+}
+
+// ── Principal names ───────────────────────────────────────────────────
+// The API talks in principal ids; a household reads names. The roster is
+// small and changes rarely, so it is fetched once and answered from memory.
+// Until it lands, and for an id that is not in it, the id is the name.
+const principalNames = new Map();
+
+async function loadPrincipalNames() {
+  const list = await getJSON('/api/principals');
+  if (!Array.isArray(list)) return;
+  for (const p of list) if (p && p.id) principalNames.set(p.id, p.name || p.id);
+}
+
+function principalName(id) {
+  if (!id) return '';
+  return principalNames.get(id) || id;
 }
 
 function homeShow(panelId, visible) {
@@ -800,17 +840,18 @@ async function loadHomeApprovals() {
   if (count) count.textContent = String(list.length);
 
   body.innerHTML = list.map(a => `
-    <article class="home-approval" data-id="${esc(a.id)}" data-approval-row="${esc(a.id)}">
+    <article class="home-approval" data-id="${escAttr(a.id)}" data-approval-row="${escAttr(a.id)}">
       <div class="home-approval-head">
         <span class="home-approval-class">${esc(a.class || 'action')}</span>
-        <span class="home-approval-expiry num">${a.expiresAt ? esc(relTime(a.expiresAt)) : ''}</span>
+        <span class="home-approval-expiry num"${a.expiresAt ? ` title="${escAttr(a.expiresAt)}"` : ''}>${
+          a.expiresAt ? esc(relTime(a.expiresAt)) : ''}</span>
       </div>
       <p class="home-approval-summary">${esc(a.summary || '')}</p>
       <div class="home-approval-foot">
-        <span class="home-approval-who">${esc(a.principal || 'unknown')}</span>
+        <span class="home-approval-who">${esc(principalName(a.principal) || 'unknown')}</span>
         <span class="home-approval-actions">
-          <button class="btn-ghost btn-sm" data-approval-deny="${esc(a.id)}">Deny</button>
-          <button class="btn-primary btn-sm" data-approval-approve="${esc(a.id)}">Approve</button>
+          <button class="btn-ghost btn-sm" data-approval-deny="${escAttr(a.id)}">Deny</button>
+          <button class="btn-primary btn-sm" data-approval-approve="${escAttr(a.id)}">Approve</button>
         </span>
       </div>
     </article>`).join('');
@@ -819,16 +860,36 @@ async function loadHomeApprovals() {
 // The same request can be on screen in three places at once — the Home
 // queue, the Activity queue and the card in the thread that raised it — so
 // the decision is sent once and every copy is told the outcome.
+const decidingApprovals = new Set();
+
+function approvalButtons(id) {
+  return [...document.querySelectorAll(
+    `[data-approval-approve="${CSS.escape(id)}"], [data-approval-deny="${CSS.escape(id)}"]`)];
+}
+
 async function decideApproval(id, verdict) {
+  if (decidingApprovals.has(id)) return;     // a second press while the first is in the air
+  decidingApprovals.add(id);
+
   const rows = [...document.querySelectorAll(`[data-approval-row="${CSS.escape(id)}"]`)];
   for (const row of rows) row.querySelector('.inline-error')?.remove();
+  // Both buttons, in all three places this request can be on screen. A queue
+  // that still looks pressable while the decision is in the air invites a
+  // second press, and the second one is the one that gets the 409.
+  const buttons = approvalButtons(id);
+  for (const b of buttons) b.disabled = true;
+
+  let status = 0;
   try {
     const res = await fetch(`${API}/api/approvals/${encodeURIComponent(id)}/${verdict}`, { method: 'POST' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    status = res.status;
+    if (!res.ok && status !== 409) throw new Error(`HTTP ${status}`);
   } catch (err) {
     console.warn('[approvals] decision failed:', err);
-    // Say so where the decision was made, and leave the row in place so the
-    // buttons can be pressed again. Reloading here would wipe the message.
+    decidingApprovals.delete(id);
+    // Say so where the decision was made, and give the buttons back so it
+    // can be pressed again. Reloading here would wipe the message.
+    for (const b of buttons) b.disabled = false;
     for (const row of rows) {
       const msg = document.createElement('p');
       msg.className = 'inline-error';
@@ -837,6 +898,19 @@ async function decideApproval(id, verdict) {
     }
     return;
   }
+  decidingApprovals.delete(id);
+
+  // 409: someone else decided it first, or it expired. That is not a failure
+  // to report, it is a queue that has moved on, so re-read rather than
+  // claiming an outcome this press did not cause. The buttons come back
+  // first, because a re-read that finds the row unchanged does not repaint
+  // it and the row would be left inert.
+  if (status === 409) {
+    for (const b of buttons) b.disabled = false;
+    refreshApprovalViews();
+    return;
+  }
+
   // Collapse the thread card now rather than waiting for the broadcast to
   // come back, so the press has a visible effect on a slow link. The
   // broadcast, when it lands, names the decider and supersedes this.
@@ -845,7 +919,7 @@ async function decideApproval(id, verdict) {
     ...(msg ? msg.approval : { id }),
     id,
     status: verdict === 'approve' ? 'approved' : 'denied',
-    decidedBy: 'you',
+    decidedBy: (me && me.id) || '',
     decidedAt: new Date().toISOString(),
   });
   refreshApprovalViews();
@@ -983,6 +1057,7 @@ const ledgerView = {
   pendingSignature: '',
   timer: null,
   inflight: false,
+  dirty: false,          // a refresh asked for while a read was in the air
   reachable: true,
 };
 
@@ -1030,31 +1105,51 @@ function loadLedgerAll() {
   }
 }
 
-// Called every time the tab is opened. The interval is created once and
-// checks for itself whether the tab is still the one on screen — cheaper
-// than tearing a timer down and standing it back up on every navigation.
+// Called every time the tab is opened, and stopped when it is left: a timer
+// firing against a page nobody is looking at is a request for nothing.
 function startLedger() {
   loadLedgerAll();
   if (ledgerView.timer) return;
   ledgerView.timer = setInterval(() => { if (ledgerOnScreen()) loadLedgerAll(); }, LEDGER_POLL_MS);
 }
 
+function stopLedger() {
+  clearInterval(ledgerView.timer);
+  ledgerView.timer = null;
+}
+
+// A backgrounded tab does not poll, so coming back to it means the rows on
+// screen are as old as the moment it was hidden. Read once, immediately,
+// rather than showing stale rows until the next tick.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && ledgerOnScreen()) loadLedgerAll();
+});
+
 async function loadLedger() {
-  if (ledgerView.inflight) return;
+  // One read at a time, but never a dropped one: a filter change or an
+  // approval event that arrives mid-flight sets the flag, and the read runs
+  // again with the current filters the moment the first one lands.
+  if (ledgerView.inflight) { ledgerView.dirty = true; return; }
   ledgerView.inflight = true;
-  const rows = await getJSON(`/api/ledger?${ledgerQuery()}`);
-  ledgerView.inflight = false;
+  let rows;
+  try {
+    rows = await getJSON(`/api/ledger?${ledgerQuery()}`);
+  } finally {
+    ledgerView.inflight = false;
+  }
+
   if (!Array.isArray(rows)) {
     // The ledger is the whole page, so it cannot hide itself the way a panel
     // does. It says it is unreachable and keeps the last rows it had.
     ledgerView.reachable = false;
     ledgerView.signature = '';
-    renderLedger();
-    return;
+  } else {
+    ledgerView.reachable = true;
+    ledgerView.rows = ledgerView.focusId ? rows.filter(r => r.id === ledgerView.focusId) : rows;
   }
-  ledgerView.reachable = true;
-  ledgerView.rows = ledgerView.focusId ? rows.filter(r => r.id === ledgerView.focusId) : rows;
   renderLedger();
+
+  if (ledgerView.dirty) { ledgerView.dirty = false; loadLedger(); }
 }
 
 function renderLedger() {
@@ -1091,15 +1186,17 @@ function renderLedger() {
 function ledgerRowHTML(e) {
   const open = ledgerView.expanded.has(e.id);
   const receipt = ledgerOneLine(e.receipt, 90) || (e.error ? ledgerOneLine(e.error, 90) : '');
+  // The receipt has no title attribute: it is JSON, a tooltip would show it
+  // on one unreadable line, and the row expands to the whole thing formatted.
   return `
-    <tr class="led-row${open ? ' is-open' : ''}" data-ledger-row="${esc(e.id || '')}" tabindex="0" aria-expanded="${open}">
-      <td class="led-c-time" title="${esc(e.time || '')}">${esc(relTime(e.time) || e.time || '')}</td>
+    <tr class="led-row${open ? ' is-open' : ''}" data-ledger-row="${escAttr(e.id || '')}" tabindex="0" aria-expanded="${open}">
+      <td class="led-c-time" title="${escAttr(e.time || '')}">${esc(relTime(e.time) || e.time || '')}</td>
       <td class="led-c-actor">${esc(e.actor || '')}</td>
-      <td class="led-c-who">${esc(e.principal || '')}</td>
-      <td class="led-c-action" title="${esc(e.action || '')}">${esc(e.action || '')}</td>
-      <td class="led-c-target" title="${esc(e.target || '')}">${esc(e.target || '')}</td>
+      <td class="led-c-who" title="${escAttr(e.principal || '')}">${esc(principalName(e.principal))}</td>
+      <td class="led-c-action" title="${escAttr(e.action || '')}">${esc(e.action || '')}</td>
+      <td class="led-c-target" title="${escAttr(e.target || '')}">${esc(e.target || '')}</td>
       <td class="led-c-outcome">${outcomeChipHTML(e.outcome)}</td>
-      <td class="led-c-receipt" title="${esc(receipt)}">${esc(receipt)}</td>
+      <td class="led-c-receipt">${esc(receipt)}</td>
     </tr>${open ? `
     <tr class="led-detail"><td colspan="7"><div class="led-detail-body">${ledgerDetailHTML(e)}</div></td></tr>` : ''}`;
 }
@@ -1158,7 +1255,22 @@ async function loadLedgerPending() {
   const count = document.getElementById('ledgerPendingCount');
   if (!panel || !body) return;
 
-  const list = await getJSON('/api/approvals');
+  const res = await fetchJSON('/api/approvals');
+
+  // A 404 is an endpoint a later task still owns, and the rule for those is
+  // that the panel disappears. Anything else that failed is a queue that
+  // exists and could not be read, which is worth one muted line: silence
+  // there would read as "nothing needs you".
+  if (!res.ok) {
+    ledgerView.pendingSignature = '';
+    if (res.status === 404) { panel.hidden = true; body.innerHTML = ''; return; }
+    panel.hidden = false;
+    if (count) count.textContent = '';
+    body.innerHTML = '<p class="led-pend-note">Approvals unreachable.</p>';
+    return;
+  }
+
+  const list = res.data;
   if (!Array.isArray(list) || list.length === 0) {
     // Nothing pending is the normal state, and an empty panel is noise.
     panel.hidden = true;
@@ -1179,19 +1291,19 @@ async function loadLedgerPending() {
   ledgerView.pendingSignature = sig;
 
   body.innerHTML = list.map(a => `
-    <article class="led-pend" data-approval-row="${esc(a.id)}">
+    <article class="led-pend" data-approval-row="${escAttr(a.id)}">
       <div class="led-pend-main">
         <p class="led-pend-summary">${esc(a.summary || 'An action is waiting on a decision')}</p>
         <div class="led-pend-meta">
           <span class="mono">${esc(a.class || 'action')}</span>
-          <span>${esc(a.principal || 'unknown')}</span>
-          ${a.createdAt ? `<span title="${esc(a.createdAt)}">asked ${esc(relTime(a.createdAt))}</span>` : ''}
-          ${a.expiresAt ? `<span title="${esc(a.expiresAt)}">expires ${esc(relTime(a.expiresAt))}</span>` : ''}
+          <span>${esc(principalName(a.principal) || 'unknown')}</span>
+          ${a.createdAt ? `<span title="${escAttr(a.createdAt)}">asked ${esc(relTime(a.createdAt))}</span>` : ''}
+          ${a.expiresAt ? `<span title="${escAttr(a.expiresAt)}">expires ${esc(relTime(a.expiresAt))}</span>` : ''}
         </div>
       </div>
       <div class="led-pend-actions">
-        <button class="btn-ghost btn-sm" data-approval-deny="${esc(a.id)}">Deny</button>
-        <button class="btn-primary btn-sm" data-approval-approve="${esc(a.id)}">Approve</button>
+        <button class="btn-ghost btn-sm" data-approval-deny="${escAttr(a.id)}">Deny</button>
+        <button class="btn-primary btn-sm" data-approval-approve="${escAttr(a.id)}">Approve</button>
       </div>
     </article>`).join('');
 }
@@ -1343,6 +1455,16 @@ document.getElementById('kidsAllowlistForm')?.addEventListener('submit', async (
 
 // ========== HELPERS ==========
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+// esc() is textContent round-tripped, which escapes & < > and nothing else.
+// That is safe between tags and unsafe inside one: a value carrying a quote
+// closes the attribute early and whatever follows is parsed as markup. Every
+// interpolation into an attribute goes through this instead. Ledger receipts
+// are JSON, so they carry quotes by definition.
+const ATTR_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function escAttr(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ATTR_ESCAPES[ch]);
+}
 function timeAgo(iso) {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
@@ -6688,6 +6810,7 @@ document.getElementById('eeroBedtimePresetBtn')?.addEventListener('click', async
 connectWS();
 refreshStatus();
 loadAllSessions();
+loadPrincipalNames();
 loadSkillsForAutocomplete();
 setInterval(refreshStatus, 10000);
 
