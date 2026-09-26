@@ -12,4 +12,5 @@ All notable changes to gombwe. Versions follow semver; releases are git tags.
 - `GOMBWE_CONFIG_DIR` environment override for the config directory, honoured by every module and script (used by tests and smoke runs).
 
 ### Changed
+- Dashboard redesigned as an instrument panel: white surfaces, one blue accent, hairlines, system fonts, light and dark, new Home tab, grant-aware navigation (`ui/theme.css`, `docs/design-system.md`).
 - Apple event packet moved to `docs/reference/apple-event/`; launcher script retired in favour of the household-agent spec and plan.
