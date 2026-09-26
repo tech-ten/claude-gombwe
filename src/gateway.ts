@@ -28,6 +28,8 @@ import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
+import { ApprovalError, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
+import type { ApprovalRequest, Policy } from './approvals.js';
 import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
@@ -83,6 +85,11 @@ export class Gateway {
   private eeroScheduler: EeroScheduler;
   private nextdns: NextDNSClient;
   private services: Services;
+  /**
+   * Approval ids already resumed. A decision fires once, so this is belt and
+   * braces: whatever replays the event, a session is never injected into twice.
+   */
+  private resumedApprovals: Set<string> = new Set();
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -157,6 +164,7 @@ export class Gateway {
 
     this.services = createServices(config);
 
+    this.setupApprovals();
     this.setupAgentEvents();
     this.setupWebSocket();
     this.setupRoutes();
@@ -293,6 +301,135 @@ export class Gateway {
     return { sent_to: sent };
   }
 
+  // ── Approvals: the human gate in front of costly actions ──────
+
+  /**
+   * Route approval traffic: a request goes to the session that raised it and to
+   * the owner when somebody else raised it, a decision goes back to that session
+   * and then resumes it, and the dashboard sees all of it over the socket.
+   */
+  private setupApprovals(): void {
+    const approvals = this.services.approvals;
+
+    approvals.on('approval:requested', (req: ApprovalRequest) => {
+      const id8 = shortId(req.id);
+      const text =
+        `Approval needed [${id8}]: ${req.summary}\n` +
+        `Reply /approve ${id8} or /deny ${id8}. Expires in 30 min.`;
+      if (req.channel && req.sessionKey) {
+        this.channels.get(req.channel)?.send(req.sessionKey, text);
+      }
+      // The owner is the fallback decider, so they hear about anyone else's
+      // request even when they are not in that conversation — and about any
+      // request raised outside a chat (MCP, cron, a script), which would
+      // otherwise sit there with nobody told.
+      const requester = this.services.principals.get(req.principal);
+      const inAChat = !!(req.channel && req.sessionKey);
+      if (requester?.role !== 'owner' || !inAChat) {
+        const target = this.config.notify?.ownerChannel ?? 'web';
+        this.channels.get(target)?.send(`notify:${target}`, text);
+      }
+      this.broadcast({ type: 'approval:requested', data: req, timestamp: req.createdAt });
+    });
+
+    approvals.on('approval:decided', (req: ApprovalRequest) => {
+      const by = this.services.principals.get(req.decidedBy ?? '')?.name ?? req.decidedBy ?? 'someone';
+      const text = `Approval [${shortId(req.id)}] ${req.status} by ${by}: ${req.summary}`;
+      if (req.channel && req.sessionKey) {
+        this.channels.get(req.channel)?.send(req.sessionKey, text);
+      }
+      this.broadcast({
+        type: 'approval:decided',
+        data: req,
+        timestamp: req.decidedAt ?? new Date().toISOString(),
+      });
+      void this.resumeAfterApproval(req);
+    });
+
+    approvals.on('approval:expired', (req: ApprovalRequest) => {
+      const text =
+        `Approval [${shortId(req.id)}] expired without a decision: ${req.summary}\n` +
+        `Ask again if you still want it.`;
+      if (req.channel && req.sessionKey) {
+        this.channels.get(req.channel)?.send(req.sessionKey, text);
+      }
+      // Expiry is a settled approval as far as the dashboard is concerned; the
+      // status on the payload says which way it went.
+      this.broadcast({
+        type: 'approval:decided',
+        data: req,
+        timestamp: req.decidedAt ?? new Date().toISOString(),
+      });
+    });
+
+    // Nothing else advances the clock, so a request whose 30 minutes ran out
+    // while the house was asleep still closes out. Unref'd: this must never be
+    // the handle that keeps the process alive.
+    const expiry = setInterval(() => {
+      try {
+        this.services.approvals.expireDue();
+      } catch (err) {
+        console.error(`[approvals] expiry sweep failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }, 30_000);
+    expiry.unref();
+  }
+
+  /**
+   * Carry on where the agent left off (ADR 0004). The person decided minutes
+   * after the agent stopped talking, so gombwe feeds the decision back into the
+   * same conversation as a system message instead of waiting to be asked again.
+   *
+   * Only chat sessions, and only ones that exist: a task session has already
+   * finished, and an unknown key would create a conversation out of nowhere.
+   */
+  private async resumeAfterApproval(req: ApprovalRequest): Promise<void> {
+    if (!req.channel || !req.sessionKey) return;
+    if (req.status !== 'approved' && req.status !== 'denied') return;
+    if (this.resumedApprovals.has(req.id)) return;
+    const session = this.sessions.getSession(req.sessionKey);
+    if (!session || session.mode !== 'chat') return;
+    this.resumedApprovals.add(req.id);
+    try {
+      await this.handleIncoming({
+        channel: req.channel,
+        sessionKey: req.sessionKey,
+        text: `Approval ${shortId(req.id)} ${req.status}: ${req.summary}. Continue.`,
+        sender: 'system',
+        system: true,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(
+        `[approvals] could not resume ${req.sessionKey} after ${shortId(req.id)}: ` +
+        `${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * The approval a route is about. Accepts a full id, or a prefix of at least
+   * six characters that only one waiting request starts with; a prefix two
+   * requests share is reported rather than guessed. Answers the response itself
+   * and returns undefined when there is no single match.
+   */
+  private approvalFromRequest(req: Request, res: Response): ApprovalRequest | undefined {
+    const approvals = this.services.approvals;
+    const raw = String(req.params.id ?? '');
+    const exact = approvals.get(raw);
+    if (exact) return exact;
+    const match = matchApprovalId(raw, approvals.listPending().map(r => r.id));
+    if (match.ok) return approvals.get(match.id);
+    if (match.reason === 'ambiguous') {
+      res.status(409).json({
+        error: `${raw} matches ${match.candidates.length} waiting approvals`,
+        candidates: match.candidates,
+      });
+      return undefined;
+    }
+    res.status(404).json({ error: `unknown approval: ${raw}` });
+    return undefined;
+  }
+
   private setupChannels(): void {
     // Web channel (always enabled)
     const webChannel = new WebChannel();
@@ -376,15 +513,18 @@ export class Gateway {
     const workingDir = this.resolveWorkingDir(msg);
 
     // --- All commands use / prefix ---
+    // A system message is gombwe talking to itself (an approval decision
+    // resuming this session). It goes straight to the agent: parsing it as a
+    // command is what would let an injected follow-up decide approvals.
     const trimmedText = msg.text.trim().replace(/\s+/g, ' ');
-    if (trimmedText.startsWith('/')) {
+    if (!msg.system && trimmedText.startsWith('/')) {
       const [cmd, ...rest] = trimmedText.slice(1).split(' ');
       const handled = await this.handleCommand(cmd.toLowerCase(), rest, msg, channel);
       if (handled) return;
     }
 
     // --- Natural language family intent detection ---
-    const familyIntent = this.detectFamilyIntent(trimmedText);
+    const familyIntent = msg.system ? null : this.detectFamilyIntent(trimmedText);
     if (familyIntent) {
       const handled = await this.handleCommand(familyIntent.cmd, familyIntent.args, msg, channel);
       if (handled) return;
@@ -498,7 +638,9 @@ export class Gateway {
           `/model <name> — switch model (opus/sonnet/haiku)\n` +
           `/pwd — show current working directory for this session\n` +
           `/cd <path> — set working directory for this session (alone to reset)\n` +
-          `/in <path> <msg> — run one message in <path> without changing the session default\n\n` +
+          `/in <path> <msg> — run one message in <path> without changing the session default\n` +
+          `/approve <id> — approve a waiting action (the first 8 characters of the id is enough)\n` +
+          `/deny <id> — refuse a waiting action\n\n` +
           `**Family:**\n` +
           `Just say it naturally — "add chicken curry to Wednesday dinner", "we need milk", "order the groceries"\n\n` +
           `Or use commands:\n` +
@@ -981,6 +1123,50 @@ export class Gateway {
         return true;
       }
 
+      // /approve <id> · /deny <id> — decide a waiting approval from chat.
+      // With no id, list what is waiting rather than explaining the syntax.
+      case 'approve':
+      case 'deny': {
+        const decision: 'approved' | 'denied' = cmd === 'approve' ? 'approved' : 'denied';
+        const approvals = this.services.approvals;
+        const waiting = approvals.listPending();
+        const raw = args[0] ?? '';
+        if (!raw) {
+          await reply(waiting.length
+            ? `**Waiting for approval (${waiting.length}):**\n` +
+              waiting.map(r => `- [${shortId(r.id)}] ${r.summary}`).join('\n') +
+              `\n\nUse /${cmd} <id>.`
+            : `Nothing is waiting for approval.`);
+          return true;
+        }
+        const match = matchApprovalId(raw, waiting.map(r => r.id));
+        if (!match.ok) {
+          if (match.reason === 'ambiguous') {
+            await reply(
+              `"${raw}" matches ${match.candidates.length} waiting approvals: ` +
+              `${match.candidates.map(shortId).join(', ')}. Use more of the id.`);
+          } else if (match.reason === 'short') {
+            await reply(`Use at least ${MIN_PREFIX} characters of the approval id.`);
+          } else {
+            await reply(`No waiting approval matches "${raw}".`);
+          }
+          return true;
+        }
+        try {
+          const decided = approvals.decide(match.id, this.resolvePrincipal(msg), decision);
+          // The decision notifies the session that asked; only confirm here when
+          // that is somewhere else, so the decider does not read it twice.
+          if (decided.sessionKey !== msg.sessionKey || decided.channel !== msg.channel) {
+            await reply(
+              `${decision === 'approved' ? 'Approved' : 'Denied'} ` +
+              `[${shortId(decided.id)}]: ${decided.summary}`);
+          }
+        } catch (err) {
+          await reply(err instanceof Error ? err.message : String(err));
+        }
+        return true;
+      }
+
       default: {
         // Check skills
         const skill = this.skills.getSkill(cmd);
@@ -1420,6 +1606,95 @@ export class Gateway {
       } catch (err) {
         res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
       }
+    });
+
+    // ── Approvals (the human gate on costly actions) ──────────────
+    // Reading what is waiting is open to any authenticated viewer; a decision
+    // is taken as the requesting principal, so only an owner — or an adult on
+    // their own request — can approve. The policy table is owner-only.
+    // `/policies` is registered before `/:id` so it is not read as an id.
+    this.app.get('/api/approvals', (_req: Request, res: Response) => {
+      res.json(this.services.approvals.listPending());
+    });
+
+    // Every approval, newest first, pending and settled. ?limit=100 by default.
+    this.app.get('/api/approvals/history', (req: Request, res: Response) => {
+      const asked = parseInt(String(req.query.limit ?? ''), 10);
+      res.json(this.services.approvals.list(Number.isFinite(asked) && asked > 0 ? Math.min(asked, 500) : 100));
+    });
+
+    this.app.get('/api/approvals/policies', (_req: Request, res: Response) => {
+      res.json(this.services.approvals.policies());
+    });
+
+    // PUT body: { pay: 'confirm', … } or { policies: { … } } — only the classes
+    // named are changed, so the form can send one row at a time.
+    this.app.put('/api/approvals/policies', (req: Request, res: Response) => {
+      if (!this.requireOwner(req, res)) return;
+      const body = req.body ?? {};
+      const table = (body.policies && typeof body.policies === 'object' && !Array.isArray(body.policies))
+        ? body.policies as Record<string, unknown>
+        : body as Record<string, unknown>;
+      const entries = Object.entries(table);
+      if (!entries.length) {
+        res.status(400).json({ error: 'at least one class required' }); return;
+      }
+      for (const [cls, policy] of entries) {
+        // Dotted class names only, and never the envelope key itself, so a
+        // malformed body ({"policies":"auto"}) is a 400 rather than a class
+        // called `policies` that nothing will ever ask about.
+        if (cls === 'policies' || !/^[a-z0-9][a-z0-9._-]*$/i.test(cls)) {
+          res.status(400).json({ error: `not an action class: ${cls}` }); return;
+        }
+        if (!POLICIES.includes(policy as Policy)) {
+          res.status(400).json({ error: `policy for ${cls} must be one of ${POLICIES.join(', ')}` }); return;
+        }
+      }
+      for (const [cls, policy] of entries) this.services.approvals.setPolicy(cls, policy as Policy);
+      const policies = this.services.approvals.policies();
+      this.services.ledger.record({
+        actor: this.webActor(req),
+        principal: this.principalFromRequest(req).id,
+        action: 'approvals.policy.put',
+        params: Object.fromEntries(entries) as Record<string, unknown>,
+        outcome: 'ok',
+        receipt: policies,
+      });
+      res.json(policies);
+    });
+
+    // Long poll for a decision. Returns the still-pending request when the
+    // timeout runs out rather than holding the connection open (ADR 0004).
+    this.app.get('/api/approvals/:id/wait', async (req: Request, res: Response) => {
+      const found = this.approvalFromRequest(req, res);
+      if (!found) return;
+      const asked = parseInt(String(req.query.timeout ?? ''), 10);
+      const timeout = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 30_000) : 25_000;
+      try {
+        res.json(await this.services.approvals.wait(found.id, timeout));
+      } catch (err) {
+        res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    for (const [path, decision] of [['approve', 'approved'], ['deny', 'denied']] as const) {
+      this.app.post(`/api/approvals/:id/${path}`, (req: Request, res: Response) => {
+        const found = this.approvalFromRequest(req, res);
+        if (!found) return;
+        try {
+          res.json(this.services.approvals.decide(found.id, this.principalFromRequest(req), decision));
+        } catch (err) {
+          const status = err instanceof ApprovalError
+            ? ({ unknown: 404, forbidden: 403, settled: 409 } as const)[err.code]
+            : 400;
+          res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+    }
+
+    this.app.get('/api/approvals/:id', (req: Request, res: Response) => {
+      const found = this.approvalFromRequest(req, res);
+      if (found) res.json(found);
     });
 
     // ── Agentsform lead form receiver ─────────────────────────────

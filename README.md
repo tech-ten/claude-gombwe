@@ -296,6 +296,74 @@ those changes writes one ledger line naming the principal, the parameters and
 the router's reply. Family mutations are recorded too, from both the dashboard
 and chat commands.
 
+## Approvals
+
+Some things must not happen without a person: paying for the groceries, emailing
+someone outside the household, deleting a calendar event, blocking an adult's
+device, running a script that changes the Mac. gombwe gates those on an **action
+class** rather than a list of permitted items, so a new action is gated the first
+time it is asked for instead of the first time somebody notices it was not.
+
+| Class                 | Default   | What it covers |
+| --------------------- | --------- | -------------- |
+| `pay`                 | `confirm` | spending money — the grocery checkout |
+| `send.external`       | `confirm` | email or a message to someone outside the household |
+| `delete`              | `confirm` | removing calendar events, files, list items |
+| `network.block.adult` | `confirm` | blocking a device that belongs to an adult |
+| `desktop.run`         | `confirm` | running something that changes this Mac |
+| `credential`          | `never`   | passwords, card numbers, CVVs, one-time codes |
+| anything else         | `auto`    | go ahead |
+
+`never` is a refusal, not a prompt: gombwe has no path to your card number, and
+no approval can open one. Everything else defaults to `auto`.
+
+A waiting approval is announced in the conversation that raised it, and to the
+owner as well when somebody else raised it:
+
+```
+Approval needed [3f9a1c0d]: Pay $84.20 at Coles (11 items)
+Reply /approve 3f9a1c0d or /deny 3f9a1c0d. Expires in 30 min.
+```
+
+Decide it from any channel with `/approve 3f9a1c0d` or `/deny 3f9a1c0d`. The
+first six characters are enough as long as they match only one waiting request;
+`/approve` on its own lists what is waiting. An **owner** decides anything, an
+**adult** decides their own request, and anyone can deny a request they raised.
+
+When the decision lands minutes later, gombwe feeds it back into the same
+conversation and the agent carries on by itself — you do not have to ask again.
+Undecided requests expire after 30 minutes, and the conversation is told.
+
+Every waiting request opens one ledger line as `pending` and closes it as `ok`,
+`denied` or `expired`, so `GET /api/ledger?outcome=denied` answers "what did we
+refuse". The requests themselves live in `~/.claude-gombwe/data/approvals.json`.
+
+```bash
+# What is waiting
+curl localhost:18790/api/approvals
+
+# Approve or refuse one (full id, or a unique prefix)
+curl -X POST localhost:18790/api/approvals/3f9a1c0d/approve
+curl -X POST localhost:18790/api/approvals/3f9a1c0d/deny
+
+# Block until it is decided, then give up and let the caller move on
+curl 'localhost:18790/api/approvals/3f9a1c0d/wait?timeout=25000'
+
+# The policy table, and changing a class (owner only)
+curl localhost:18790/api/approvals/policies
+curl -X PUT localhost:18790/api/approvals/policies \
+  -H 'content-type: application/json' \
+  -d '{"pay":"confirm","desktop.run":"auto"}'
+```
+
+The owner hears about other people's requests on the web dashboard by default.
+Point that somewhere else with `notify.ownerChannel` in
+`~/.claude-gombwe/gombwe.json`:
+
+```json
+{ "notify": { "ownerChannel": "telegram" } }
+```
+
 ## Setting Up Telegram
 
 1. Message [@BotFather](https://t.me/botfather) on Telegram and send `/newbot`
@@ -352,6 +420,8 @@ Type `/` to see all commands with autocomplete. Key ones:
 /pwd                    Show current working directory for this session
 /cd <path>              Set working directory for this session (alone resets)
 /in <path> <message>    Run one message in <path> without changing session default
+/approve <id>           Approve a waiting action (first 8 chars of the id is enough)
+/deny <id>              Refuse a waiting action
 
 # Family
 /dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)

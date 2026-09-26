@@ -24,6 +24,11 @@ export interface GombweConfig {
   routerOwner?: boolean;
   /** Household members declared up front; upserted into principals.json on boot. */
   principals?: Principal[];
+  /** Where household-wide alerts go when nobody asked for them in a chat. */
+  notify?: {
+    /** Channel the owner is told about other people's approvals on. */
+    ownerChannel?: string;
+  };
 }
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -188,6 +193,12 @@ export interface IncomingMessage {
   senderName?: string;
   /** Resolved principal id, set by the gateway before any handling. */
   principal?: string;
+  /**
+   * gombwe talking to itself — an approval decision resuming a session, say.
+   * A system message is never parsed as a command, which is what keeps an
+   * injected follow-up from looping back through the approval commands.
+   */
+  system?: boolean;
   timestamp: string;
   // One-shot working-directory override (set by /in). Does not affect
   // the session's persistent workingDir.
@@ -213,7 +224,9 @@ export type WSEventType =
   | 'network:controls:update'
   | 'network:status:update'
   | 'network:policy:flagged'
-  | 'network:policy:blocked';
+  | 'network:policy:blocked'
+  | 'approval:requested'
+  | 'approval:decided';
 
 export interface WSEvent {
   type: WSEventType;
@@ -228,3 +241,9 @@ export type { LedgerEntry, LedgerActor, LedgerOutcome, LedgerFilter } from './le
 // ── Principals & permissions ──────────────────────────────────
 // Defined in permissions.ts; re-exported here so callers have one types entry point.
 export type { Role, Connector, Level, Binding, Principal } from './permissions.js';
+
+// ── Approvals ─────────────────────────────────────────────────
+// Defined in approvals.ts; re-exported here so callers have one types entry point.
+export type {
+  ApprovalClass, ApprovalRequest, ApprovalStatus, Policy, RequestResult,
+} from './approvals.js';
