@@ -100,6 +100,39 @@ test('a never class refuses with a reason naming the class', () => {
   assert.deepEqual(approvals.listPending(), []);
 });
 
+test('a never refusal is written to the ledger as denied', () => {
+  const { approvals, ledger } = build();
+  approvals.request({
+    class: 'credential',
+    summary: 'Enter the card CVV',
+    params: { field: 'cvv' },
+    principal: 'liam',
+  });
+  const entries = ledger.list();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].actor, 'system');
+  assert.equal(entries[0].principal, 'liam');
+  assert.equal(entries[0].action, 'approval.credential');
+  assert.equal(entries[0].outcome, 'denied');
+  assert.equal(entries[0].error, 'policy never');
+  assert.equal(entries[0].target, 'Enter the card CVV');
+  assert.deepEqual(entries[0].params, { field: 'cvv' });
+  // Nothing to decide: a refusal is final, not a request.
+  assert.equal(entries[0].approvalId, undefined);
+  assert.deepEqual(approvals.listPending(), []);
+});
+
+test('a never refusal honours an explicit action name', () => {
+  const { approvals, ledger } = build();
+  approvals.request({
+    class: 'credential',
+    summary: 'Type the one-time code',
+    principal: 'owner',
+    action: 'email.otp.read',
+  });
+  assert.equal(ledger.list()[0].action, 'email.otp.read');
+});
+
 test('setPolicy changes a class and survives a restart', () => {
   const { approvals, dataDir } = build();
   approvals.setPolicy('pay', 'auto');

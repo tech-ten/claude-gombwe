@@ -234,9 +234,14 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket, upgrade) => {
       this.wsClients.add(ws);
       // Cloudflare Access stamps the viewer's email on the upgrade request.
-      // It never reaches the individual frames, so capture it once per client.
-      // A LAN request has no header and is 'local', which is bound to the owner.
-      const identity = identityFromHeaders(upgrade.headers as Record<string, string | string[] | undefined>);
+      // It never reaches the individual frames, so capture it once per client —
+      // with the socket's address, because without an Access header only a
+      // connection from this machine is 'local' (the owner). A browser on the
+      // home network is 'lan:<ip>', which is bound to nobody.
+      const identity = identityFromHeaders(
+        upgrade.headers as Record<string, string | string[] | undefined>,
+        upgrade.socket?.remoteAddress,
+      );
 
       ws.on('message', async (raw: Buffer) => {
         try {
@@ -1336,13 +1341,15 @@ export class Gateway {
   // ── Principals: who is asking, and may they ───────────────────
 
   /**
-   * The principal behind an incoming chat message. Web identity comes from the
-   * Access email captured at WS upgrade ('local' on the LAN, which is bound to
-   * the owner); Discord and Telegram send a stable numeric user id as `sender`.
+   * The principal behind an incoming chat message. Web identity is captured at
+   * the WS upgrade — the Access email, else 'local' only for this machine;
+   * Discord and Telegram send a stable numeric user id as `sender`.
+   *
+   * A message with no sender at all resolves to a guest rather than to the
+   * owner: an unattributed message must not be able to approve a payment.
    */
   private resolvePrincipal(msg: IncomingMessage): Principal {
-    const identity = msg.sender || (msg.channel === 'web' ? 'local' : 'unknown');
-    return this.services.principals.resolve(msg.channel, identity);
+    return this.services.principals.resolve(msg.channel, msg.sender || 'unknown');
   }
 
   /**
@@ -1356,9 +1363,17 @@ export class Gateway {
     return fromBrowser ? 'dashboard' : 'system';
   }
 
-  /** The principal behind an HTTP request: its Access email, else 'local'. */
+  /**
+   * The principal behind an HTTP request: its Access email, else 'local' for a
+   * request from this machine and 'lan:<ip>' for anything else on the network.
+   * The address is the socket's, never a forwarded header, so it cannot be
+   * claimed by the caller.
+   */
   private principalFromRequest(req: Request): Principal {
-    const identity = identityFromHeaders(req.headers as Record<string, string | string[] | undefined>);
+    const identity = identityFromHeaders(
+      req.headers as Record<string, string | string[] | undefined>,
+      req.socket?.remoteAddress,
+    );
     return this.services.principals.resolve('web', identity);
   }
 
@@ -1519,7 +1534,7 @@ export class Gateway {
     // ── Principals (household members + permissions) ──────────────
     // Reading the roster is open to any authenticated viewer; every change is
     // owner-only. Web identity is the Cloudflare Access email, or 'local' for a
-    // LAN request — and 'local' is bound to the owner.
+    // request from this machine — and 'local' is bound to the owner.
     this.app.get('/api/principals', (_req: Request, res: Response) => {
       res.json(this.services.principals.list());
     });

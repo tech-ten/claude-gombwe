@@ -215,15 +215,42 @@ test('seedFromConfig is a no-op when the config lists no principals', () => {
 });
 
 test('identityFromHeaders reads the Cloudflare Access email, case-insensitively', () => {
-  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': 'Mag@Example.com' }), 'mag@example.com');
-  assert.equal(identityFromHeaders({ 'Cf-Access-Authenticated-User-Email': 'tendai@example.com' }), 'tendai@example.com');
-  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': ['a@b.com', 'c@d.com'] }), 'a@b.com');
+  const lan = '192.168.1.50';
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': 'Mag@Example.com' }, lan), 'mag@example.com');
+  assert.equal(identityFromHeaders({ 'Cf-Access-Authenticated-User-Email': 'tendai@example.com' }, lan), 'tendai@example.com');
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': ['a@b.com', 'c@d.com'] }, lan), 'a@b.com');
+  // The email wins wherever the request came from, loopback included.
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': 'Mag@Example.com' }, '127.0.0.1'), 'mag@example.com');
 });
 
-test('identityFromHeaders falls back to local when the Access header is absent or blank', () => {
-  assert.equal(identityFromHeaders({}), 'local');
-  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '' }), 'local');
-  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '   ' }), 'local');
+test('identityFromHeaders is local only for a request from this machine', () => {
+  for (const addr of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '127.0.0.53']) {
+    assert.equal(identityFromHeaders({}, addr), 'local', addr);
+  }
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '' }, '127.0.0.1'), 'local');
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '   ' }, '::1'), 'local');
+});
+
+test('identityFromHeaders gives an unauthenticated LAN client its own identity', () => {
+  // 'local' is the owner, so a device on the home network must not get it: with
+  // no Access header it is named by its address, which is bound to nobody.
+  assert.equal(identityFromHeaders({}, '192.168.1.50'), 'lan:192.168.1.50');
+  assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '' }, '10.0.0.7'), 'lan:10.0.0.7');
+  assert.equal(identityFromHeaders({}, '::ffff:192.168.1.50'), 'lan:192.168.1.50');
+  assert.equal(identityFromHeaders({}, 'fe80::1%en0'), 'lan:fe80::1');
+  // An address we could not read fails closed rather than passing as local.
+  assert.equal(identityFromHeaders({}), 'lan:unknown');
+  assert.equal(identityFromHeaders({}, ''), 'lan:unknown');
+});
+
+test('a LAN client with no Access header resolves to a guest, not the owner', () => {
+  const p = new Principals(dir());
+  const lan = p.resolve('web', identityFromHeaders({}, '192.168.1.50'));
+  assert.equal(lan.role, 'guest');
+  assert.deepEqual(lan.grants, {});
+  assert.notEqual(lan.id, 'owner');
+  // The same browser through Cloudflare Access is whoever that email is bound to.
+  assert.equal(p.resolve('web', identityFromHeaders({}, '127.0.0.1')).id, 'owner');
 });
 
 // ── The roster always has exactly one owner record ───────────────

@@ -173,6 +173,17 @@ export class Approvals extends EventEmitter {
     const policy = this.policyFor(cls);
     if (policy === 'auto') return { policy: 'auto' };
     if (policy === 'never') {
+      // A refusal is a side effect too: without a line here, the one class that
+      // can never be approved would be the one class with no audit trail.
+      this.ledger.record({
+        actor: 'system',
+        principal: input.principal,
+        action: input.action ?? `approval.${cls}`,
+        target: input.summary,
+        params: input.params,
+        outcome: 'denied',
+        error: 'policy never',
+      });
       return {
         policy: 'never',
         reason: `${cls} is set to never, so gombwe will not do this — a person has to.`,

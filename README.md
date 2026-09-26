@@ -245,21 +245,28 @@ change anything.
 
 | Channel  | Identity |
 | -------- | -------- |
-| web      | the Cloudflare Access email, or `local` for a request from the home network |
+| web      | the Cloudflare Access email; `local` only for a request from this machine, `lan:<ip>` for anything else on the network |
 | discord  | the author's user id |
 | telegram | the sender's user id |
 
-The dashboard on your own LAN has no Access header, so it is `local` — and
-`local` is bound to the owner gombwe seeds on first run. **Anything that can
-reach the gateway on your network is therefore trusted as the owner**: there is
-no password on the LAN, so treat access to the home network as access to
-everything gombwe can do. Reaching the dashboard from outside goes through
-Cloudflare Access, which always stamps the email, so remote viewers are only
-ever the principal you bound that email to.
+A request with no Access header is `local` — the identity the seeded owner is
+bound to — **only when it came from this machine**. That covers gombwe's own
+internal calls and anything tunnelled in, because cloudflared runs here too.
+Every other client on the home network is `lan:192.168.1.50`, bound to nobody,
+which resolves to a guest with no grants. **A laptop or a phone on your Wi-Fi
+cannot approve a payment or change the router just by reaching the port.**
 
-That also means the Access header is only meaningful when gombwe sits behind
-Cloudflare. Expose the port directly to the internet and anyone who finds it
-arrives as `local`, which is to say as the owner. Keep the tunnel in front of it.
+So sign in: open the dashboard on the hostname you put behind Cloudflare Access,
+which stamps your email on every request, or talk to gombwe on a Discord or
+Telegram account bound to you. Either way you are the principal that identity
+belongs to, from the couch or from another country.
+
+Two things follow. Because a tunnelled request arrives on loopback, **every
+hostname routed to the gateway needs an Access policy in front of it** — one
+without a policy is the owner to whoever finds it. And because `local` is the
+owner, a shell on this Mac is owner access; a port forwarded straight to the
+internet is not (those callers arrive as `lan:<ip>` guests), though read-only
+surfaces like the ledger have no guard, so keep the tunnel in front regardless.
 
 **Managing the roster** (every change is owner-only):
 
@@ -279,6 +286,13 @@ curl -X PUT localhost:18790/api/principals/mag \
 curl -X POST localhost:18790/api/principals/mag/bind \
   -H 'content-type: application/json' \
   -d '{"channel":"telegram","identity":"123456789"}'
+
+# Recognise one device on the home network without Cloudflare Access.
+# Give it a static lease first — a DHCP address that moves hands the binding
+# to whatever picks the address up next.
+curl -X POST localhost:18790/api/principals/owner/bind \
+  -H 'content-type: application/json' \
+  -d '{"channel":"web","identity":"lan:192.168.1.42"}'
 
 curl -X DELETE localhost:18790/api/principals/mag
 ```
