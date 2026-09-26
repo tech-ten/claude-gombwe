@@ -30,14 +30,10 @@ import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
-<<<<<<< HEAD
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
 import { MEMORY_KINDS, mayRead, mayWriteSubject, normalise as normaliseMemory, parseRememberArgs } from './memory.js';
 import type { MemoryKind, MemoryRecord, MemorySource } from './memory.js';
 import { dataDir as gombweDataDir } from './paths.js';
-=======
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
->>>>>>> grocery-approval-gate
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
 function localMacAddresses(): string[] {
@@ -1887,7 +1883,6 @@ export class Gateway {
       if (found) res.json(found);
     });
 
-<<<<<<< HEAD
     // ── Household memory ─────────────────────────────────────────
     // Reading needs `memory: read` and only ever hands back what the caller may
     // see; remembering and forgetting need `memory: act`. An owner passes both,
@@ -1946,7 +1941,11 @@ export class Gateway {
         const saved = this.services.memory.remember(text, who, kind as MemoryKind, { manual: principal.id });
         this.recordMemoryChange(this.webActor(req), principal.id, 'memory.remember', saved);
         res.json(saved);
-=======
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
     // ── Script-side approvals and ledger (this machine only) ──────
     // The grocery flow is a set of ESM scripts under scripts/, not in-process
     // code, so it asks for its approval and writes its audit line over HTTP.
@@ -1990,13 +1989,11 @@ export class Gateway {
           principal,
           channel: 'script',
         }));
->>>>>>> grocery-approval-gate
       } catch (err) {
         res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
       }
     });
 
-<<<<<<< HEAD
     // Forgetting is final: the record is marked and a tombstone stops gombwe's
     // own reflections writing it back. A caller may only forget what they see.
     this.app.delete('/api/memory/:id', (req: Request, res: Response) => {
@@ -2009,7 +2006,8 @@ export class Gateway {
       if (!forgotten) { res.status(404).json({ error: 'not found' }); return; }
       this.recordMemoryChange(this.webActor(req), principal.id, 'memory.forget', forgotten);
       res.json(forgotten);
-=======
+    });
+
     // POST a ledger entry (no id, no time — both are assigned here, so a script
     // cannot supersede a line somebody else wrote).
     this.app.post('/api/ledger', (req: Request, res: Response) => {
@@ -2039,7 +2037,6 @@ export class Gateway {
         params: params ? truncateDeep(params) as Record<string, unknown> : undefined,
         receipt: receipt ? truncateDeep(receipt) as Record<string, unknown> : undefined,
       }));
->>>>>>> grocery-approval-gate
     });
 
     // ── Agentsform lead form receiver ─────────────────────────────
