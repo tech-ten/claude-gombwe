@@ -68,6 +68,9 @@ export interface Session {
   // Per-session working directory override (set via /cd). When unset,
   // commands fall back to config.agents.workingDir.
   workingDir?: string;
+  // The household-memory high-water mark this session was last given. When it
+  // no longer matches the store's, the memory block is worth prepending again.
+  memoryStamp?: string;
 }
 
 export interface TranscriptEntry {

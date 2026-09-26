@@ -927,6 +927,9 @@ const BUILTIN_COMMANDS = [
   { cmd: '/list', desc: 'View or add to shopping list (e.g. /list milk, eggs)', type: 'cmd' },
   { cmd: '/buy', desc: 'Order items (e.g. /buy or /buy hair remover)', type: 'action' },
   { cmd: '/family', desc: 'Manage family members (add/remove/list)', type: 'cmd' },
+  { cmd: '/memory', desc: 'What gombwe remembers for you', type: 'cmd' },
+  { cmd: '/remember', desc: 'Keep something (household: <text> for everyone)', type: 'cmd' },
+  { cmd: '/forget', desc: 'Forget something, for good (text or id)', type: 'cmd' },
 ];
 
 let acSelectedIndex = -1;

@@ -1,5 +1,6 @@
 import { Approvals } from './approvals.js';
 import { Ledger } from './ledger.js';
+import { Memory } from './memory.js';
 import { Principals } from './permissions.js';
 import type { GombweConfig } from './types.js';
 
@@ -7,6 +8,7 @@ export interface Services {
   ledger: Ledger;
   principals: Principals;
   approvals: Approvals;
+  memory: Memory;
 }
 
 /**
@@ -35,5 +37,10 @@ export function createServices(config: GombweConfig): Services {
   });
   principals.seedFromConfig(config);
   const ledger = new Ledger(config.dataDir);
-  return { ledger, principals, approvals: new Approvals(config.dataDir, ledger, principals) };
+  return {
+    ledger,
+    principals,
+    approvals: new Approvals(config.dataDir, ledger, principals),
+    memory: new Memory(config.dataDir),
+  };
 }

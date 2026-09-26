@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Memory, MemoryTombstonedError, normalise } from './memory.js';
+import { Memory, MemoryTombstonedError, mayRead, mayWriteSubject, normalise, parseRememberArgs } from './memory.js';
+import type { MemoryRecord } from './memory.js';
 import type { Principal } from './permissions.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'gombwe-memory-'));
@@ -379,4 +380,51 @@ test('a half-written or hand-edited store does not stop the gateway booting', ()
   const memory = new Memory(dataDir);
   assert.deepEqual(memory.list(), []);
   assert.equal(memory.remember('Prefers oat milk', 'tendai', 'preference', chat()).useCount, 0);
+});
+
+// ── /remember arguments ───────────────────────────────────────
+
+test('parseRememberArgs files a plain sentence under the speaker as a fact', () => {
+  assert.deepEqual(parseRememberArgs('I prefer oat milk', 'tendai'), {
+    text: 'I prefer oat milk', subject: 'tendai', kind: 'fact',
+  });
+});
+
+test('parseRememberArgs reads the household and kind prefixes, in either order', () => {
+  assert.deepEqual(parseRememberArgs('household: Bin night is Tuesday', 'tendai'), {
+    text: 'Bin night is Tuesday', subject: 'household', kind: 'fact',
+  });
+  assert.deepEqual(parseRememberArgs('household: instruction: No screens after 9pm', 'tendai'), {
+    text: 'No screens after 9pm', subject: 'household', kind: 'instruction',
+  });
+  assert.deepEqual(parseRememberArgs('preference: household: oat milk only', 'tendai'), {
+    text: 'oat milk only', subject: 'household', kind: 'preference',
+  });
+});
+
+test('parseRememberArgs leaves a sentence that merely contains a colon alone', () => {
+  assert.deepEqual(parseRememberArgs('note: the bin is out', 'tendai'), {
+    text: 'note: the bin is out', subject: 'tendai', kind: 'fact',
+  });
+  assert.equal(parseRememberArgs('   ', 'tendai'), undefined);
+  assert.equal(parseRememberArgs('household:', 'tendai'), undefined);
+});
+
+// ── who may see what ──────────────────────────────────────────
+
+test('mayRead and mayWriteSubject: own subject and household, all of it for an owner', () => {
+  const record = (subject: string) => ({ subject } as MemoryRecord);
+
+  assert.equal(mayRead(who(), record('tendai')), true);
+  assert.equal(mayRead(who(), record('household')), true);
+  assert.equal(mayRead(who(), record('liam')), false);
+  assert.equal(mayRead(owner, record('liam')), true);
+  assert.equal(mayRead(guest, record('household')), true);
+  assert.equal(mayRead(guest, record(guest.id)), false);
+
+  assert.equal(mayWriteSubject(who(), 'tendai'), true);
+  assert.equal(mayWriteSubject(who(), 'household'), true);
+  assert.equal(mayWriteSubject(who(), 'liam'), false);
+  assert.equal(mayWriteSubject(owner, 'liam'), true);
+  assert.equal(mayWriteSubject(guest, guest.id), false);
 });

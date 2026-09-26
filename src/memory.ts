@@ -103,6 +103,53 @@ const TOOL_HINT =
   'memory_forget when asked to forget.';
 
 /**
+ * `/remember` arguments: an optional `household:` prefix (the default subject
+ * is whoever is speaking) and an optional `<kind>:` prefix. A plain sentence is
+ * a fact, which is the safest default — it reads as background rather than as a
+ * standing instruction the agent should act on.
+ */
+export function parseRememberArgs(
+  raw: string,
+  speaker: string,
+): { text: string; subject: string; kind: MemoryKind } | undefined {
+  let rest = String(raw ?? '').trim();
+  let subject = speaker;
+  let kind: MemoryKind = 'fact';
+  for (let i = 0; i < 2 && rest; i++) {
+    const match = /^([a-z]+):\s*/i.exec(rest);
+    if (!match) break;
+    const word = match[1].toLowerCase();
+    if (word === HOUSEHOLD) subject = HOUSEHOLD;
+    else if ((MEMORY_KINDS as string[]).includes(word)) kind = word as MemoryKind;
+    else break;
+    rest = rest.slice(match[0].length).trim();
+  }
+  return rest ? { text: rest, subject, kind } : undefined;
+}
+
+/**
+ * May this principal read this record? The owner sees the whole household's
+ * memory; everyone else sees their own and what is held for `household`. A
+ * guest — anyone on the network we do not recognise — sees only the household
+ * subject, never a record filed under the id their address resolved to.
+ *
+ * One definition, used by the context block, the chat commands and the API, so
+ * a surface added later cannot quietly widen it.
+ */
+export function mayRead(principal: Principal, record: MemoryRecord): boolean {
+  if (principal.role === 'owner') return true;
+  if (record.subject === HOUSEHOLD) return true;
+  return principal.role !== 'guest' && record.subject === principal.id;
+}
+
+/** May this principal file something under this subject? */
+export function mayWriteSubject(principal: Principal, subject: string): boolean {
+  if (principal.role === 'owner') return true;
+  if (subject === HOUSEHOLD) return true;
+  return principal.role !== 'guest' && subject === principal.id;
+}
+
+/**
  * The comparable form of a sentence: lowercased, one space between words, no
  * trailing punctuation. "No screens after 9pm." and "no screens  after 9pm"
  * are the same standing instruction, so they must not become two records.
@@ -316,14 +363,9 @@ export class Memory {
     return this.records.reduce((max, r) => (r.updatedAt > max ? r.updatedAt : max), '');
   }
 
-  /** The subjects this principal may read: their own and the household's. */
+  /** The records this principal may read: their own and the household's. */
   private visibleTo(principal: Principal): MemoryRecord[] {
-    const records = this.records.filter(r => !r.forgotten);
-    if (principal.role === 'owner') return records;
-    // A guest is anyone on the network we do not recognise, so they see only
-    // what the whole household would tell a visitor.
-    if (principal.role === 'guest') return records.filter(r => r.subject === HOUSEHOLD);
-    return records.filter(r => r.subject === principal.id || r.subject === HOUSEHOLD);
+    return this.records.filter(r => !r.forgotten && mayRead(principal, r));
   }
 
   /**
