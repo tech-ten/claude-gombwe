@@ -1,0 +1,208 @@
+/* ══════════════════════════════════════════════════════════════════════
+   gombwe design tokens — instrument panel
+   ----------------------------------------------------------------------
+   Tokens only. No selectors beyond :root and the theme switches. Every
+   colour, radius, font and duration in the dashboard resolves through a
+   variable declared here, so a theme change is a change to this file
+   alone.
+
+   Palette: white surfaces, near-black text, ONE muted blue accent,
+   hairline borders. Semantic colours (ok / warn / danger) are used for
+   state only, never for decoration.
+
+   Dark mode: prefers-color-scheme, overridable per-document with
+   data-theme="light" | "dark" on <html>.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Surfaces ─────────────────────────────────────────────────────── */
+  --bg:          #FFFFFF;
+  --bg-soft:     #FAFAFB;
+  --surface:     #FFFFFF;
+  --border:      #E4E6EB;
+  --border-soft: #EFF0F3;
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --text:        #1A1D24;   /* primary   — near-black, not black */
+  --text-2:      #4B5260;   /* secondary — body detail */
+  --text-3:      #8A92A0;   /* meta      — labels, timestamps, units */
+
+  /* ── Accent — exactly one ─────────────────────────────────────────── */
+  --accent:      #2563EB;
+  --accent-soft: rgba(37, 99, 235, .08);
+  /* Text laid ON a filled accent/state swatch. Flips with the theme,
+     because a bright dark-mode green wants dark text, not white. */
+  --on-accent:   #FFFFFF;
+
+  /* ── State ────────────────────────────────────────────────────────── */
+  --ok:          #15803D;
+  --ok-soft:     rgba(21, 128, 61, .08);
+  --warn:        #B45309;
+  --warn-soft:   rgba(180, 83, 9, .08);
+  --danger:      #B91C1C;
+  --danger-soft: rgba(185, 28, 28, .08);
+
+  /* ── Chrome ───────────────────────────────────────────────────────── */
+  --topbar:      #FFFFFF;
+  --sidebar:     #FAFAFB;
+  --sidebar-w:   220px;
+  --topbar-h:    48px;
+
+  /* ── Type ─────────────────────────────────────────────────────────── */
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ── Geometry and motion ──────────────────────────────────────────── */
+  --r:      6px;
+  --r-lg:   8px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04);
+  --t:      120ms ease;
+
+  /* ── Spacing — 8 px grid, with a 4 px half-step ───────────────────── */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  /* ══════════════════════════════════════════════════════════════════
+     Legacy aliases.
+     The dashboard predates this file and its ~2,900 lines of CSS refer
+     to the old warm-palette variable names. Rather than rename every
+     use site, each old name resolves to its nearest new token. New code
+     uses the tokens above; these exist so nothing breaks, and so a grep
+     for an old name shows it is an alias and not a second palette.
+     ══════════════════════════════════════════════════════════════════ */
+  --bg-deep:      var(--bg-soft);
+  --surface-alt:  var(--bg-soft);
+  --border-light: var(--border-soft);
+  --parchment:    var(--bg-soft);
+  --text-4:       var(--text-3);
+  --accent-hover: #1D4ED8;
+  --accent-bg:    var(--accent-soft);
+  --green:        var(--ok);
+  --green-bg:     var(--ok-soft);
+  --red:          var(--danger);
+  --red-bg:       var(--danger-soft);
+  --amber:        var(--warn);
+  --amber-bg:     var(--warn-soft);
+  --topbar-text:  var(--text);
+  --topbar-text2: var(--text-3);
+  --sidebar-bg:   var(--sidebar);
+  --serif:        var(--sans);   /* the serif display face is gone */
+  --radius:       var(--r);
+  --radius-lg:    var(--r-lg);
+  --shadow-md:    var(--shadow);
+  --shadow-lg:    var(--shadow);
+  --transition:   var(--t);
+
+  /* Family tab aliases — the Family page was built first, in this
+     palette, under its own --fam-* names. They now simply point at the
+     global tokens, so the page is no longer a special case. */
+  --fam-bg:          var(--bg);
+  --fam-bg-soft:     var(--bg-soft);
+  --fam-border:      var(--border);
+  --fam-border-soft: var(--border-soft);
+  --fam-text:        var(--text);
+  --fam-text-2:      var(--text-2);
+  --fam-text-3:      var(--text-3);
+  --fam-accent:      var(--accent);
+  --fam-accent-soft: var(--accent-soft);
+  --fam-success:     var(--ok);
+  --fam-danger:      var(--danger);
+  --fam-radius:      var(--r);
+  --fam-radius-lg:   var(--r-lg);
+  --fam-font:        var(--sans);
+
+  /* ── Categorical series — charts only ─────────────────────────────
+     Ordered for maximum separation at small sizes. Cool-neutral so the
+     accent still reads as the interactive colour, and legible on both
+     themes without a second palette. Never used for UI chrome. */
+  --c1: #2563EB;  --c2: #0E7490;  --c3: #15803D;  --c4: #B45309;
+  --c5: #7C3AED;  --c6: #BE185D;  --c7: #4B5563;  --c8: #0F766E;
+  --c9: #A16207;  --c10: #9CA3AF;
+}
+
+/* ── Dark ───────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:          #0F1115;
+    --bg-soft:     #151821;
+    --surface:     #151821;
+    --border:      #262A35;
+    --border-soft: #1E222B;
+
+    --text:        #E6E8EE;
+    --text-2:      #A6ADBB;
+    --text-3:      #6B7280;
+
+    --accent:      #5B8DEF;
+    --accent-soft: rgba(91, 141, 239, .14);
+    --on-accent:   #0F1115;
+
+    --ok:          #4ADE80;
+    --ok-soft:     rgba(74, 222, 128, .12);
+    --warn:        #FBBF24;
+    --warn-soft:   rgba(251, 191, 36, .12);
+    --danger:      #F87171;
+    --danger-soft: rgba(248, 113, 113, .12);
+
+    --topbar:      #0F1115;
+    --sidebar:     #12151C;
+    --shadow:      none;
+
+    --accent-hover: #7BA4F5;
+
+    --c1: #5B8DEF;  --c2: #22D3EE;  --c3: #4ADE80;  --c4: #FBBF24;
+    --c5: #A78BFA;  --c6: #F472B6;  --c7: #9CA3AF;  --c8: #2DD4BF;
+    --c9: #FCD34D;  --c10: #6B7280;
+  }
+}
+
+/* Explicit dark, independent of the OS setting. Same values. */
+:root[data-theme="dark"] {
+  --bg:          #0F1115;
+  --bg-soft:     #151821;
+  --surface:     #151821;
+  --border:      #262A35;
+  --border-soft: #1E222B;
+
+  --text:        #E6E8EE;
+  --text-2:      #A6ADBB;
+  --text-3:      #6B7280;
+
+  --accent:      #5B8DEF;
+  --accent-soft: rgba(91, 141, 239, .14);
+  --on-accent:   #0F1115;
+
+  --ok:          #4ADE80;
+  --ok-soft:     rgba(74, 222, 128, .12);
+  --warn:        #FBBF24;
+  --warn-soft:   rgba(251, 191, 36, .12);
+  --danger:      #F87171;
+  --danger-soft: rgba(248, 113, 113, .12);
+
+  --topbar:      #0F1115;
+  --sidebar:     #12151C;
+  --shadow:      none;
+
+  --accent-hover: #7BA4F5;
+
+  --c1: #5B8DEF;  --c2: #22D3EE;  --c3: #4ADE80;  --c4: #FBBF24;
+  --c5: #A78BFA;  --c6: #F472B6;  --c7: #9CA3AF;  --c8: #2DD4BF;
+  --c9: #FCD34D;  --c10: #6B7280;
+}
+
+/* Paint the page background before any stylesheet or script runs, so a
+   dark-mode load never flashes white. */
+html { background: var(--bg); color-scheme: light dark; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t: 0ms; }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

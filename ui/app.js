@@ -1,4 +1,21 @@
 const API = '';
+
+// ── Chart palette ─────────────────────────────────────────────────────
+// SVG presentation attributes (fill="…", stroke="…") cannot resolve CSS
+// custom properties, so chart colours are literals here rather than
+// var(--c1). They mirror --c1..--c10 and the state colours in theme.css and
+// are picked to stay legible on both the light and the dark background — one
+// palette, not one per theme. Change these and theme.css together.
+const SERIES = ['#4F86E8', '#14A8C4', '#3DA35D', '#D08A16', '#8B6DE0',
+                '#D95C97', '#7A8494', '#1EA39A', '#C9A227', '#9AA3B0'];
+const SEM = {
+  accent:  '#4F86E8',
+  ok:      '#3DA35D',
+  warn:    '#D08A16',
+  danger:  '#D9534F',
+  neutral: '#7A8494',
+  faint:   '#9AA3B0',
+};
 let ws;
 
 // ========== STATE ==========
@@ -477,26 +494,317 @@ async function refreshStatus() {
 }
 
 // ========== NAVIGATION ==========
+// One registry, so adding a tab means adding a row here and a <section> in
+// index.html — not editing a switch in three places.
+//
+//   grant  — the permission a principal must hold for the tab to appear.
+//            Must match the data-grant attribute on the nav row.
+//   load   — called each time the tab is opened. Optional.
+const TABS = {
+  home:        { load: () => loadHome() },
+  chat:        {},
+  family:      { grant: 'family',  load: () => loadFamily() },
+  goals:       { grant: 'goals' },
+  eero:        { grant: 'network', load: () => loadEero() },
+  activity:    { grant: 'activity' },
+  memory:      { grant: 'memory' },
+  monitors:    { grant: 'monitors' },
+  permissions: { grant: 'owner' },
+  // The agent's task log is adult-or-owner, same rule as Activity — a
+  // child should not be reading what the household asked the agent to do.
+  tasks:       { grant: 'activity', load: () => loadTasks() },
+  jobs:        { grant: 'owner', load: () => refreshJobs() },
+  skills:      { grant: 'owner', load: () => refreshSkills() },
+  services:    { grant: 'owner', load: () => refreshServices() },
+};
+
+const DEFAULT_TAB = 'home';
+
 function switchTab(name) {
+  const section = document.getElementById(`tab-${name}`);
+  const navItem = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  // A tab hidden by grant is not reachable, including by hash. Fall back
+  // rather than showing a section the principal is not entitled to.
+  if (!section || (navItem && navItem.hidden)) {
+    if (name !== DEFAULT_TAB) switchTab(DEFAULT_TAB);
+    return;
+  }
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.nav-item[data-tab="${name}"]`)?.classList.add('active');
-  document.getElementById(`tab-${name}`)?.classList.add('active');
+  navItem?.classList.add('active');
+  section.classList.add('active');
+  if (location.hash.slice(1) !== name) history.replaceState(null, '', `#${name}`);
+  try { TABS[name]?.load?.(); } catch (err) { console.warn(`[nav] ${name} load failed:`, err); }
 }
 
 document.querySelectorAll('.nav-item').forEach(btn => {
-  btn.addEventListener('click', () => {
-    switchTab(btn.dataset.tab);
-    switch (btn.dataset.tab) {
-      case 'tasks': loadTasks(); break;
-      case 'skills': refreshSkills(); break;
-      case 'jobs': refreshJobs(); break;
-      case 'services': refreshServices(); break;
-      case 'family': loadFamily(); break;
-      case 'eero': loadEero(); break;
-    }
-  });
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+window.addEventListener('hashchange', () => {
+  const name = location.hash.slice(1);
+  if (TABS[name]) switchTab(name);
+});
+
+// ========== HOME ==========
+// The landing tab. Four independent fetches, none of which blocks the
+// others, and each of which hides its own panel on failure. A backend that
+// is half-built shows a shorter Home, never an error wall.
+
+const HOME_MEALS = ['breakfast', 'lunch', 'dinner'];
+
+async function getJSON(path) {
+  try {
+    const res = await fetch(`${API}${path}`);
+    if (!res.ok) return null;          // 404 / 503 from an endpoint not yet built
+    return await res.json();
+  } catch { return null; }             // offline, or the daemon went away
+}
+
+function homeShow(panelId, visible) {
+  const el = document.getElementById(panelId);
+  if (el) el.hidden = !visible;
+}
+
+function loadHome() {
+  const stamp = document.getElementById('homeStamp');
+  if (stamp) {
+    stamp.textContent = new Date().toLocaleString(undefined, {
+      weekday: 'short', day: 'numeric', month: 'short',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+  // Deliberately not awaited together: each panel paints as its data lands.
+  // Each panel is also gated on the grant its own tab needs, so Home never
+  // shows a child the approvals queue or the network alerts. The server is
+  // the real boundary; this keeps the shell from asking in the first place.
+  loadHomeToday();
+  if (hasGrant('activity')) loadHomeApprovals(); else homeShow('homeApprovalsPanel', false);
+  if (hasGrant('goals'))    loadHomeGoals();     else homeShow('homeGoalsPanel', false);
+  if (hasGrant('network'))  loadHomeAlerts();    else document.getElementById('homeAlerts')?.classList.add('hidden');
+}
+
+document.getElementById('homeRefreshBtn')?.addEventListener('click', loadHome);
+
+// ── Today: family events and meals for the current date ───────────────
+async function loadHomeToday() {
+  const body = document.getElementById('homeToday');
+  const count = document.getElementById('homeTodayCount');
+  if (!body) return;
+
+  const data = hasGrant('family') ? await getJSON('/api/family') : null;
+  if (!data) { homeShow('homeTodayPanel', false); return; }
+  homeShow('homeTodayPanel', true);
+
+  const today = dateKey(new Date());
+  const events = (data.events || [])
+    .filter(e => e.date === today)
+    .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  const meals = (data.meals && data.meals[today]) || {};
+  const plannedMeals = HOME_MEALS.filter(slot => meals[slot]);
+
+  if (count) count.textContent = events.length ? `${events.length}` : '';
+
+  let rows = '';
+  for (const slot of HOME_MEALS) {
+    const name = meals[slot];
+    rows += `
+      <tr class="${name ? '' : 'is-empty'}">
+        <td class="home-t-when">${slot}</td>
+        <td class="home-t-what">${name ? esc(name) : 'not planned'}</td>
+      </tr>`;
+  }
+  let first = true;
+  for (const ev of events) {
+    rows += `
+      <tr class="${first ? 'home-t-break' : ''}">
+        <td class="home-t-when num">${esc(ev.time || '--:--')}</td>
+        <td class="home-t-what">${esc(ev.title || ev.name || 'Event')}${
+          ev.who ? `<span class="home-t-who">${esc(ev.who)}</span>` : ''
+        }</td>
+      </tr>`;
+    first = false;
+  }
+
+  if (!events.length && !plannedMeals.length) {
+    body.innerHTML = '<p class="home-empty">Nothing scheduled today.</p>';
+    return;
+  }
+  body.innerHTML = `<table class="home-table"><tbody>${rows}</tbody></table>`;
+}
+
+// ── Needs you: pending approvals ──────────────────────────────────────
+async function loadHomeApprovals() {
+  const body = document.getElementById('homeApprovals');
+  const count = document.getElementById('homeApprovalsCount');
+  if (!body) return;
+
+  const list = await getJSON('/api/approvals');
+  if (!Array.isArray(list) || list.length === 0) {
+    // Nothing pending is the normal state, and an empty panel is noise.
+    homeShow('homeApprovalsPanel', false);
+    return;
+  }
+  homeShow('homeApprovalsPanel', true);
+  if (count) count.textContent = String(list.length);
+
+  body.innerHTML = list.map(a => `
+    <article class="home-approval" data-id="${esc(a.id)}">
+      <div class="home-approval-head">
+        <span class="home-approval-class">${esc(a.class || 'action')}</span>
+        <span class="home-approval-expiry num">${a.expiresAt ? esc(relTime(a.expiresAt)) : ''}</span>
+      </div>
+      <p class="home-approval-summary">${esc(a.summary || '')}</p>
+      <div class="home-approval-foot">
+        <span class="home-approval-who">${esc(a.principal || 'unknown')}</span>
+        <span class="home-approval-actions">
+          <button class="btn-ghost btn-sm" data-approval-deny="${esc(a.id)}">Deny</button>
+          <button class="btn-primary btn-sm" data-approval-approve="${esc(a.id)}">Approve</button>
+        </span>
+      </div>
+    </article>`).join('');
+}
+
+async function decideApproval(id, verdict) {
+  try {
+    const res = await fetch(`${API}/api/approvals/${encodeURIComponent(id)}/${verdict}`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.warn('[home] approval failed:', err);
+  }
+  loadHomeApprovals();
+}
+
+// Delegated, because the list is replaced on every refresh.
+document.getElementById('homeApprovals')?.addEventListener('click', (e) => {
+  const approve = e.target.closest('[data-approval-approve]');
+  if (approve) { decideApproval(approve.dataset.approvalApprove, 'approve'); return; }
+  const deny = e.target.closest('[data-approval-deny]');
+  if (deny) decideApproval(deny.dataset.approvalDeny, 'deny');
+});
+
+// ── Active goals ──────────────────────────────────────────────────────
+async function loadHomeGoals() {
+  const body = document.getElementById('homeGoals');
+  const count = document.getElementById('homeGoalsCount');
+  if (!body) return;
+
+  const list = await getJSON('/api/goals?status=active');
+  if (!Array.isArray(list) || list.length === 0) { homeShow('homeGoalsPanel', false); return; }
+  homeShow('homeGoalsPanel', true);
+  if (count) count.textContent = String(list.length);
+
+  body.innerHTML = list.map(g => {
+    const plan = Array.isArray(g.plan) ? g.plan : [];
+    const done = plan.filter(st => st.status === 'done').length;
+    const current = plan.find(st => st.status === 'active' || st.status === 'running');
+    return `
+      <article class="home-goal">
+        <div class="home-goal-head">
+          <span class="home-goal-title">${esc(g.title || 'Goal')}</span>
+          <span class="home-goal-progress num">${plan.length ? `${done}/${plan.length}` : ''}</span>
+        </div>
+        <div class="home-goal-meta">
+          <span>${esc(g.principal || '')}</span>
+          ${g.updatedAt ? `<span class="num">${esc(relTime(g.updatedAt))}</span>` : ''}
+        </div>
+        ${current ? `<p class="home-goal-step">${esc(current.text || '')}</p>` : ''}
+      </article>`;
+  }).join('');
+}
+
+// ── Alerts strip ──────────────────────────────────────────────────────
+const HOME_SEVERITY_RANK = { error: 0, warning: 1, info: 2 };
+
+async function loadHomeAlerts() {
+  const strip = document.getElementById('homeAlerts');
+  if (!strip) return;
+
+  const list = await getJSON('/api/network/alerts');
+  if (!Array.isArray(list) || list.length === 0) {
+    strip.classList.add('hidden');
+    strip.innerHTML = '';
+    return;
+  }
+  // Worst first, and only the top few — Home is a summary, the Network tab
+  // is the full list.
+  const sorted = [...list].sort((a, b) =>
+    (HOME_SEVERITY_RANK[a.severity] ?? 3) - (HOME_SEVERITY_RANK[b.severity] ?? 3));
+  const shown = sorted.slice(0, 4);
+  const rest = list.length - shown.length;
+
+  strip.classList.remove('hidden');
+  strip.innerHTML = shown.map(a => `
+    <div class="home-alert sev-${esc(a.severity || 'info')}">
+      <span class="home-alert-title">${esc(a.title || '')}</span>
+      <span class="home-alert-detail">${esc(a.detail || '')}</span>
+    </div>`).join('')
+    + (rest > 0
+        ? `<button class="home-alert-more" data-tab-link="eero">${rest} more in Network</button>`
+        : '');
+}
+
+document.getElementById('homeAlerts')?.addEventListener('click', (e) => {
+  const link = e.target.closest('[data-tab-link]');
+  if (link) switchTab(link.dataset.tabLink);
+});
+
+// Relative time, past or future, in the shortest honest unit.
+function relTime(iso) {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const diff = t - Date.now();
+  const past = diff < 0;
+  const mins = Math.round(Math.abs(diff) / 60000);
+  const body = mins < 1 ? 'now'
+    : mins < 60 ? `${mins}m`
+    : mins < 60 * 24 ? `${Math.round(mins / 60)}h`
+    : `${Math.round(mins / 1440)}d`;
+  if (body === 'now') return 'now';
+  return past ? `${body} ago` : `in ${body}`;
+}
+
+// ========== IDENTITY AND GRANTS ==========
+// /api/me is owned by a parallel task. Until it exists the dashboard is
+// single-user and that user is the owner, so a 404 means full access — the
+// behaviour the household has today. A grant of 'read' or 'act' both make a
+// tab visible; whether an action inside it is allowed is the tab's business.
+let me = null;
+
+async function loadMe() {
+  try {
+    const res = await fetch(`${API}/api/me`);
+    if (res.ok) me = await res.json();
+  } catch {}
+  if (!me || typeof me !== 'object') {
+    me = { id: 'owner', name: 'Owner', role: 'owner', grants: null };  // null = everything
+  }
+  applyGrants();
+  return me;
+}
+
+function grants() { return (me && me.grants) || null; }
+function isOwner() { return !me || me.role === 'owner'; }
+
+function hasGrant(grant) {
+  if (!grant) return true;
+  if (isOwner()) return true;               // the owner holds every grant
+  if (grant === 'owner') return false;
+  if (grant === 'activity') return me.role === 'adult';
+  const g = grants();
+  if (!g) return true;                      // no grants block = unrestricted
+  return Boolean(g[grant]);
+}
+
+function applyGrants() {
+  for (const btn of document.querySelectorAll('.nav-item[data-tab]')) {
+    const spec = TABS[btn.dataset.tab];
+    btn.hidden = !hasGrant(btn.dataset.grant || spec?.grant);
+  }
+  // If the tab on screen just became unreachable, leave it.
+  const current = document.querySelector('.nav-item.active');
+  if (current && current.hidden) switchTab(DEFAULT_TAB);
+}
 
 document.querySelectorAll('[data-kids-preset]').forEach(b => {
   b.addEventListener('click', () => applyKidsPreset(b.dataset.kidsPreset));
@@ -2053,7 +2361,7 @@ function renderDeviceDetail(d) {
         ${POLICY_CATS.map(cat => `
           <label class="dd-policy-cat" data-cat="${esc(cat)}">
             <input type="checkbox" data-device-policy-toggle data-mac="${esc(d.mac)}" data-cat="${esc(cat)}" ${active.has(cat) ? 'checked' : ''}>
-            <span class="dd-policy-swatch" style="background:${CATEGORY_COLORS?.[cat] || '#999'}"></span>
+            <span class="dd-policy-swatch" style="background:${CATEGORY_COLORS?.[cat] || SEM.faint}"></span>
             <span>${cat}</span>
           </label>`).join('')}
       </span>
@@ -2305,7 +2613,7 @@ async function renderEeroOverview() {
       <div class="ov-enforcement-cats">
         ${cats.map(([cat, n]) => `
           <div class="ov-enforcement-cat">
-            <span class="ov-swatch" style="background:${CATEGORY_COLORS?.[cat] || '#999'}"></span>
+            <span class="ov-swatch" style="background:${CATEGORY_COLORS?.[cat] || SEM.faint}"></span>
             <span class="ov-cat-name">${esc(cat)}</span>
             <span class="ov-cat-count">${n}</span>
           </div>`).join('')}
@@ -2364,7 +2672,7 @@ async function renderEeroOverview() {
                 <td>${esc(d.name || d.hostname || d.mac)}</td>
                 <td class="muted small">${esc(d.owner || '—')}</td>
                 <td>
-                  ${cats.map(c => `<span class="ov-cat-pill"><span class="ov-swatch" style="background:${CATEGORY_COLORS?.[c] || '#999'}"></span>${esc(c)}</span>`).join('')}
+                  ${cats.map(c => `<span class="ov-cat-pill"><span class="ov-swatch" style="background:${CATEGORY_COLORS?.[c] || SEM.faint}"></span>${esc(c)}</span>`).join('')}
                 </td>
                 <td class="muted small">${attempts || '—'}</td>
               </tr>`;
@@ -2840,20 +3148,20 @@ function renderEeroProfiles() {
 // snapshot collector + DNS log already produce.
 
 const CATEGORY_COLORS = {
-  video:        '#1F6E8C',
-  social:       '#E15A2A',
-  messaging:    '#3B5BB6',
-  gaming:       '#2E7D32',
-  music:        '#C7A24A',
-  productivity: '#506A8A',
-  shopping:     '#B8467A',
-  news:         '#8B5E3C',
-  system:       '#B5B5B5',
-  ads:          '#8E8E8E',
-  adult:        '#C13030',
-  gambling:     '#E08B2A',
-  dangerous:    '#7A1F1F',
-  unknown:      '#D6D6D6',
+  video:        SERIES[0],
+  social:       SERIES[5],
+  messaging:    SERIES[1],
+  gaming:       SERIES[2],
+  music:        SERIES[8],
+  productivity: SERIES[7],
+  shopping:     SERIES[4],
+  news:         SERIES[6],
+  system:       SEM.neutral,
+  ads:          SEM.faint,
+  adult:        SEM.danger,
+  gambling:     SEM.warn,
+  dangerous:    SEM.danger,
+  unknown:      SEM.faint,
 };
 const CATEGORY_ORDER = [
   'video','social','messaging','gaming','music',
@@ -2924,7 +3232,7 @@ function drawUsageStackedArea(svg, days) {
   const bottom = new Array(n).fill(0);
   for (let ci = CATEGORY_ORDER.length - 1; ci >= 0; ci--) {
     const cat = CATEGORY_ORDER[ci];
-    const colour = CATEGORY_COLORS[cat] || '#CCC';
+    const colour = CATEGORY_COLORS[cat] || SEM.faint;
     let hasAny = false, top = '', bot = '';
     for (let i = 0; i < n; i++) {
       const v = stacks[i][cat] || 0;
@@ -3072,8 +3380,13 @@ async function renderUsageDossier() {
 //  ACTIVITY — per-device online behaviour log (what / when / category).
 //  Answers "precisely what is this child doing online", from DNS history.
 // ════════════════════════════════════════════════════════════════════
-// Darker, readable on the warm light theme (colour = category meaning).
-const ACT_COLOURS = { adult:'#c4564b','proxy/vpn':'#bf5a2a','ai-helper':'#a8791c',gambling:'#c4564b','dating/strangers':'#c4564b',social:'#6b54c0',gaming:'#3a8f53',video:'#2f7bc0',search:'#7a6f60',other:'#9c9389' };
+// Colour carries category meaning; values come from the shared palette.
+const ACT_COLOURS = {
+  adult: SEM.danger, 'proxy/vpn': SEM.warn, 'ai-helper': SEM.warn,
+  gambling: SEM.danger, 'dating/strangers': SEM.danger,
+  social: SERIES[4], gaming: SERIES[2], video: SERIES[0],
+  search: SEM.neutral, other: SEM.faint,
+};
 const activity = { days:7, mac:'', flaggedOnly:false, filter:'', devices:[], data:null, selected:null };
 
 async function startActivity() {
@@ -4284,7 +4597,7 @@ function renderAdlistCard() {
   const cats = catOrder.filter(c => byCategory.has(c));
 
   const rows = cats.map(cat => {
-    const color = (typeof CATEGORY_COLORS !== 'undefined' && CATEGORY_COLORS[cat]) || '#999';
+    const color = (typeof CATEGORY_COLORS !== 'undefined' && CATEGORY_COLORS[cat]) || SEM.faint;
     const list = byCategory.get(cat).map(src => {
       const sub = subbedByUrl.get(src.url);
       const isOn = !!sub;
@@ -4498,7 +4811,7 @@ function renderAccessControl() {
   catList.innerHTML = ordered.map(cat => {
     const c = cats.categories[cat];
     if (!c) return '';
-    const color = CATEGORY_COLORS[cat] || '#ccc';
+    const color = CATEGORY_COLORS[cat] || SEM.faint;
     const entries = (c.entries || []).slice().sort((a, b) => a.suffix.localeCompare(b.suffix));
     return `
       <details class="ac-cat-block" data-cat="${esc(cat)}">
@@ -4867,8 +5180,8 @@ function renderKidsTimeline(devices, samples, intervalMs) {
   // Now line — only spans the rows area
   const nowMs = Date.now() - todayStart.getTime();
   const nowX = ms2x(nowMs);
-  ticks += `<line x1="${nowX}" y1="${headerH - 4}" x2="${nowX}" y2="${rowsBottom}" stroke="#c45a5a" stroke-width="1" stroke-dasharray="3 3"/>`;
-  ticks += `<text x="${nowX + 4}" y="${headerH - 10}" class="eero-axis-label" fill="#c45a5a">now</text>`;
+  ticks += `<line x1="${nowX}" y1="${headerH - 4}" x2="${nowX}" y2="${rowsBottom}" stroke="${SEM.danger}" stroke-width="1" stroke-dasharray="3 3"/>`;
+  ticks += `<text x="${nowX + 4}" y="${headerH - 10}" class="eero-axis-label" fill="${SEM.danger}">now</text>`;
 
   // Per-device rows
   let rows = '';
@@ -4884,7 +5197,7 @@ function renderKidsTimeline(devices, samples, intervalMs) {
     }
 
     rows += `<text x="6" y="${y + rowH / 2 + 4}" class="kids-timeline-name">${esc(d.display_name || d.hostname || d.mac)}</text>`;
-    rows += `<rect x="${labelW}" y="${y + 4}" width="${trackW}" height="${rowH - 8}" fill="var(--bg-deep, #f1efe9)" stroke="var(--border, #ddd)" stroke-width="0.5"/>`;
+    rows += `<rect x="${labelW}" y="${y + 4}" width="${trackW}" height="${rowH - 8}" style="fill:var(--bg-soft);stroke:var(--border)" stroke-width="0.5"/>`;
 
     // Layer 1: green bars where the device was online AND not blocked
     const arr = presence.get(d.mac) || [];
@@ -4895,7 +5208,7 @@ function renderKidsTimeline(devices, samples, intervalMs) {
       if ((!onlineNotBlocked || j === arr.length) && runStart >= 0) {
         const x1 = ms2x(runStart * intervalMs);
         const x2 = ms2x(j * intervalMs);
-        rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#59a263" fill-opacity="0.7"><title>online</title></rect>`;
+        rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="${SEM.ok}" fill-opacity="0.7"><title>online</title></rect>`;
         runStart = -1;
       }
     }
@@ -4904,7 +5217,7 @@ function renderKidsTimeline(devices, samples, intervalMs) {
     for (const b of blocks) {
       const x1 = ms2x(b.startMs);
       const x2 = ms2x(b.endMs);
-      rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="#c45a5a" fill-opacity="0.75"><title>blocked by schedule</title></rect>`;
+      rows += `<rect x="${x1}" y="${y + 4}" width="${Math.max(1, x2 - x1)}" height="${rowH - 8}" fill="${SEM.danger}" fill-opacity="0.75"><title>blocked by schedule</title></rect>`;
     }
   });
 
@@ -4912,9 +5225,9 @@ function renderKidsTimeline(devices, samples, intervalMs) {
   const legendY = rowsBottom + legendGap + 12;
   const legend = `
     <g class="kids-timeline-legend">
-      <rect x="${labelW}" y="${legendY - 10}" width="10" height="8" fill="#59a263" fill-opacity="0.7"/>
+      <rect x="${labelW}" y="${legendY - 10}" width="10" height="8" fill="${SEM.ok}" fill-opacity="0.7"/>
       <text x="${labelW + 14}" y="${legendY - 3}" class="eero-axis-label">online</text>
-      <rect x="${labelW + 70}" y="${legendY - 10}" width="10" height="8" fill="#c45a5a" fill-opacity="0.75"/>
+      <rect x="${labelW + 70}" y="${legendY - 10}" width="10" height="8" fill="${SEM.danger}" fill-opacity="0.75"/>
       <text x="${labelW + 84}" y="${legendY - 3}" class="eero-axis-label">blocked</text>
     </g>
   `;
@@ -5136,7 +5449,7 @@ function renderTargetCalendar({ mac, name, schedules }) {
       const startDow = startNow.getDay();
       const startMin = startNow.getHours() * 60 + startNow.getMinutes();
       const durationMin = Math.max(0, Math.round((end - startNow) / 60000));
-      blocks += renderBlockBars(startDow, startMin, Math.min(durationMin, 7 * 24 * 60), dayW, hourH, '#c45a5a', s.name);
+      blocks += renderBlockBars(startDow, startMin, Math.min(durationMin, 7 * 24 * 60), dayW, hourH, SEM.danger, s.name);
       continue;
     }
     const startMin = timeToMinutes(s.start_time);
@@ -5145,10 +5458,10 @@ function renderTargetCalendar({ mac, name, schedules }) {
       const dow = DAY_IDX[day];
       if (dow === undefined) continue;
       if (endMin > startMin) {
-        blocks += renderBlock(dow, startMin, endMin, dayW, hourH, '#5e9bdc', s.name);
+        blocks += renderBlock(dow, startMin, endMin, dayW, hourH, SEM.accent, s.name);
       } else {
-        blocks += renderBlock(dow, startMin, 1440, dayW, hourH, '#5e9bdc', s.name);
-        blocks += renderBlock((dow + 1) % 7, 0, endMin, dayW, hourH, '#5e9bdc', s.name);
+        blocks += renderBlock(dow, startMin, 1440, dayW, hourH, SEM.accent, s.name);
+        blocks += renderBlock((dow + 1) % 7, 0, endMin, dayW, hourH, SEM.accent, s.name);
       }
     }
   }
@@ -5874,7 +6187,14 @@ document.getElementById('eeroBedtimePresetBtn')?.addEventListener('click', async
 // ========== INIT ==========
 connectWS();
 refreshStatus();
-loadTasks();
 loadAllSessions();
 loadSkillsForAutocomplete();
 setInterval(refreshStatus, 10000);
+
+// Grants decide which tabs exist, so they are resolved before the opening
+// tab is picked. A hash in the URL wins if it names a tab the principal can
+// reach; otherwise Home.
+loadMe().then(() => {
+  const wanted = location.hash.slice(1);
+  switchTab(TABS[wanted] ? wanted : DEFAULT_TAB);
+});

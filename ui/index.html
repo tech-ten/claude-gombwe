@@ -4,10 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>gombwe</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=6">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F1115" media="(prefers-color-scheme: dark)">
+  <!-- Tokens first: style.css declares no colour of its own and resolves
+       every value through theme.css. No web fonts — the system face loads
+       instantly and matches the OS, which is what an instrument panel
+       should look like. -->
+  <link rel="stylesheet" href="theme.css?v=1">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
   <!-- Top Bar -->
@@ -31,35 +36,60 @@
     <!-- Left Sidebar -->
     <aside class="sidebar">
 
+      <!-- Nav rows carry data-grant. app.js hides a row whose grant the
+           signed-in principal does not hold, and hides a whole group when
+           every row in it is hidden. No grant attribute means always shown. -->
       <nav class="sidebar-nav">
         <div class="nav-section">
-          <button class="nav-item active" data-tab="chat">
-            <span class="nav-dot"></span> Chat
+          <span class="nav-label">Household</span>
+          <button class="nav-item" data-tab="home">
+            <span class="nav-dot"></span> <span>Home</span>
           </button>
-          <button class="nav-item" data-tab="tasks">
-            <span class="nav-dot"></span> Tasks
+          <button class="nav-item" data-tab="chat">
+            <span class="nav-dot"></span> <span>Chat</span>
+          </button>
+          <button class="nav-item" data-tab="family" data-grant="family">
+            <span class="nav-dot"></span> <span>Family</span>
+          </button>
+          <button class="nav-item" data-tab="goals" data-grant="goals">
+            <span class="nav-dot"></span> <span>Goals</span>
           </button>
         </div>
         <div class="nav-section">
-          <span class="nav-label">Home</span>
-          <button class="nav-item" data-tab="family">
-            <span class="nav-dot"></span> Family
-          </button>
-          <button class="nav-item" data-tab="eero">
-            <span class="nav-dot"></span> Network
+          <span class="nav-label">Home network</span>
+          <button class="nav-item" data-tab="eero" data-grant="network">
+            <span class="nav-dot"></span> <span>Network</span>
             <span class="nav-badge hidden" id="eeroNavBadge"></span>
           </button>
         </div>
         <div class="nav-section">
-          <span class="nav-label">Automation</span>
-          <button class="nav-item" data-tab="jobs">
-            <span class="nav-dot"></span> Jobs
+          <span class="nav-label">Agent</span>
+          <button class="nav-item" data-tab="activity" data-grant="activity">
+            <span class="nav-dot"></span> <span>Activity</span>
           </button>
-          <button class="nav-item" data-tab="skills">
-            <span class="nav-dot"></span> Skills
+          <button class="nav-item" data-tab="memory" data-grant="memory">
+            <span class="nav-dot"></span> <span>Memory</span>
           </button>
-          <button class="nav-item" data-tab="services">
-            <span class="nav-dot"></span> Services
+          <button class="nav-item" data-tab="monitors" data-grant="monitors">
+            <span class="nav-dot"></span> <span>Monitors</span>
+          </button>
+          <button class="nav-item" data-tab="permissions" data-grant="owner">
+            <span class="nav-dot"></span> <span>Permissions</span>
+          </button>
+        </div>
+        <div class="nav-section">
+          <span class="nav-label">System</span>
+          <button class="nav-item" data-tab="tasks" data-grant="activity">
+            <span class="nav-dot"></span> <span>Tasks</span>
+          </button>
+          <button class="nav-item" data-tab="jobs" data-grant="owner">
+            <span class="nav-dot"></span> <span>Jobs</span>
+          </button>
+          <button class="nav-item" data-tab="skills" data-grant="owner">
+            <span class="nav-dot"></span> <span>Skills</span>
+          </button>
+          <button class="nav-item" data-tab="services" data-grant="owner">
+            <span class="nav-dot"></span> <span>Services</span>
           </button>
         </div>
       </nav>
@@ -69,8 +99,58 @@
     <!-- Main Content -->
     <main class="content">
 
+      <!-- Home — the landing tab. Three columns of plain tables: what is
+           happening today, what needs a decision, what the agent is working
+           on. Every panel hides itself when its endpoint 404s or returns
+           nothing, so a half-built backend shows a shorter page, never an
+           error. -->
+      <section id="tab-home" class="tab-content active">
+        <div class="page-view home-page">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Home</h1>
+              <p class="page-desc" id="homeGreeting">Household overview</p>
+            </div>
+            <div class="home-toolbar">
+              <span class="home-stamp" id="homeStamp"></span>
+              <button class="btn-ghost btn-sm" id="homeRefreshBtn">Refresh</button>
+            </div>
+          </div>
+
+          <!-- Alerts strip: one line per active network alert, most severe
+               first. Hidden entirely when there is nothing wrong. -->
+          <div class="home-alerts hidden" id="homeAlerts"></div>
+
+          <div class="home-cols">
+            <section class="home-panel" id="homeTodayPanel">
+              <header class="home-panel-head">
+                <span class="label">Today</span>
+                <span class="home-panel-count" id="homeTodayCount"></span>
+              </header>
+              <div class="home-panel-body" id="homeToday"></div>
+            </section>
+
+            <section class="home-panel" id="homeApprovalsPanel" hidden>
+              <header class="home-panel-head">
+                <span class="label">Needs you</span>
+                <span class="home-panel-count" id="homeApprovalsCount"></span>
+              </header>
+              <div class="home-panel-body" id="homeApprovals"></div>
+            </section>
+
+            <section class="home-panel" id="homeGoalsPanel" hidden>
+              <header class="home-panel-head">
+                <span class="label">Active goals</span>
+                <span class="home-panel-count" id="homeGoalsCount"></span>
+              </header>
+              <div class="home-panel-body" id="homeGoals"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <!-- Chat -->
-      <section id="tab-chat" class="tab-content active">
+      <section id="tab-chat" class="tab-content">
         <div class="split-view">
           <div class="list-panel">
             <div class="list-header">
@@ -227,7 +307,7 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Network</h1>
-              <p class="page-desc">Live device control, usage analytics, and full eero API access.</p>
+              <p class="page-desc">Devices, usage, access control and screen time, from the router.</p>
             </div>
             <div class="eero-toolbar">
               <span class="eero-sync-state" id="eeroSyncState"></span>
@@ -885,6 +965,59 @@
         </div>
       </section>
 
+      <!-- Placeholders. Each of these is owned by a later task in this
+           build; the shell registers the tab now so navigation, grants and
+           deep links are settled before the content lands. -->
+      <section id="tab-goals" class="tab-content">
+        <div class="page-view">
+          <div class="page-header"><div>
+            <h1 class="page-title">Goals</h1>
+            <p class="page-desc">Standing objectives and the plan the agent is working through.</p>
+          </div></div>
+          <p class="coming-soon">Coming in this build.</p>
+        </div>
+      </section>
+
+      <section id="tab-activity" class="tab-content">
+        <div class="page-view">
+          <div class="page-header"><div>
+            <h1 class="page-title">Activity</h1>
+            <p class="page-desc">Every action the agent took, who asked for it, and how it ended.</p>
+          </div></div>
+          <p class="coming-soon">Coming in this build.</p>
+        </div>
+      </section>
+
+      <section id="tab-memory" class="tab-content">
+        <div class="page-view">
+          <div class="page-header"><div>
+            <h1 class="page-title">Memory</h1>
+            <p class="page-desc">What the agent has been told to remember, and what it inferred.</p>
+          </div></div>
+          <p class="coming-soon">Coming in this build.</p>
+        </div>
+      </section>
+
+      <section id="tab-monitors" class="tab-content">
+        <div class="page-view">
+          <div class="page-header"><div>
+            <h1 class="page-title">Monitors</h1>
+            <p class="page-desc">Standing watches and the conditions that trigger them.</p>
+          </div></div>
+          <p class="coming-soon">Coming in this build.</p>
+        </div>
+      </section>
+
+      <section id="tab-permissions" class="tab-content">
+        <div class="page-view">
+          <div class="page-header"><div>
+            <h1 class="page-title">Permissions</h1>
+            <p class="page-desc">Who may ask for what, and which actions need an approval first.</p>
+          </div></div>
+          <p class="coming-soon">Coming in this build.</p>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -896,6 +1029,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
