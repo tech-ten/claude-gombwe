@@ -17,5 +17,6 @@ All notable changes to gombwe. Versions follow semver; releases are git tags.
 
 ### Changed
 - Only loopback requests without a Cloudflare Access header count as the owner. Other LAN clients are guests until they come through dashboard.gombwe.com or are bound to a principal.
+- Dashboard Activity tab: the ledger with filters and outcome chips, pending approvals pinned with Approve and Deny; chat shows approval cards inline and an acted chip after a side effect.
 - Dashboard redesigned as an instrument panel: white surfaces, one blue accent, hairlines, system fonts, light and dark, new Home tab, grant-aware navigation (`ui/theme.css`, `docs/design-system.md`).
 - Apple event packet moved to `docs/reference/apple-event/`; launcher script retired in favour of the household-agent spec and plan.
