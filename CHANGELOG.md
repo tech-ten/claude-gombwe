@@ -7,7 +7,7 @@ All notable changes to gombwe. Versions follow semver; releases are git tags.
 ### Added
 - CI workflow: build and test on every push and pull request.
 - Architecture decision records 0001 to 0015 under `docs/adr/`.
-- Action ledger (`src/ledger.ts`): append-only JSONL of every side effect, `GET /api/ledger`.
+- Action ledger (`src/ledger.ts`): append-only JSONL of every side effect, `GET /api/ledger`; family tools, skill tools, cron runs, triggers and workflow steps all write to it and the dashboard receives `ledger:record` live.
 - Tool registry (`src/gombwe-tools.ts`) exposed to every Claude session through a per-session MCP server (`src/mcp/gombwe.ts`) with a session token; non-owner sessions get only the servers their grants allow. `docs/developer.md`.
 - Grocery checkout asks for approval before placing the order; the card CVV moves to the macOS Keychain (`gombwe-grocery-cvv`); cart, checkout and order are ledgered.
 - Household memory (`src/memory.ts`): durable facts per person with forget tombstones, a capped context block in every conversation and task, `/remember`, `/forget`, `/memory`, `/api/memory`.
