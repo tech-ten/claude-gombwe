@@ -90,6 +90,13 @@ export const DEFAULT_POLICIES: Record<string, Policy> = {
   credential: 'never',
 };
 
+/**
+ * The one class no policy edit can loosen. gombwe has no business holding a
+ * password, a card number or a one-time code, and an owner who could set this to
+ * `confirm` from the dashboard could be talked into setting it there.
+ */
+export const LOCKED_POLICIES: Record<string, Policy> = { credential: 'never' };
+
 const FILE = 'approvals.json';
 const DEFAULT_TTL_MS = 30 * 60_000;
 /** Settled requests kept on disk, newest first. Pending ones are always kept. */
@@ -158,6 +165,10 @@ export class Approvals extends EventEmitter {
 
   setPolicy(cls: ApprovalClass, policy: Policy): void {
     if (!POLICIES.includes(policy)) throw new Error(`policy must be one of ${POLICIES.join(', ')}`);
+    const locked = LOCKED_POLICIES[String(cls)];
+    if (locked && policy !== locked) {
+      throw new ApprovalError(`${cls} is always ${locked} and cannot be changed`, 'forbidden');
+    }
     this.policyTable[String(cls)] = policy;
     this.save();
   }
@@ -272,7 +283,7 @@ export class Approvals extends EventEmitter {
   /** Newest first, pending and settled. Used by the dashboard's history view. */
   list(limit = 100): ApprovalRequest[] {
     this.expireDue();
-    return [...this.requests].reverse().slice(0, Math.max(1, limit)).map(clone);
+    return [...this.requests].reverse().slice(0, Math.max(0, limit)).map(clone);
   }
 
   /**
@@ -354,6 +365,8 @@ export class Approvals extends EventEmitter {
       for (const [cls, policy] of Object.entries(parsed?.policies ?? {})) {
         if (POLICIES.includes(policy)) this.policyTable[cls] = policy;
       }
+      // A hand-edited file cannot loosen a locked class either.
+      Object.assign(this.policyTable, LOCKED_POLICIES);
       this.requests = (Array.isArray(parsed?.requests) ? parsed.requests : [])
         .filter((r): r is ApprovalRequest => !!r && typeof r.id === 'string' && typeof r.ledgerId === 'string');
     } catch {

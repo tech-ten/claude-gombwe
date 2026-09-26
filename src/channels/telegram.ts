@@ -103,6 +103,8 @@ export class TelegramChannel implements ChannelAdapter {
       { command: 'model', description: 'Switch model (opus/sonnet/haiku)' },
       { command: 'mode', description: 'Switch mode (chat/task)' },
       { command: 'cancel', description: 'Cancel a running task' },
+      { command: 'approve', description: 'Approve a waiting action' },
+      { command: 'deny', description: 'Refuse a waiting action' },
       // Skills as commands
       ...skillNames.map(name => ({
         command: name,

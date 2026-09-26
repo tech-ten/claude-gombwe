@@ -133,6 +133,31 @@ test('a never refusal honours an explicit action name', () => {
   assert.equal(ledger.list()[0].action, 'email.otp.read');
 });
 
+test('credential cannot be set to anything but never', () => {
+  const { approvals, dataDir } = build();
+  assert.throws(() => approvals.setPolicy('credential', 'auto'), /credential/);
+  assert.throws(() => approvals.setPolicy('credential', 'confirm'), /credential/);
+  assert.equal(approvals.policyFor('credential'), 'never');
+  // Setting it to what it already is is not an error.
+  approvals.setPolicy('credential', 'never');
+  assert.equal(approvals.policyFor('credential'), 'never');
+  // Nor can a hand-edited file loosen it.
+  writeFileSync(join(dataDir, 'approvals.json'), JSON.stringify({
+    policies: { credential: 'auto', pay: 'auto' }, requests: [],
+  }));
+  const reopened = build({ dataDir }).approvals;
+  assert.equal(reopened.policyFor('credential'), 'never');
+  assert.equal(reopened.policyFor('pay'), 'auto');
+});
+
+test('list clamps a limit of zero to nothing rather than to one', () => {
+  const { approvals } = build();
+  pending(approvals);
+  assert.equal(approvals.list().length, 1);
+  assert.deepEqual(approvals.list(0), []);
+  assert.deepEqual(approvals.list(-5), []);
+});
+
 test('setPolicy changes a class and survives a restart', () => {
   const { approvals, dataDir } = build();
   approvals.setPolicy('pay', 'auto');

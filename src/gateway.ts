@@ -28,7 +28,7 @@ import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
-import { ApprovalError, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
+import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
 import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
@@ -86,10 +86,13 @@ export class Gateway {
   private nextdns: NextDNSClient;
   private services: Services;
   /**
-   * Approval ids already resumed. A decision fires once, so this is belt and
-   * braces: whatever replays the event, a session is never injected into twice.
+   * Approval ids already resumed, oldest first. A decision fires once, so this is
+   * belt and braces: whatever replays the event, a session is never injected
+   * into twice. Bounded to the same depth as the stored history, since an id
+   * that old cannot be decided again.
    */
   private resumedApprovals: Set<string> = new Set();
+  private static RESUMED_LIMIT = 500;
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -313,6 +316,18 @@ export class Gateway {
    * the owner when somebody else raised it, a decision goes back to that session
    * and then resumes it, and the dashboard sees all of it over the socket.
    */
+  /**
+   * Tell a channel about an approval. Fire and forget on purpose: a Telegram
+   * outage must not take down the decision that triggered the notice, and these
+   * run inside a synchronous `decide()` emit where there is nobody to await.
+   */
+  private sendApprovalNotice(channel: string | undefined, sessionKey: string, text: string): void {
+    const ch = channel ? this.channels.get(channel) : undefined;
+    if (!ch) return;
+    void Promise.resolve(ch.send(sessionKey, text)).catch(err =>
+      console.error(`[approvals] notify via ${channel} failed: ${err instanceof Error ? err.message : err}`));
+  }
+
   private setupApprovals(): void {
     const approvals = this.services.approvals;
 
@@ -322,7 +337,7 @@ export class Gateway {
         `Approval needed [${id8}]: ${req.summary}\n` +
         `Reply /approve ${id8} or /deny ${id8}. Expires in 30 min.`;
       if (req.channel && req.sessionKey) {
-        this.channels.get(req.channel)?.send(req.sessionKey, text);
+        this.sendApprovalNotice(req.channel, req.sessionKey, text);
       }
       // The owner is the fallback decider, so they hear about anyone else's
       // request even when they are not in that conversation — and about any
@@ -332,7 +347,7 @@ export class Gateway {
       const inAChat = !!(req.channel && req.sessionKey);
       if (requester?.role !== 'owner' || !inAChat) {
         const target = this.config.notify?.ownerChannel ?? 'web';
-        this.channels.get(target)?.send(`notify:${target}`, text);
+        this.sendApprovalNotice(target, `notify:${target}`, text);
       }
       this.broadcast({ type: 'approval:requested', data: req, timestamp: req.createdAt });
     });
@@ -341,7 +356,7 @@ export class Gateway {
       const by = this.services.principals.get(req.decidedBy ?? '')?.name ?? req.decidedBy ?? 'someone';
       const text = `Approval [${shortId(req.id)}] ${req.status} by ${by}: ${req.summary}`;
       if (req.channel && req.sessionKey) {
-        this.channels.get(req.channel)?.send(req.sessionKey, text);
+        this.sendApprovalNotice(req.channel, req.sessionKey, text);
       }
       this.broadcast({
         type: 'approval:decided',
@@ -356,7 +371,7 @@ export class Gateway {
         `Approval [${shortId(req.id)}] expired without a decision: ${req.summary}\n` +
         `Ask again if you still want it.`;
       if (req.channel && req.sessionKey) {
-        this.channels.get(req.channel)?.send(req.sessionKey, text);
+        this.sendApprovalNotice(req.channel, req.sessionKey, text);
       }
       // Expiry is a settled approval as far as the dashboard is concerned; the
       // status on the payload says which way it went.
@@ -395,6 +410,11 @@ export class Gateway {
     const session = this.sessions.getSession(req.sessionKey);
     if (!session || session.mode !== 'chat') return;
     this.resumedApprovals.add(req.id);
+    // Sets iterate in insertion order, so this drops the oldest ids.
+    for (const id of this.resumedApprovals) {
+      if (this.resumedApprovals.size <= Gateway.RESUMED_LIMIT) break;
+      this.resumedApprovals.delete(id);
+    }
     try {
       await this.handleIncoming({
         channel: req.channel,
@@ -1664,8 +1684,18 @@ export class Gateway {
         if (!POLICIES.includes(policy as Policy)) {
           res.status(400).json({ error: `policy for ${cls} must be one of ${POLICIES.join(', ')}` }); return;
         }
+        const locked = LOCKED_POLICIES[cls];
+        if (locked && policy !== locked) {
+          res.status(400).json({ error: `${cls} is always ${locked} and cannot be changed` }); return;
+        }
       }
-      for (const [cls, policy] of entries) this.services.approvals.setPolicy(cls, policy as Policy);
+      // Validated above, so this loop cannot half-apply; the catch is a backstop
+      // that keeps a rejected edit a 400 rather than a 500.
+      try {
+        for (const [cls, policy] of entries) this.services.approvals.setPolicy(cls, policy as Policy);
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); return;
+      }
       const policies = this.services.approvals.policies();
       this.services.ledger.record({
         actor: this.webActor(req),
