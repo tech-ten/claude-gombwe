@@ -237,7 +237,8 @@ export type WSEventType =
   | 'network:policy:flagged'
   | 'network:policy:blocked'
   | 'approval:requested'
-  | 'approval:decided';
+  | 'approval:decided'
+  | 'ledger:record';
 
 export interface WSEvent {
   type: WSEventType;
@@ -247,7 +248,9 @@ export interface WSEvent {
 
 // ── Action ledger ─────────────────────────────────────────────
 // Defined in ledger.ts; re-exported here so callers have one types entry point.
-export type { LedgerEntry, LedgerActor, LedgerOutcome, LedgerFilter } from './ledger.js';
+export type {
+  LedgerEntry, LedgerActor, LedgerOutcome, LedgerFilter, LedgerEvent, LedgerEventSink,
+} from './ledger.js';
 
 // ── Principals & permissions ──────────────────────────────────
 // Defined in permissions.ts; re-exported here so callers have one types entry point.

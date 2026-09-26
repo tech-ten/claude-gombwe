@@ -10,6 +10,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 export type LedgerActor =
   | 'chat' | 'task' | 'cron' | 'trigger' | 'goal' | 'monitor'
@@ -50,6 +51,44 @@ export type LedgerInput =
 export type LedgerPatch =
   Partial<Pick<LedgerEntry, 'outcome' | 'receipt' | 'error' | 'approvalId'>>;
 
+/**
+ * What a background engine reports about something it just did.
+ *
+ * The engines (triggers, workflows, the scheduler) know nothing about the
+ * ledger or who owns it — they hand the gateway a description of the event and
+ * it decides the principal and writes the line. Keeps the engines testable
+ * without a data directory and keeps the ledger the gateway's business.
+ */
+export interface LedgerEvent {
+  actor: LedgerActor;
+  action: string;
+  target?: string;
+  params?: Record<string, unknown>;
+  outcome: 'ok' | 'failed';
+  receipt?: Record<string, unknown>;
+  error?: string;
+}
+
+export type LedgerEventSink = (event: LedgerEvent) => void;
+
+/**
+ * Hand an event to a sink without letting a bad sink take the caller down: the
+ * side effect already happened, and losing it over a broken subscriber would
+ * be worse than losing the line.
+ */
+export function reportEvent(
+  sink: LedgerEventSink | undefined,
+  label: string,
+  event: LedgerEvent,
+): void {
+  if (!sink) return;
+  try {
+    sink(event);
+  } catch (err: any) {
+    console.error(`[${label}] event sink threw for ${event.action}: ${err?.message}`);
+  }
+}
+
 const FILE = 'ledger.jsonl';
 const DEFAULT_ROTATE_BYTES = 50 * 1024 * 1024;
 const MAX_LIMIT = 1000;
@@ -69,7 +108,13 @@ function stamp(date: Date): string {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '');
 }
 
-export class Ledger {
+/**
+ * Emits `'record'` with the entry that was just appended — by `record()` and by
+ * `update()`, since a superseding line is as much news as a fresh one. The
+ * gateway subscribes once and relays each entry to the dashboard over the
+ * WebSocket, so no call site has to remember to broadcast.
+ */
+export class Ledger extends EventEmitter {
   private file: string;
   private rotateBytes: number;
   private entries = new Map<string, LedgerEntry>();
@@ -78,6 +123,7 @@ export class Ledger {
   private nextSeq = 0;
 
   constructor(private dataDir: string, opts: { rotateBytes?: number } = {}) {
+    super();
     this.file = join(dataDir, FILE);
     this.rotateBytes = opts.rotateBytes ?? DEFAULT_ROTATE_BYTES;
     if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
@@ -141,6 +187,7 @@ export class Ledger {
     };
     this.append(entry);
     this.remember(entry);
+    this.announce(entry);
     return entry;
   }
 
@@ -151,7 +198,21 @@ export class Ledger {
     const merged: LedgerEntry = { ...current, ...patch };
     this.append(merged);
     this.remember(merged);
+    this.announce(merged);
     return merged;
+  }
+
+  /**
+   * A listener that throws must not unwind the writer: the line is already on
+   * disk, and losing the caller's return value over a bad subscriber would be
+   * the worse failure.
+   */
+  private announce(entry: LedgerEntry): void {
+    try {
+      this.emit('record', entry);
+    } catch (err: any) {
+      console.error(`[ledger] a 'record' listener threw: ${err?.message}`);
+    }
   }
 
   get(id: string): LedgerEntry | undefined {

@@ -5,7 +5,10 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter, LedgerActor, LedgerOutcome, Session } from './types.js';
+import type {
+  GombweConfig, WSEvent, IncomingMessage, ChannelAdapter,
+  LedgerActor, LedgerOutcome, LedgerEntry, LedgerEvent, Session,
+} from './types.js';
 import { saveConfig } from './config.js';
 import { AgentRuntime } from './agent.js';
 import type { AgentCallOptions } from './agent.js';
@@ -130,9 +133,22 @@ export class Gateway {
     this.agent = new AgentRuntime(config);
     this.sessions = new SessionManager(config);
     this.skills = new SkillLoader(config.skillsDirs);
+    // The sinks reach `this.services` lazily: it is built further down this
+    // constructor, and nothing fires a trigger or a cron tick until the
+    // gateway is listening.
+    const ledgerSink = (event: LedgerEvent) => {
+      this.services.ledger.record({
+        ...event,
+        // Nobody asked for a cron tick or a trigger firing; it is gombwe's own work.
+        principal: 'system',
+        params: event.params ? truncateDeep(event.params) as Record<string, unknown> : undefined,
+        receipt: event.receipt ? truncateDeep(event.receipt) as Record<string, unknown> : undefined,
+      });
+    };
+
     this.scheduler = new Scheduler(config, (job) => {
       this.agent.runTask(job.prompt, job.channel, job.sessionKey);
-    });
+    }, { onEvent: ledgerSink });
 
     // Notify function — sends a message to specified channels.
     // Supports:
@@ -161,8 +177,8 @@ export class Gateway {
       });
     };
 
-    this.triggers = new TriggerEngine(config, this.agent, notifyFn);
-    this.workflows = new WorkflowEngine(config, this.agent, notifyFn);
+    this.triggers = new TriggerEngine(config, this.agent, notifyFn, { onEvent: ledgerSink });
+    this.workflows = new WorkflowEngine(config, this.agent, notifyFn, { onEvent: ledgerSink });
 
     this.eero = new EeroClient(config.dataDir);
     this.eeroStore = new EeroStore(config.dataDir, this.eero, (event) => {
@@ -173,11 +189,25 @@ export class Gateway {
 
     this.services = createServices(config);
 
+    this.setupLedgerBroadcast();
     this.setupApprovals();
     this.setupAgentEvents();
     this.setupWebSocket();
     this.setupRoutes();
     this.setupChannels();
+  }
+
+  /**
+   * One subscription for the whole gateway: every line the ledger accepts —
+   * from a route, a background engine, the agent's own tools or a loopback
+   * `POST /api/ledger` — reaches the dashboard's activity feed live. Doing it
+   * here rather than at each `record` call site means a new writer cannot
+   * forget to broadcast.
+   */
+  private setupLedgerBroadcast(): void {
+    this.services.ledger.on('record', (entry: LedgerEntry) => {
+      this.broadcast({ type: 'ledger:record', data: entry, timestamp: entry.time });
+    });
   }
 
   private setupAgentEvents(): void {
@@ -1312,7 +1342,10 @@ export class Gateway {
             // Find matching tool by name, or default to first tool
             const tool = (arg && skill.tools.find(t => t.name.includes(arg))) || skill.tools[0];
             const skillDir = dirname(skill.path);
-            const output = await executeSkillTool(tool, skillDir);
+            const output = await executeSkillTool(tool, skillDir, this.services.ledger, {
+              skillName: skill.name,
+              principal: msg.principal,
+            });
             await reply(output);
             this.sessions.addEntry(msg.sessionKey, {
               role: 'assistant',

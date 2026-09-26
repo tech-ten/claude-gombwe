@@ -4,18 +4,70 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { CronJob, GombweConfig } from './types.js';
+import { reportEvent, type LedgerEventSink } from './ledger.js';
 
 export class Scheduler extends EventEmitter {
   private jobs: Map<string, CronJob> = new Map();
   private runners: Map<string, Cron> = new Map();
   private jobsFile: string;
   private onTrigger: (job: CronJob) => void;
+  /** Set by the gateway so every run lands in the action ledger. */
+  private onEvent?: LedgerEventSink;
 
-  constructor(config: GombweConfig, onTrigger: (job: CronJob) => void) {
+  constructor(
+    config: GombweConfig,
+    onTrigger: (job: CronJob) => void,
+    opts: { onEvent?: LedgerEventSink } = {},
+  ) {
     super();
     this.jobsFile = join(config.dataDir, 'cron-jobs.json');
     this.onTrigger = onTrigger;
+    this.onEvent = opts.onEvent;
     this.loadJobs();
+  }
+
+  setEventSink(onEvent: LedgerEventSink | undefined): void {
+    this.onEvent = onEvent;
+  }
+
+  /**
+   * One tick of a job: stamp it, hand it to the gateway, record the run.
+   *
+   * The outcome is the handoff, not the task — `onTrigger` starts an agent task
+   * and returns; the task's own completion is recorded by the agent's events. A
+   * throw here means the task never started, and it is swallowed so one bad job
+   * does not take croner's timer down with it.
+   */
+  private fire(job: CronJob): void {
+    job.lastRun = new Date().toISOString();
+    this.persistJobs();
+
+    let error: string | undefined;
+    try {
+      this.onTrigger(job);
+    } catch (err: any) {
+      error = err?.message ?? String(err);
+      console.error(`[scheduler] job ${job.id} could not start: ${error}`);
+    }
+
+    reportEvent(this.onEvent, 'scheduler', {
+      actor: 'cron',
+      action: `cron.${job.id}.run`,
+      target: job.id,
+      params: { expression: job.expression, timezone: job.timezone, channel: job.channel },
+      outcome: error ? 'failed' : 'ok',
+      error,
+    });
+
+    this.emit('job:triggered', job);
+  }
+
+  /** Test seam: take one tick now, the way croner would. */
+  fireForTest(jobId: string): boolean {
+    const job = this.jobs.get(jobId);
+    if (!job) return false;
+    this.fire(job);
+    return true;
   }
 
   private loadJobs(): void {
@@ -69,12 +121,7 @@ export class Scheduler extends EventEmitter {
 
     const runner = new Cron(job.expression, {
       timezone: job.timezone,
-    }, () => {
-      job.lastRun = new Date().toISOString();
-      this.persistJobs();
-      this.onTrigger(job);
-      this.emit('job:triggered', job);
-    });
+    }, () => this.fire(job));
 
     job.nextRun = runner.nextRun()?.toISOString();
     this.runners.set(job.id, runner);

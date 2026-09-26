@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from '../paths.js';
+import { postLedger } from './family-ledger.js';
 
 // ── Config ──────────────────────────────────────────────────
 const DATA_DIR = process.env.GOMBWE_DATA_DIR || dataDir();
@@ -37,6 +38,12 @@ function loadRecipes(): Record<string, any> {
   catch { return {}; }
 }
 
+/**
+ * The short human-readable feed the dashboard shows on the Family tab. Kept
+ * alongside the ledger rather than replaced by it: this one lives in
+ * family.json, is capped at 100 entries and is what the family reads. The
+ * ledger is the durable audit trail and is written by `postLedger`.
+ */
 function logAction(data: any, actor: string, action: string, detail: string): void {
   if (!data.actions) data.actions = [];
   data.actions.unshift({ time: new Date().toISOString(), actor, action, detail });
@@ -187,6 +194,7 @@ server.tool(
     family.meals[dk][slot] = meal;
     logAction(family, 'user', 'meal added', `${slot} on ${dk}: ${meal}`);
     saveFamily(family);
+    await postLedger({ action: 'family.meal.set', target: dk, params: { date: dk, slot, meal } });
 
     // Extract and add ingredients
     const pantry = (family.pantry || []).map((p: any) => typeof p === 'string' ? p : p.name);
@@ -213,6 +221,12 @@ server.tool(
       if (added.length > 0) {
         logAction(updated, 'gombwe', 'ingredients added', `${added.length} items for ${meal}`);
         saveFamily(updated);
+        await postLedger({
+          action: 'family.grocery.ingredients-added',
+          target: meal,
+          params: { meal, date: dk, slot },
+          receipt: { added },
+        });
       }
       return { content: [{ type: 'text' as const, text: `Added ${slot} on ${dayLabel(dk)} ${dk}: ${meal}\nShopping list: +${added.join(', ')}` }] };
     }
@@ -243,6 +257,7 @@ server.tool(
       if (Object.keys(family.meals[dk]).length === 0) delete family.meals[dk];
       logAction(family, 'user', 'meal removed', `${slot} on ${dk}: ${removed}`);
       saveFamily(family);
+      await postLedger({ action: 'family.meal.remove', target: dk, params: { date: dk, slot }, receipt: { removed } });
       return { content: [{ type: 'text' as const, text: `Removed ${slot} on ${dayLabel(dk)}: ${removed}` }] };
     }
     return { content: [{ type: 'text' as const, text: `No ${slot} found on ${dk}.` }] };
@@ -303,6 +318,7 @@ server.tool(
     if (added.length > 0) {
       logAction(family, 'user', 'added to list', added.join(', '));
       saveFamily(family);
+      await postLedger({ action: 'family.grocery.add', params: { items: names }, receipt: { added } });
       return { content: [{ type: 'text' as const, text: `Added to list: ${added.join(', ')}` }] };
     }
     return { content: [{ type: 'text' as const, text: 'Those items are already on the list.' }] };
@@ -355,6 +371,7 @@ server.tool(
     if (removed.length > 0) {
       logAction(family, 'user', 'removed from list', removed.join(', '));
       saveFamily(family);
+      await postLedger({ action: 'family.grocery.remove', params: { items: names }, receipt: { removed } });
       return { content: [{ type: 'text' as const, text: `Removed: ${removed.join(', ')}` }] };
     }
     return { content: [{ type: 'text' as const, text: 'None of those items were found on the list.' }] };
@@ -387,6 +404,12 @@ server.tool(
     }
 
     saveFamily(family);
+    await postLedger({
+      action: existing >= 0 ? 'family.member.update' : 'family.member.add',
+      target: name,
+      params: { name, type, dietary },
+      receipt: { member },
+    });
     const total = family.members.length;
     return { content: [{ type: 'text' as const, text: `${existing >= 0 ? 'Updated' : 'Added'} ${name} (${type}${dietary ? ', ' + dietary : ''}). Family size: ${total}.` }] };
   }
@@ -432,6 +455,7 @@ server.tool(
     const removed = family.members.splice(idx, 1)[0];
     logAction(family, 'user', 'member removed', removed.name);
     saveFamily(family);
+    await postLedger({ action: 'family.member.remove', target: removed.name, params: { name }, receipt: { removed } });
     return { content: [{ type: 'text' as const, text: `Removed ${removed.name}. Family size: ${family.members.length}.` }] };
   }
 );
@@ -578,6 +602,12 @@ server.tool(
     const family = loadFamily();
     logAction(family, 'user', idx >= 0 ? 'watchlist updated' : 'watchlist added', `${name} (max $${max_price})`);
     saveFamily(family);
+    await postLedger({
+      action: idx >= 0 ? 'family.watchlist.update' : 'family.watchlist.add',
+      target: name,
+      params: { name, max_price, category },
+      receipt: { entry },
+    });
     return { content: [{ type: 'text' as const, text: `${idx >= 0 ? 'Updated' : 'Added'} watchlist item: ${name} — max $${max_price} (${category}). Tomorrow's 06:00 cron will start polling it.` }] };
   }
 );
@@ -607,6 +637,7 @@ server.tool(
     const family = loadFamily();
     logAction(family, 'user', 'watchlist removed', removed.name);
     saveFamily(family);
+    await postLedger({ action: 'family.watchlist.remove', target: removed.name, params: { name }, receipt: { removed } });
     return { content: [{ type: 'text' as const, text: `Removed: ${removed.name}` }] };
   }
 );
