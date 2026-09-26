@@ -858,3 +858,18 @@ Spec coverage: s4 Task 5 and 10; s5 Tasks 2 and 7; s6 Tasks 3, 4, 6; s7 Task 8; 
 Type consistency: `Principal`, `Ledger`, `Approvals.request` result, `Monitor` shape and `Goals.waitFor` signature are used identically across Tasks 3, 4, 6, 8, 9, 12, 15. `Services` gains one field per task in this order: ledger, principals, approvals, memory, sessionTokens, monitors, goals, reflection, desktop, whatsapp, email, remoteMcp.
 
 Placeholders: none. The investor memo's "ask" sentence is intentionally left for the owner and is labelled as such in the doc.
+
+---
+
+### Task 22: Config directory override everywhere (added 2026-09-27 during execution)
+
+**Branch:** `config-dir-everywhere`
+
+**Why:** `GOMBWE_CONFIG_DIR` (Task 2) only redirects `src/config.ts`. Sixteen `src/` modules and twenty scripts still hardcode `join(homedir(), '.claude-gombwe')`, so any dev instance or smoke run touches production data on the Mac mini (which is the production host, running from a symlink to this checkout).
+
+**Files:**
+- Modify: every file listed by `grep -ln "homedir()" src/*.ts src/*/*.ts scripts/*.mjs | grep -v test`, EXCEPT `src/gateway.ts` (handled in Task 5 to avoid a merge conflict with the approvals branch) and `src/config.ts` (already done).
+- Create: `src/paths.ts` exporting `configDir()`, `dataDir()`, and `scripts/paths.mjs` exporting the same for ESM scripts. Both: `process.env.GOMBWE_CONFIG_DIR || join(homedir(), '.claude-gombwe')`; `dataDir()` = `join(configDir(), 'data')`.
+- Test: `src/paths.test.ts` (env set → both functions under the env dir; env unset → under home).
+
+**Steps:** replace each hardcoded path with the helper (keep any sub-path such as `mikrotik.json` or `data/family.json` exactly as before). Scripts import `./paths.mjs`. `src/mcp/family.ts` already honours `GOMBWE_DATA_DIR`; make it fall back to `dataDir()` instead of the hardcoded home path. Grep must return zero non-test matches for `homedir()` outside `src/paths.ts`, `scripts/paths.mjs`, `src/config.ts`, and `scripts/platform.mjs` if it has an unrelated use. Build, test, commit.
