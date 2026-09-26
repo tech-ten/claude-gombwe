@@ -43,7 +43,11 @@ The pieces the tool surface rests on:
    that principal may load. The token goes in that file's `env`, mode 0600.
 3. The CLI is spawned with `--mcp-config <that file>`, plus
    `--strict-mcp-config` for anyone but the owner — so nothing from
-   `~/.claude.json` loads for a child's session.
+   `~/.claude.json` loads for a child's session. An owner's session also gets
+   the configs from `config.agents.mcpConfigs`, because third-party servers
+   declared inline in `gombwe.json` live there and the session file cannot name
+   them: it only writes servers gombwe owns. The session file goes last, so it
+   wins any name it shares with them.
 4. The CLI spawns `dist/mcp/gombwe.js`, which fetches `GET /api/tools` with the
    token as a bearer and registers whatever comes back.
 5. Each tool call becomes `POST /api/tools/:name`. The gateway re-reads the
@@ -57,7 +61,16 @@ request from off the network arrives through `cloudflared` on loopback too — s
 
 Tokens are never persisted. A restart ends every session's tool access, which is
 the right way round: a token that outlived the gateway would outlive the roster
-it was checked against.
+it was checked against. A token idle for seven days is pruned on the next mint,
+and writing a config sweeps `data/mcp/` of files older than the same TTL.
+
+One more rule holds this together: a **system-originated** message — gombwe
+feeding an approval decision back into a conversation — speaks for whoever last
+spoke on that session, not for its `sender` of `'system'`. Without that,
+`sessionPrincipalFor` would resolve the resumed turn to a guest: the child whose
+request was just approved would lose their memory tools and the family server
+for exactly the turn that was supposed to carry on, and their live token would be
+thrown away. The session records its principal for this reason.
 
 ## Running in dev
 
@@ -155,15 +168,16 @@ Everything lives under `GOMBWE_CONFIG_DIR` (default `~/.claude-gombwe`):
 | `principals.json` | the roster: roles, channel bindings, grants |
 | `approvals.json` | pending and recent approval requests, plus the policy table |
 | `memory.json`, `tombstones.json` | what is remembered, and what was forgotten |
-| `mcp/<sha1>.json` | one per session: its MCP servers and bearer token, 0600 |
+| `mcp/<sha1>.json` | one per session: its MCP servers and bearer token, 0600, swept after 7 days |
 | `tasks/tasks.json` | agent tasks and their completion-loop state |
 | `family.json`, `recipes.json` | meals, grocery list, pantry |
 | `network-*.json`, `dns-index.json` | router state, device policy, name cache |
 | `eero-*.json`, `nextdns-config.json` | the eero sidecar and DNS filtering |
 | `cron-jobs.json`, `triggers.json`, `workflows.json`, `schedules.json` | automation |
 
-`data/mcp/` is regenerated per message and holds live credentials. It is not
-worth backing up, and it should not be committed.
+`data/mcp/` is regenerated per message, holds live credentials, and sweeps itself
+of anything older than the token TTL. It is not worth backing up, and it should
+not be committed.
 
 ## Testing on this machine
 

@@ -15,7 +15,6 @@ import { Scheduler } from './scheduler.js';
 import { TriggerEngine } from './triggers.js';
 import { WorkflowEngine } from './workflows.js';
 import { networkInterfaces } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { WebChannel } from './channels/web.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { DiscordChannel } from './channels/discord.js';
@@ -31,10 +30,10 @@ import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
 import { callTool, toolManifestFor } from './gombwe-tools.js';
-import { writeSessionMcpConfig } from './mcp-config.js';
+import { sessionTokenFor, writeSessionMcpConfig } from './mcp-config.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLocalProcessRequest, matchNetworkAction, sessionPrincipalFor } from './permissions.js';
 import { MEMORY_KINDS, mayRead, mayWriteSubject, normalise as normaliseMemory, parseRememberArgs } from './memory.js';
 import type { MemoryKind, MemoryRecord, MemorySource } from './memory.js';
 import { dataDir as gombweDataDir } from './paths.js';
@@ -530,8 +529,14 @@ export class Gateway {
     msg: IncomingMessage,
     opts: { suppressLog?: boolean } = {},
   ): Promise<void> {
-    msg.principal = this.resolvePrincipal(msg).id;
+    // The session first, so `resolvePrincipal` can see whose conversation this
+    // is before deciding who a system-originated turn speaks for.
     const session = this.sessions.getOrCreate(msg.sessionKey, msg.channel);
+    const principal = this.resolvePrincipal(msg);
+    msg.principal = principal.id;
+    // Only a person speaking changes whose conversation this is. A system
+    // message is gombwe resuming its own turn and must not reassign it.
+    if (!msg.system) this.sessions.setPrincipal(msg.sessionKey, principal.id);
     if (!opts.suppressLog) {
       this.sessions.addEntry(msg.sessionKey, {
         role: 'user',
@@ -1471,10 +1476,16 @@ export class Gateway {
    * Discord and Telegram send a stable numeric user id as `sender`.
    *
    * A message with no sender at all resolves to a guest rather than to the
-   * owner: an unattributed message must not be able to approve a payment.
+   * owner: an unattributed message must not be able to approve a payment. The
+   * one exception is a system message, which speaks for whoever was last on the
+   * session — see `sessionPrincipalFor`.
    */
   private resolvePrincipal(msg: IncomingMessage): Principal {
-    return this.services.principals.resolve(msg.channel, msg.sender || 'unknown');
+    return sessionPrincipalFor(
+      this.sessions.getSession(msg.sessionKey),
+      msg,
+      this.services.principals,
+    );
   }
 
   /**
@@ -1528,47 +1539,6 @@ export class Gateway {
 
   // ── The agent's tool surface ─────────────────────────────────
 
-  /** How long a session token survives without the session being spoken on. */
-  private static SESSION_TOKEN_TTL_MS = 7 * 24 * 60 * 60_000;
-
-  /**
-   * The bearer token this session's agent presents on every tool call.
-   *
-   * One token per session, reused across messages so the session's MCP config
-   * does not need a fresh secret every turn. If the person on the session
-   * changed — a shared web tab, a chat account rebound to someone else — the old
-   * token is dropped rather than re-pointed, so anything still holding it stops
-   * working rather than quietly acting as the new person.
-   */
-  private tokenForSession(sessionKey: string, principalId: string, channel?: string): string {
-    const tokens = this.services.sessionTokens;
-    const stamp = new Date().toISOString();
-    this.pruneSessionTokens();
-    for (const [token, held] of tokens) {
-      if (held.sessionKey !== sessionKey) continue;
-      if (held.principalId === principalId) {
-        held.channel = channel ?? held.channel;
-        // Refreshed so a conversation that runs for weeks is not pruned
-        // out from under a task that is still holding this token.
-        held.createdAt = stamp;
-        return token;
-      }
-      tokens.delete(token);
-    }
-    const token = randomBytes(32).toString('hex');
-    tokens.set(token, { principalId, sessionKey, channel, createdAt: stamp });
-    return token;
-  }
-
-  /** Forget tokens for sessions nobody has spoken on in a week. */
-  private pruneSessionTokens(): void {
-    const cutoff = Date.now() - Gateway.SESSION_TOKEN_TTL_MS;
-    for (const [token, held] of this.services.sessionTokens) {
-      const at = Date.parse(held.createdAt);
-      if (Number.isFinite(at) && at < cutoff) this.services.sessionTokens.delete(token);
-    }
-  }
-
   /**
    * Mint or reuse this session's token, write its MCP config, and say how the
    * agent should be started.
@@ -1577,9 +1547,20 @@ export class Gateway {
    * falls back to the configured household servers, which is what every session
    * had before per-session configs existed.
    */
-  private agentOptsFor(sessionKey: string, principal: Principal, channel?: string): AgentCallOptions {
+  private agentOptsFor(
+    sessionKey: string,
+    principal: Principal,
+    channel?: string,
+    opts: { keepToken?: boolean } = {},
+  ): AgentCallOptions {
     try {
-      const token = this.tokenForSession(sessionKey, principal.id, channel);
+      const token = sessionTokenFor(
+        this.services.sessionTokens,
+        sessionKey,
+        principal.id,
+        channel,
+        { keepExisting: opts.keepToken },
+      );
       const path = writeSessionMcpConfig(
         this.config,
         this.config.dataDir,
@@ -1600,9 +1581,22 @@ export class Gateway {
     }
   }
 
-  /** `agentOptsFor` for an incoming message. */
+  /**
+   * `agentOptsFor` for an incoming message.
+   *
+   * A system-originated turn never invalidates the session's existing token.
+   * `resolvePrincipal` already keeps the same principal for one, so the token is
+   * reused anyway; `keepToken` is the belt to that braces, for the case where
+   * the person has since been taken off the roster and the principal does come
+   * back different. Losing gombwe's own resume is not worth a rotation.
+   */
   private sessionAgentOpts(msg: IncomingMessage): AgentCallOptions {
-    return this.agentOptsFor(msg.sessionKey, this.resolvePrincipal(msg), msg.channel);
+    return this.agentOptsFor(
+      msg.sessionKey,
+      this.resolvePrincipal(msg),
+      msg.channel,
+      { keepToken: msg.system === true },
+    );
   }
 
   /**

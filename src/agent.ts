@@ -18,6 +18,34 @@ export interface AgentCallOptions {
   strictMcp?: boolean;
 }
 
+/**
+ * The `--mcp-config` flags for one call.
+ *
+ * A confined session gets its own file and nothing else. An owner's session gets
+ * its file *and* the configured household configs, because those are where the
+ * third-party servers declared inline in gombwe.json live — the session file
+ * cannot name them, since it only writes servers gombwe owns. The session file
+ * goes last so it wins any name it shares with them.
+ *
+ * `--strict-mcp-config` only ever goes on alongside a session file. With the
+ * fallback configs it would cut the owner off from their own servers, which is
+ * the opposite of what it is for.
+ */
+export function mcpConfigArgs(
+  opts: AgentCallOptions | undefined,
+  configured: string[] | undefined,
+): string[] {
+  const session = opts?.mcpConfigs?.length ? opts.mcpConfigs : undefined;
+  const household = configured ?? [];
+  const configs = session
+    ? (opts?.strictMcp ? [...session] : [...household, ...session])
+    : household;
+  const args: string[] = [];
+  if (configs.length) args.push('--mcp-config', ...configs);
+  if (session && opts?.strictMcp) args.push('--strict-mcp-config');
+  return args;
+}
+
 const AUTONOMY_WRAPPER = `You are operating in FULLY AUTONOMOUS mode. You must complete the entire task without stopping to ask questions.
 
 RULES:
@@ -259,22 +287,6 @@ export class AgentRuntime extends EventEmitter {
     return incompleteSignals.some(signal => lower.includes(signal.toLowerCase()));
   }
 
-  /**
-   * The `--mcp-config` flags for one call. A session config replaces the
-   * configured set rather than adding to it, because the point of it is to be
-   * the whole list. `--strict-mcp-config` only goes on alongside one: with the
-   * fallback config it would cut the owner off from their own third-party
-   * servers, which is the opposite of what it is for.
-   */
-  private mcpArgs(opts?: AgentCallOptions): string[] {
-    const session = opts?.mcpConfigs?.length ? opts.mcpConfigs : undefined;
-    const configs = session ?? this.config.agents.mcpConfigs;
-    const args: string[] = [];
-    if (configs?.length) args.push('--mcp-config', ...configs);
-    if (session && opts?.strictMcp) args.push('--strict-mcp-config');
-    return args;
-  }
-
   private spawnClaude(task: AgentTask, prompt: string, resumeConversation?: string): Promise<ClaudeResult> {
     return new Promise((resolve) => {
       const args = [
@@ -292,7 +304,10 @@ export class AgentRuntime extends EventEmitter {
         args.push('--model', this.config.agents.defaultModel);
       }
 
-      args.push(...this.mcpArgs({ mcpConfigs: task.mcpConfigs, strictMcp: task.strictMcp }));
+      args.push(...mcpConfigArgs(
+        { mcpConfigs: task.mcpConfigs, strictMcp: task.strictMcp },
+        this.config.agents.mcpConfigs,
+      ));
 
       const proc = spawn('claude', args, {
         cwd: task.workingDir,
@@ -414,7 +429,7 @@ export class AgentRuntime extends EventEmitter {
         args.push('--model', this.config.agents.defaultModel);
       }
 
-      args.push(...this.mcpArgs(opts));
+      args.push(...mcpConfigArgs(opts, this.config.agents.mcpConfigs));
 
       const proc = spawn('claude', args, {
         cwd: workingDir,

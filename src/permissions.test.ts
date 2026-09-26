@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONNECTORS, NETWORK_ACTIONS, Principals, identityFromHeaders, isLocalProcessRequest, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, NETWORK_ACTIONS, Principals, identityFromHeaders, isLocalProcessRequest, matchNetworkAction, sessionPrincipalFor } from './permissions.js';
 import type { Principal } from './permissions.js';
-import type { GombweConfig } from './types.js';
+import type { GombweConfig, Session } from './types.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'gombwe-principals-'));
 
@@ -448,4 +448,88 @@ test('a collection route and its item route do not shadow each other', () => {
   assert.equal(matchNetworkAction('DELETE', '/adlist/*2')?.action, 'network.adlist.delete');
   assert.equal(matchNetworkAction('POST', '/dhcp-leases')?.action, 'network.dhcp.add');
   assert.equal(matchNetworkAction('DELETE', '/dhcp-leases/*1')?.action, 'network.dhcp.delete');
+});
+
+// ── sessionPrincipalFor ───────────────────────────────────────
+
+const session = (over: Partial<Session> = {}): Session => ({
+  key: 'discord:99',
+  channel: 'discord',
+  createdAt: '2026-09-27T09:00:00.000Z',
+  lastActiveAt: '2026-09-27T09:00:00.000Z',
+  transcript: [],
+  mode: 'chat',
+  ...over,
+});
+
+function roster() {
+  const p = new Principals(dir());
+  p.upsert({
+    id: 'liam', name: 'Liam', role: 'child',
+    bindings: [{ channel: 'discord', identity: '4242' }],
+    grants: { memory: 'read' },
+  });
+  return p;
+}
+
+test('a system message speaks for whoever was last on the session', () => {
+  const p = roster();
+  const who = sessionPrincipalFor(
+    session({ principal: 'liam' }),
+    { channel: 'discord', sender: 'system', system: true },
+    p,
+  );
+  // Without this, an approval resuming Liam's conversation would arrive as a
+  // guest: no memory tools, no family server, and his token thrown away.
+  assert.equal(who.id, 'liam');
+  assert.equal(who.role, 'child');
+  assert.deepEqual(who.grants, { memory: 'read' });
+});
+
+test('a real message resolves by channel identity, session record or not', () => {
+  const p = roster();
+  const stored = session({ principal: 'liam' });
+  assert.equal(sessionPrincipalFor(stored, { channel: 'discord', sender: '4242' }, p).id, 'liam');
+  // Someone else typing in the same channel is themselves, not Liam.
+  const other = sessionPrincipalFor(stored, { channel: 'discord', sender: '7777' }, p);
+  assert.equal(other.role, 'guest');
+  assert.equal(other.id, 'guest:discord:7777');
+});
+
+test('a system message on a session with no recorded principal is a guest', () => {
+  const p = roster();
+  const who = sessionPrincipalFor(session(), { channel: 'discord', sender: 'system', system: true }, p);
+  assert.equal(who.role, 'guest');
+  assert.deepEqual(who.grants, {});
+});
+
+test('a system message keeps a guest session on the same guest id', () => {
+  const p = roster();
+  const who = sessionPrincipalFor(
+    session({ principal: 'guest:discord:7777' }),
+    { channel: 'discord', sender: 'system', system: true },
+    p,
+  );
+  // Same grants either way, but the same id means the same token survives.
+  assert.equal(who.id, 'guest:discord:7777');
+  assert.equal(who.role, 'guest');
+});
+
+test('a system message for someone since removed from the roster falls through', () => {
+  const p = roster();
+  p.remove('liam');
+  const who = sessionPrincipalFor(
+    session({ principal: 'liam' }),
+    { channel: 'discord', sender: 'system', system: true },
+    p,
+  );
+  // Taken off the roster means taken off: a resume does not keep them acting.
+  assert.equal(who.role, 'guest');
+  assert.notEqual(who.id, 'liam');
+});
+
+test('sessionPrincipalFor handles an undefined session', () => {
+  const p = roster();
+  const who = sessionPrincipalFor(undefined, { channel: 'discord', sender: 'system', system: true }, p);
+  assert.equal(who.role, 'guest');
 });

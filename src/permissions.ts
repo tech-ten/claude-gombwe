@@ -21,7 +21,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { GombweConfig } from './types.js';
+import type { GombweConfig, IncomingMessage, Session } from './types.js';
 
 export type Role = 'owner' | 'adult' | 'child' | 'guest';
 
@@ -129,6 +129,40 @@ export function identityFromHeaders(
   }
   if (isLoopback(remoteAddress)) return 'local';
   return `lan:${normaliseAddress(remoteAddress) || 'unknown'}`;
+}
+
+/**
+ * The principal an incoming message speaks for, given the session it lands in.
+ *
+ * A system message is gombwe talking to itself — an approval decision feeding
+ * back into a conversation minutes after the agent stopped. Its `sender` is
+ * 'system', which is bound to nobody, so resolving it the ordinary way would
+ * turn a child's conversation into a guest's for one turn: no memory tools, no
+ * family server, and a freshly minted token that invalidates the one the
+ * session was already holding. So a system message speaks for whoever was last
+ * here instead.
+ *
+ * Everything else resolves by channel identity, as always. A session whose
+ * person has since been removed from the roster falls through to that, which is
+ * the point: someone taken off the roster does not keep acting through a resume.
+ */
+export function sessionPrincipalFor(
+  session: Session | undefined,
+  msg: Pick<IncomingMessage, 'channel' | 'sender' | 'system'>,
+  principals: Principals,
+): Principal {
+  const held = msg.system ? session?.principal : undefined;
+  if (held) {
+    const known = principals.get(held);
+    if (known) return known;
+    // Nobody on the roster, so this session belonged to a guest. Keep their id
+    // rather than resolving 'system' into a second, different guest — the
+    // grants are the same either way, but the token is not.
+    if (held.startsWith('guest:')) {
+      return { id: held, name: held, role: 'guest', bindings: [], grants: {} };
+    }
+  }
+  return principals.resolve(msg.channel, msg.sender || 'unknown');
 }
 
 export class Principals {

@@ -75,6 +75,10 @@ export interface Session {
   // The household-memory high-water mark this session was last given. When it
   // no longer matches the store's, the memory block is worth prepending again.
   memoryStamp?: string;
+  // Whose conversation this is: the principal id of whoever last spoke here.
+  // A system message (an approval decision resuming the turn) speaks for them
+  // rather than for nobody. See `sessionPrincipalFor`.
+  principal?: string;
 }
 
 export interface TranscriptEntry {

@@ -31,7 +31,7 @@ function build() {
   principals.upsert({ id: 'mag', name: 'Mag', role: 'adult', bindings: [], grants: { memory: 'act', family: 'read' } });
   const approvals = new Approvals(dataDir, ledger, principals);
   const memory = new Memory(dataDir);
-  const services: Services = { ledger, principals, approvals, memory };
+  const services: Services = { ledger, principals, approvals, memory, sessionTokens: new Map() };
   return { dataDir, ledger, principals, approvals, memory, services };
 }
 

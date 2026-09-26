@@ -1,12 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
-import { sessionMcpConfigPath, writeSessionMcpConfig } from './mcp-config.js';
+import {
+  SESSION_TOKEN_TTL_MS,
+  pruneSessionMcpConfigs,
+  pruneSessionTokens,
+  sessionMcpConfigPath,
+  sessionTokenFor,
+  writeSessionMcpConfig,
+} from './mcp-config.js';
 import { Principals } from './permissions.js';
 import type { Principal } from './permissions.js';
+import type { SessionToken } from './services.js';
 import type { GombweConfig } from './types.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'gombwe-mcpcfg-'));
@@ -132,4 +140,136 @@ test('sessionMcpConfigPath answers without writing anything', () => {
   const path = sessionMcpConfigPath(dataDir, 'discord:123');
   assert.equal(basename(path), `${createHash('sha1').update('discord:123').digest('hex')}.json`);
   assert.throws(() => statSync(path));
+});
+
+// ── Session tokens ────────────────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60_000;
+
+test('one token per session, reused across messages', () => {
+  const tokens = new Map<string, SessionToken>();
+  const first = sessionTokenFor(tokens, 'discord:9', 'liam', 'discord');
+  const second = sessionTokenFor(tokens, 'discord:9', 'liam', 'discord');
+  assert.equal(first, second);
+  assert.equal(tokens.size, 1);
+  assert.equal(first.length, 64, '32 random bytes as hex');
+  assert.match(first, /^[0-9a-f]{64}$/);
+
+  // A different session is a different credential.
+  const other = sessionTokenFor(tokens, 'discord:10', 'liam', 'discord');
+  assert.notEqual(other, first);
+  assert.equal(tokens.size, 2);
+});
+
+test('the person on a session changing drops the old token', () => {
+  const tokens = new Map<string, SessionToken>();
+  const liams = sessionTokenFor(tokens, 'web:1', 'liam', 'web');
+  const mags = sessionTokenFor(tokens, 'web:1', 'mag', 'web');
+  assert.notEqual(mags, liams);
+  // Liam's token must stop working rather than quietly act as Mag.
+  assert.equal(tokens.has(liams), false);
+  assert.equal(tokens.get(mags)?.principalId, 'mag');
+});
+
+test('a system-originated turn keeps the same token', () => {
+  const tokens = new Map<string, SessionToken>();
+  const held = sessionTokenFor(tokens, 'discord:9', 'liam', 'discord');
+  // This is what an approval decision resuming Liam's conversation looks like:
+  // same session, same principal, so the same token comes back.
+  const resumed = sessionTokenFor(tokens, 'discord:9', 'liam', 'discord', { keepExisting: true });
+  assert.equal(resumed, held);
+  assert.equal(tokens.size, 1);
+});
+
+test('a system-originated turn never invalidates a live token', () => {
+  const tokens = new Map<string, SessionToken>();
+  const held = sessionTokenFor(tokens, 'discord:9', 'liam', 'discord');
+  // Even if the principal comes back different — Liam taken off the roster
+  // mid-conversation — gombwe resuming its own turn must not revoke what the
+  // session is already holding.
+  sessionTokenFor(tokens, 'discord:9', 'guest:discord:system', 'discord', { keepExisting: true });
+  assert.equal(tokens.has(held), true);
+  assert.equal(tokens.get(held)?.principalId, 'liam');
+});
+
+test('reuse refreshes the stamp, so a long conversation is not pruned', () => {
+  const tokens = new Map<string, SessionToken>();
+  let t = Date.parse('2026-09-01T09:00:00.000Z');
+  const now = () => new Date(t);
+  const first = sessionTokenFor(tokens, 'web:1', 'mag', 'web', { now });
+
+  t += 6 * DAY_MS;
+  assert.equal(sessionTokenFor(tokens, 'web:1', 'mag', 'web', { now }), first);
+  t += 6 * DAY_MS;
+  // Twelve days after minting, but only six since it was last handed out.
+  assert.equal(sessionTokenFor(tokens, 'web:1', 'mag', 'web', { now }), first);
+});
+
+test('minting a token forgets sessions nobody has spoken on', () => {
+  const tokens = new Map<string, SessionToken>();
+  let t = Date.parse('2026-09-01T09:00:00.000Z');
+  const now = () => new Date(t);
+  const stale = sessionTokenFor(tokens, 'web:old', 'mag', 'web', { now });
+  t += 8 * DAY_MS;
+  const fresh = sessionTokenFor(tokens, 'web:new', 'mag', 'web', { now });
+
+  // The sweep runs on the way in, so the map never holds more than the sessions
+  // that are actually live.
+  assert.deepEqual([...tokens.keys()], [fresh]);
+  assert.equal(tokens.has(stale), false);
+});
+
+test('pruneSessionTokens drops what is past the TTL and nothing else', () => {
+  const tokens = new Map<string, SessionToken>();
+  const now = () => new Date(Date.parse('2026-09-20T09:00:00.000Z'));
+  const at = (days: number) =>
+    new Date(now().getTime() - days * DAY_MS).toISOString();
+  tokens.set('stale', { principalId: 'mag', sessionKey: 'web:1', createdAt: at(8) });
+  tokens.set('edge', { principalId: 'mag', sessionKey: 'web:2', createdAt: at(6.9) });
+  tokens.set('fresh', { principalId: 'mag', sessionKey: 'web:3', createdAt: at(0) });
+  tokens.set('unparseable', { principalId: 'mag', sessionKey: 'web:4', createdAt: 'not a date' });
+
+  assert.equal(pruneSessionTokens(tokens, { now }), 1);
+  assert.deepEqual([...tokens.keys()].sort(), ['edge', 'fresh', 'unparseable']);
+  assert.equal(SESSION_TOKEN_TTL_MS, 7 * DAY_MS);
+});
+
+// ── Sweeping old config files ─────────────────────────────────
+
+test('writing a config sweeps files older than the token TTL', () => {
+  const { config, dataDir, principals } = build();
+  const mag = who(principals, 'mag');
+  const servers = principals.mcpServersFor(mag);
+
+  const stale = writeSessionMcpConfig(config, dataDir, 'web:gone', mag, 'tok', servers);
+  const staleTmp = `${stale}.tmp`;
+  writeFileSync(staleTmp, '{}');
+  const old = new Date(Date.now() - 8 * DAY_MS);
+  utimesSync(stale, old, old);
+  utimesSync(staleTmp, old, old);
+
+  const live = writeSessionMcpConfig(config, dataDir, 'web:here', mag, 'tok', servers);
+
+  // Every message writes one of these, so without the sweep the directory grows
+  // for the life of the household.
+  assert.equal(existsSync(stale), false, 'the eight-day-old config should be gone');
+  assert.equal(existsSync(staleTmp), false, 'a leftover temp file should go too');
+  assert.equal(existsSync(live), true, 'the file just written is never its own victim');
+});
+
+test('the sweep leaves anything inside the TTL alone', () => {
+  const { config, dataDir, principals } = build();
+  const mag = who(principals, 'mag');
+  const servers = principals.mcpServersFor(mag);
+  const recent = writeSessionMcpConfig(config, dataDir, 'web:recent', mag, 'tok', servers);
+  const sixDays = new Date(Date.now() - 6 * DAY_MS);
+  utimesSync(recent, sixDays, sixDays);
+
+  writeSessionMcpConfig(config, dataDir, 'web:other', mag, 'tok', servers);
+  assert.equal(existsSync(recent), true);
+});
+
+test('pruneSessionMcpConfigs on a directory that does not exist is a no-op', () => {
+  const { dataDir } = build();
+  assert.equal(pruneSessionMcpConfigs(dataDir), 0);
 });

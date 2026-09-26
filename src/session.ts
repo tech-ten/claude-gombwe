@@ -100,6 +100,18 @@ export class SessionManager {
     this.persistIndex();
   }
 
+  /**
+   * Record whose conversation this is. Written on every message a person sends,
+   * so a system-originated turn can be resolved back to them rather than to a
+   * guest. Persisted in the index, so it survives a restart.
+   */
+  setPrincipal(key: string, principalId: string): void {
+    const session = this.sessions.get(key);
+    if (!session || session.principal === principalId) return;
+    session.principal = principalId;
+    this.persistIndex();
+  }
+
   setMode(key: string, mode: 'chat' | 'task'): void {
     const session = this.sessions.get(key);
     if (!session) return;
