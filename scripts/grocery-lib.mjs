@@ -12,6 +12,8 @@
  *   Utilities:   wait
  *   Chrome:      connectChrome, clearBrowserCache, getPage
  *   Auth:        notifyGombwe, looksLikeLoginWall, assertLoggedIn
+ *   Approvals:   requestApproval, readKeychain, postLedger
+ *   Staging:     stagedBasket
  *   Search:      woolworthsSearch, discoverColesApi, colesSearch
  *   Matching:    normaliseName, extractTokens, productMatches,
  *                pickBestProduct
@@ -23,10 +25,13 @@
 import puppeteer from 'puppeteer-core';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
+import { promisify } from 'util';
 import { findChrome, detachedSpawnOptions, browserVisibilityArgs } from './platform.mjs';
 import { logSearch, logDiscoveryAttempt } from './grocery-forensics.mjs';
 import { configDir } from './paths.mjs';
+
+const execFileAsync = promisify(execFile);
 
 // ── constants ────────────────────────────────────────────────────────
 
@@ -178,6 +183,152 @@ export async function notifyGombwe(message) {
     if (!res.ok) console.warn(`  notify endpoint returned ${res.status}`);
   } catch (err) {
     console.warn(`  (couldn't reach gombwe to notify: ${err.message})`);
+  }
+}
+
+// ── Approvals, ledger and secrets ────────────────────────────────────
+//
+// These scripts run out of process, so they reach the gateway over loopback
+// rather than calling the services directly: `/api/approvals/request` for the
+// human gate on a payment, `/api/ledger` for the audit line. Both routes are
+// refused off this machine.
+
+/** Longest single long-poll the gateway allows on /wait. */
+const APPROVAL_POLL_MS = 25_000;
+
+/**
+ * Ask gombwe for permission before doing something costly, and block until a
+ * human decides.
+ *
+ * Resolves `{ status: 'approved' | 'denied' | 'expired' }`. It fails closed:
+ * a gateway that is down, a 500, or a request nobody decides within `waitMs`
+ * all come back not-approved, because the caller is about to spend money.
+ */
+export async function requestApproval({
+  cls,
+  summary,
+  params,
+  action,
+  principal,
+  port = GOMBWE_PORT_ENV,
+  fetchImpl = fetch,
+  waitMs = 30 * 60 * 1000,
+} = {}) {
+  const base = `http://127.0.0.1:${port}/api`;
+  let result;
+  try {
+    const res = await fetchImpl(`${base}/approvals/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ class: cls, summary, params, action, principal }),
+    });
+    if (!res.ok) return { status: 'denied', reason: `approvals endpoint returned ${res.status}` };
+    result = await res.json();
+  } catch (err) {
+    return { status: 'denied', reason: `couldn't reach gombwe to ask: ${err?.message}` };
+  }
+
+  if (result?.policy === 'auto') return { status: 'approved', auto: true };
+  if (result?.policy === 'never') return { status: 'denied', reason: result.reason };
+
+  const id = result?.approval?.id;
+  if (!id) return { status: 'denied', reason: 'approvals service returned no request' };
+  console.log(`  Approval needed [${String(id).slice(0, 8)}]: ${summary}`);
+  console.log('  Waiting for a decision (/approve or /deny from any channel)...');
+
+  // Long poll rather than sleep-and-check: /wait resolves the moment a decision
+  // or an expiry lands, and returns the still-pending request on timeout.
+  const deadline = Date.now() + waitMs;
+  let current = result.approval;
+  while (current?.status === 'pending') {
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    const timeout = Math.max(1000, Math.min(APPROVAL_POLL_MS, left));
+    try {
+      const res = await fetchImpl(`${base}/approvals/${encodeURIComponent(id)}/wait?timeout=${timeout}`);
+      if (!res.ok) return { status: 'denied', id, reason: `wait endpoint returned ${res.status}` };
+      current = await res.json();
+    } catch (err) {
+      return { status: 'denied', id, reason: `lost contact while waiting: ${err?.message}` };
+    }
+  }
+
+  if (current?.status === 'approved') return { status: 'approved', id, approval: current };
+  if (current?.status === 'denied') {
+    return { status: 'denied', id, approval: current, reason: `denied by ${current.decidedBy || 'a person'}` };
+  }
+  // Expired, or still pending after waitMs — the same thing to the caller.
+  return { status: 'expired', id, approval: current };
+}
+
+/**
+ * Read one secret out of the login Keychain. Returns null when the item is
+ * missing or the Keychain is locked, so the caller can fall back rather than
+ * crash mid-checkout. `exec` is injected by the tests.
+ */
+export async function readKeychain(service, { exec = execFileAsync } = {}) {
+  if (!service) return null;
+  try {
+    const out = await exec('security', ['find-generic-password', '-s', service, '-w']);
+    const secret = String(typeof out === 'string' ? out : out?.stdout ?? '').trim();
+    return secret || null;
+  } catch {
+    return null;
+  }
+}
+
+/** How long a staged cart is worth believing. Prices and stock move. */
+export const STAGED_BASKET_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * What a `pending-order.json` still says about the cart, if anything.
+ *
+ * Pure, so it is tested directly. The file is written when `buy --no-checkout`
+ * stages a cart, and read back an unknown amount of time later by
+ * `--checkout-only`. An hour on, the item list describes a cart the store may
+ * have repriced or part-emptied, so it is dropped rather than shown in an
+ * approval summary that a person is about to trust.
+ *
+ * Returns `{ ok: true, itemCount, itemNames, ageMs }`, or `{ ok: false, reason }`
+ * where reason is 'missing', 'other-store', 'undated' or 'stale'.
+ */
+export function stagedBasket(parsed, { store, maxAgeMs = STAGED_BASKET_MAX_AGE_MS, now = Date.now() } = {}) {
+  if (!parsed || typeof parsed !== 'object') return { ok: false, reason: 'missing' };
+  if (store && parsed.store !== store) return { ok: false, reason: 'other-store' };
+  const at = Date.parse(parsed.timestamp ?? '');
+  // No readable timestamp means no way to tell how old this is, so it is not
+  // trusted — the same outcome as being too old.
+  if (!Number.isFinite(at)) return { ok: false, reason: 'undated' };
+  const ageMs = now - at;
+  // A time in the future by more than the window cannot be a real staging run.
+  if (ageMs > maxAgeMs || ageMs < -maxAgeMs) return { ok: false, reason: 'stale', ageMs };
+  return {
+    ok: true,
+    ageMs,
+    itemCount: Number.isFinite(parsed.items) ? parsed.items : null,
+    itemNames: Array.isArray(parsed.itemNames) ? parsed.itemNames.filter(n => typeof n === 'string') : [],
+  };
+}
+
+/**
+ * Write one line to the action ledger. Never throws and never rejects: a
+ * missing audit line must not abort an order that is already paid for.
+ */
+export async function postLedger(entry, { port = GOMBWE_PORT_ENV, fetchImpl = fetch } = {}) {
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${port}/api/ledger`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) {
+      console.warn(`  (ledger endpoint returned ${res.status})`);
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn(`  (couldn't record ${entry?.action || 'action'} in the ledger: ${err?.message})`);
+    return null;
   }
 }
 
