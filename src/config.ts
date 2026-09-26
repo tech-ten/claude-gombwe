@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { GombweConfig } from './types.js';
 
-const CONFIG_DIR = join(homedir(), '.claude-gombwe');
+// Overridable so tests (and side-by-side instances) never touch the real ~/.claude-gombwe.
+const CONFIG_DIR = process.env.GOMBWE_CONFIG_DIR || join(homedir(), '.claude-gombwe');
 const CONFIG_FILE = join(CONFIG_DIR, 'gombwe.json');
 
 const DEFAULT_CONFIG: GombweConfig = {

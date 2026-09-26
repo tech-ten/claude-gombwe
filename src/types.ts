@@ -211,3 +211,7 @@ export interface WSEvent {
   data: unknown;
   timestamp: string;
 }
+
+// ── Action ledger ─────────────────────────────────────────────
+// Defined in ledger.ts; re-exported here so callers have one types entry point.
+export type { LedgerEntry, LedgerActor, LedgerOutcome, LedgerFilter } from './ledger.js';

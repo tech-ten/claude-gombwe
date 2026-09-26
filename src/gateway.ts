@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter } from './types.js';
+import type { GombweConfig, WSEvent, IncomingMessage, ChannelAdapter, LedgerActor, LedgerOutcome } from './types.js';
 import { saveConfig } from './config.js';
 import { AgentRuntime } from './agent.js';
 import { SessionManager } from './session.js';
@@ -27,6 +27,7 @@ import { dnsReceiver } from './dns-log-receiver.js';
 import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
+import { createServices, type Services } from './services.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -79,6 +80,7 @@ export class Gateway {
   private eeroStore: EeroStore;
   private eeroScheduler: EeroScheduler;
   private nextdns: NextDNSClient;
+  private services: Services;
 
   constructor(config: GombweConfig) {
     this.config = config;
@@ -150,6 +152,8 @@ export class Gateway {
     });
     this.eeroScheduler = new EeroScheduler(config.dataDir, this.eero, this.eeroStore);
     this.nextdns = new NextDNSClient(config.dataDir);
+
+    this.services = createServices(config);
 
     this.setupAgentEvents();
     this.setupWebSocket();
@@ -1145,6 +1149,21 @@ export class Gateway {
         return;
       }
       res.json(this.notify(message, Array.isArray(targets) ? targets : undefined));
+    });
+
+    // ── Action ledger ─────────────────────────────────────────────
+    // Every side effect gombwe takes, newest first, folded by id.
+    this.app.get('/api/ledger', (req: Request, res: Response) => {
+      const { actor, action, outcome, since, principal } = req.query as Record<string, string | undefined>;
+      const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
+      res.json(this.services.ledger.list({
+        actor: actor as LedgerActor | undefined,
+        action,
+        outcome: outcome as LedgerOutcome | undefined,
+        since,
+        principal,
+        limit,
+      }));
     });
 
     // ── Agentsform lead form receiver ─────────────────────────────
