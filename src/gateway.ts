@@ -1155,7 +1155,9 @@ export class Gateway {
     // Every side effect gombwe takes, newest first, folded by id.
     this.app.get('/api/ledger', (req: Request, res: Response) => {
       const { actor, action, outcome, since, principal } = req.query as Record<string, string | undefined>;
-      const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
+      // NaN, zero and negatives fall back to the default rather than slicing oddly.
+      const asked = parseInt(String(req.query.limit ?? ''), 10);
+      const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 1000) : 200;
       res.json(this.services.ledger.list({
         actor: actor as LedgerActor | undefined,
         action,

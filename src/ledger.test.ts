@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.js';
@@ -88,4 +88,54 @@ test('after rotation a new Ledger still sees the previous file', () => {
   for (let i = 0; i < 3; i++) l.record({ actor: 'chat', principal: 'tendai', action: 'c'.repeat(50), outcome: 'ok' });
   assert.ok(readdirSync(d).some(f => /^ledger-\d{8}T\d{6}/.test(f)), readdirSync(d).join(','));
   assert.ok(new Ledger(d).get(first.id), 'entry from the rotated file should still be readable');
+});
+
+test('limit is clamped so a negative or zero value still returns the newest row', () => {
+  const d = dir(); const l = new Ledger(d);
+  l.record({ actor: 'chat', principal: 'tendai', action: 'first', outcome: 'ok', time: '2026-09-01T00:00:00Z' });
+  l.record({ actor: 'chat', principal: 'tendai', action: 'second', outcome: 'ok', time: '2026-09-02T00:00:00Z' });
+  const newest = l.record({ actor: 'chat', principal: 'tendai', action: 'third', outcome: 'ok', time: '2026-09-03T00:00:00Z' });
+  assert.deepEqual(l.list({ limit: -5 }).map(e => e.id), [newest.id]);
+  assert.deepEqual(l.list({ limit: 0 }).map(e => e.id), [newest.id]);
+  assert.equal(l.list({ limit: 9999 }).length, 3);
+});
+
+test('since matches an entry inside the same second', () => {
+  const d = dir(); const l = new Ledger(d);
+  const e = l.record({ actor: 'chat', principal: 'tendai', action: 'x', outcome: 'ok', time: '2026-09-20T00:00:00.123Z' });
+  assert.deepEqual(l.list({ since: '2026-09-20T00:00:00Z' }).map(x => x.id), [e.id]);
+});
+
+test('an offset time is stored as UTC and compares against since correctly', () => {
+  const d = dir(); const l = new Ledger(d);
+  const e = l.record({ actor: 'chat', principal: 'tendai', action: 'x', outcome: 'ok', time: '2026-09-20T10:00:00+10:00' });
+  assert.equal(e.time, '2026-09-20T00:00:00.000Z');
+  assert.deepEqual(l.list({ since: '2026-09-19T23:59:59Z' }).map(x => x.id), [e.id]);
+  assert.equal(l.list({ since: '2026-09-20T00:00:01Z' }).length, 0);
+});
+
+test('an unparseable since is ignored rather than filtering everything out', () => {
+  const d = dir(); const l = new Ledger(d);
+  l.record({ actor: 'chat', principal: 'tendai', action: 'x', outcome: 'ok' });
+  assert.equal(l.list({ since: 'whenever' }).length, 1);
+});
+
+test('reloads the rotated file with the newest mtime, not the newest name', () => {
+  const d = dir();
+  const base = join(d, 'ledger-20260920T000000.jsonl');
+  const suffixed = join(d, 'ledger-20260920T000000-2.jsonl');
+  const line = (id: string) => JSON.stringify({
+    id, time: '2026-09-20T00:00:00.000Z', actor: 'chat', principal: 'tendai', action: 'x', outcome: 'ok',
+  }) + '\n';
+  // Two rotations inside one second: the plain name is written first, the '-2'
+  // suffix second. A name sort puts the plain name last, so only an mtime sort
+  // picks the file that was actually rotated most recently.
+  writeFileSync(base, line('in-base-name'));
+  writeFileSync(suffixed, line('in-suffixed-name'));
+  utimesSync(base, new Date(1_000_000), new Date(1_000_000));
+  utimesSync(suffixed, new Date(2_000_000), new Date(2_000_000));
+
+  const l = new Ledger(d);
+  assert.ok(l.get('in-suffixed-name'), 'the rotated file with the newest mtime should be reloaded');
+  assert.equal(l.get('in-base-name'), undefined);
 });

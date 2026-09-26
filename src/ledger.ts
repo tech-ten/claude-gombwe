@@ -52,7 +52,17 @@ export type LedgerPatch =
 
 const FILE = 'ledger.jsonl';
 const DEFAULT_ROTATE_BYTES = 50 * 1024 * 1024;
+const MAX_LIMIT = 1000;
 const ROTATED = /^ledger-\d{8}T\d{6}(-\d+)?\.jsonl$/;
+
+/**
+ * Canonical UTC ISO with milliseconds, so a string compare is a time compare.
+ * Returns undefined for anything Date cannot parse.
+ */
+function isoTime(value: string): string | undefined {
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
 
 /** 2026-09-27T01:09:00.123Z → 20260927T010900 */
 function stamp(date: Date): string {
@@ -76,13 +86,17 @@ export class Ledger {
     }
   }
 
-  /** Rotated files, newest first. Names sort chronologically. */
+  /**
+   * Rotated files, newest first. Ordered by mtime rather than name, because a
+   * same-second collision suffix (`…-2.jsonl`) does not sort chronologically.
+   */
   private rotatedFiles(): string[] {
     return readdirSync(this.dataDir)
       .filter(f => ROTATED.test(f))
-      .sort()
-      .reverse()
-      .map(f => join(this.dataDir, f));
+      .map(name => ({ name, path: join(this.dataDir, name) }))
+      .map(f => ({ ...f, mtime: statSync(f.path).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime || b.name.localeCompare(a.name))
+      .map(f => f.path);
   }
 
   private load(file: string): void {
@@ -96,6 +110,7 @@ export class Ledger {
         continue; // torn final line from a crash mid-append
       }
       if (!entry?.id) continue;
+      if (entry.time) entry.time = isoTime(entry.time) ?? entry.time;
       this.remember(entry);
     }
   }
@@ -120,7 +135,9 @@ export class Ledger {
     const entry: LedgerEntry = {
       ...input,
       id: input.id ?? randomUUID(),
-      time: input.time ?? new Date().toISOString(),
+      // Normalised so offset times ('+10:00') and second-precision times sort
+      // and compare against `since` correctly. An unparseable time falls back to now.
+      time: (input.time && isoTime(input.time)) || new Date().toISOString(),
     };
     this.append(entry);
     this.remember(entry);
@@ -143,18 +160,22 @@ export class Ledger {
 
   /** Newest first, folded by id. */
   list(filter: LedgerFilter = {}): LedgerEntry[] {
+    // An unparseable `since` is ignored rather than filtering everything out.
+    const since = filter.since ? isoTime(filter.since) : undefined;
     const matches = [...this.entries.values()].filter(e => {
       if (filter.actor && e.actor !== filter.actor) return false;
       if (filter.principal && e.principal !== filter.principal) return false;
       if (filter.outcome && e.outcome !== filter.outcome) return false;
       if (filter.action && !e.action.startsWith(filter.action)) return false;
-      if (filter.since && e.time < filter.since) return false;
+      if (since && e.time < since) return false;
       return true;
     });
     matches.sort((a, b) =>
       a.time === b.time
         ? (this.seq.get(b.id) ?? 0) - (this.seq.get(a.id) ?? 0)
         : (a.time < b.time ? 1 : -1));
-    return filter.limit != null ? matches.slice(0, filter.limit) : matches;
+    if (filter.limit == null || !Number.isFinite(filter.limit)) return matches;
+    // Clamped: a negative limit would slice from the end and drop the newest rows.
+    return matches.slice(0, Math.max(1, Math.min(filter.limit, MAX_LIMIT)));
   }
 }
