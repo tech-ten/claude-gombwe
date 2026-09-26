@@ -1159,6 +1159,17 @@ export class Gateway {
     return this.services.principals.resolve(msg.channel, identity);
   }
 
+  /**
+   * Who to credit an HTTP action to. A request with an Access email or a browser
+   * Origin/Referer came from a person at the dashboard; a bare curl or an
+   * internal call is gombwe acting on its own, so it is recorded as 'system'.
+   */
+  private webActor(req: Request): LedgerActor {
+    const h = req.headers;
+    const fromBrowser = !!(h['cf-access-authenticated-user-email'] || h.origin || h.referer);
+    return fromBrowser ? 'dashboard' : 'system';
+  }
+
   /** The principal behind an HTTP request: its Access email, else 'local'. */
   private principalFromRequest(req: Request): Principal {
     const identity = identityFromHeaders(req.headers as Record<string, string | string[] | undefined>);
@@ -1207,7 +1218,7 @@ export class Gateway {
         // A refused attempt on a real router action is worth a line of its own.
         if (matched) {
           this.services.ledger.record({
-            actor: 'dashboard', principal: principal.id, action: matched.action,
+            actor: this.webActor(req), principal: principal.id, action: matched.action,
             target: matched.params.mac ?? matched.params.id ?? matched.params.date,
             params: params(), outcome: 'denied',
           });
@@ -1228,7 +1239,7 @@ export class Gateway {
         const failed = res.statusCode >= 400;
         const receipt = asReceipt(payload);
         this.services.ledger.record({
-          actor: 'dashboard',
+          actor: this.webActor(req),
           principal: principal.id,
           action: matched.action,
           target: matched.params.mac ?? matched.params.id ?? matched.params.date,
@@ -1246,7 +1257,7 @@ export class Gateway {
   /** One ledger line per change to the roster itself. */
   private recordPrincipalChange(req: Request, action: string, target: string, receipt: Record<string, unknown>): void {
     this.services.ledger.record({
-      actor: 'dashboard',
+      actor: this.webActor(req),
       principal: this.principalFromRequest(req).id,
       action,
       target,
@@ -1364,15 +1375,19 @@ export class Gateway {
           res.status(400).json({ error: 'each binding needs channel and identity' }); return;
         }
       }
-      const saved = this.services.principals.upsert({
-        id,
-        name: name ? String(name) : id,
-        role: role as Role,
-        bindings: bindings as Binding[] | undefined,
-        grants: (grants ?? {}) as Principal['grants'],
-      } as Principal);
-      this.recordPrincipalChange(req, 'principals.upsert', id, { ...saved });
-      res.json(saved);
+      try {
+        const saved = this.services.principals.upsert({
+          id,
+          name: name ? String(name) : id,
+          role: role as Role,
+          bindings: bindings as Binding[] | undefined,
+          grants: (grants ?? {}) as Principal['grants'],
+        } as Principal);
+        this.recordPrincipalChange(req, 'principals.upsert', id, { ...saved });
+        res.json(saved);
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
     });
 
     this.app.delete('/api/principals/:id', (req: Request, res: Response) => {
@@ -2536,7 +2551,7 @@ export class Gateway {
     this.app.put('/api/family', (req: Request, res: Response) => {
       this.saveFamilyData(req.body);
       this.ledgerFamily('family.data.replace', { keys: Object.keys(req.body ?? {}) }, undefined,
-        'dashboard', this.principalFromRequest(req).id);
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true });
     });
 
@@ -2545,7 +2560,7 @@ export class Gateway {
       Object.assign(data, req.body);
       this.saveFamilyData(data);
       this.ledgerFamily('family.data.patch', { keys: Object.keys(req.body ?? {}) }, undefined,
-        'dashboard', this.principalFromRequest(req).id);
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json(data);
     });
 
@@ -2766,7 +2781,7 @@ The ingredients should be grocery item names with quantities scaled for ${family
       }
       this.saveFamilyData(family);
       this.ledgerFamily('family.meal.plan-apply', { force }, { applied, skipped },
-        'dashboard', this.principalFromRequest(req).id);
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true, applied, skipped });
     });
 
@@ -2787,7 +2802,7 @@ The ingredients should be grocery item names with quantities scaled for ${family
       }
       this.saveFamilyData(family);
       this.ledgerFamily('family.grocery.import-deals', { names }, { added },
-        'dashboard', this.principalFromRequest(req).id);
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true, added });
     });
 

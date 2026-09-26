@@ -76,22 +76,44 @@ export class Principals {
 
   constructor(
     dataDir: string,
-    opts: { ownerName?: string; thirdPartyServers?: string[] } = {},
+    opts: { thirdPartyServers?: string[] } = {},
   ) {
     this.file = join(dataDir, FILE);
     this.thirdPartyServers = opts.thirdPartyServers ?? [];
     if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
     this.load();
-    if (!this.principals.some(p => p.role === 'owner')) {
+    this.ensureOwner();
+  }
+
+  /**
+   * There must always be exactly one record with the reserved `owner` id, and
+   * at least one principal with the owner role. A roster that lost its owner —
+   * hand-edited, or written by a build before `upsert` refused the demotion —
+   * is repaired in place: pushing a second `owner` record would shadow the
+   * first and silently split one person into two.
+   */
+  private ensureOwner(): void {
+    if (this.principals.some(p => p.role === 'owner')) return;
+    const existing = this.principals.find(p => p.id === OWNER_ID);
+    if (existing) {
+      existing.role = 'owner';
+      // Only claim web/local if nobody else holds it, so repairing the roster
+      // cannot quietly take a binding off another principal.
+      const heldElsewhere = this.principals.some(p =>
+        p.id !== OWNER_ID && p.bindings.some(b => b.channel === 'web' && b.identity === 'local'));
+      if (!heldElsewhere && !existing.bindings.some(b => b.channel === 'web' && b.identity === 'local')) {
+        existing.bindings.push({ channel: 'web', identity: 'local' });
+      }
+    } else {
       this.principals.push({
         id: OWNER_ID,
-        name: opts.ownerName ? `${opts.ownerName} owner` : 'Owner',
+        name: 'Owner',
         role: 'owner',
         bindings: [{ channel: 'web', identity: 'local' }],
         grants: {},
       });
-      this.save();
     }
+    this.save();
   }
 
   private load(): void {
@@ -129,18 +151,38 @@ export class Principals {
    * always sends the full set), but omitted `bindings` keep the ones already
    * recorded — bindings are owned by `bind()`, so editing a role or a grant
    * must not silently unbind someone's chat accounts.
+   *
+   * Bindings that are supplied move, exactly as `bind()` moves them: a
+   * channel identity is held by one principal, never two, or `resolve` would
+   * answer with whichever record happened to be listed first.
    */
   upsert(p: Principal): Principal {
     const next = normalise(p);
     const idx = this.principals.findIndex(x => x.id === next.id);
-    if (idx >= 0) {
-      if (!Array.isArray(p.bindings)) next.bindings = this.principals[idx].bindings;
-      this.principals[idx] = next;
-    } else {
-      this.principals.push(next);
+    // Demoting the only owner closes every owner-only route, including the one
+    // that would put the role back.
+    const ownersAfter = this.principals.filter(x => x.id !== next.id && x.role === 'owner').length
+      + (next.role === 'owner' ? 1 : 0);
+    if (ownersAfter === 0 && idx >= 0 && this.principals[idx].role === 'owner') {
+      throw new Error('cannot demote the last owner');
     }
+    if (idx >= 0 && !Array.isArray(p.bindings)) {
+      next.bindings = this.principals[idx].bindings;
+    } else {
+      for (const b of next.bindings) this.releaseBinding(b, next.id);
+    }
+    if (idx >= 0) this.principals[idx] = next;
+    else this.principals.push(next);
     this.save();
     return clone(next);
+  }
+
+  /** Take a channel identity off every principal but `keepId`. */
+  private releaseBinding(b: Binding, keepId: string): void {
+    for (const p of this.principals) {
+      if (p.id === keepId) continue;
+      p.bindings = p.bindings.filter(x => !(x.channel === b.channel && x.identity === b.identity));
+    }
   }
 
   remove(id: string): boolean {
@@ -160,19 +202,19 @@ export class Principals {
   bind(id: string, b: Binding): Principal {
     const target = this.principals.find(p => p.id === id);
     if (!target) throw new Error(`unknown principal: ${id}`);
-    const channel = String(b.channel);
-    const identity = String(b.identity);
-    for (const p of this.principals) {
-      p.bindings = p.bindings.filter(x => !(x.channel === channel && x.identity === identity));
-    }
-    target.bindings.push({ channel, identity });
+    const binding = normaliseBinding(b);
+    this.releaseBinding(binding, id);
+    target.bindings = target.bindings
+      .filter(x => !(x.channel === binding.channel && x.identity === binding.identity))
+      .concat(binding);
     this.save();
     return clone(target);
   }
 
   resolve(channel: string, identity: string): Principal {
+    const wanted = normaliseBinding({ channel, identity });
     const found = this.principals.find(p =>
-      p.bindings.some(b => b.channel === channel && b.identity === identity));
+      p.bindings.some(b => b.channel === wanted.channel && b.identity === wanted.identity));
     if (found) return clone(found);
     return {
       id: `guest:${channel}:${identity}`,
@@ -204,12 +246,31 @@ export class Principals {
 
   /** Upsert the principals declared in gombwe.json, if any. */
   seedFromConfig(config: GombweConfig): void {
-    for (const p of config.principals ?? []) this.upsert(p);
+    for (const p of config.principals ?? []) {
+      try {
+        this.upsert(p);
+      } catch (err) {
+        // One unusable entry (a config that demotes the owner) must not stop
+        // the gateway booting — the rest of the roster still loads.
+        console.error(`[principals] skipped ${p?.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 }
 
 function clone(p: Principal): Principal {
   return { ...p, bindings: p.bindings.map(b => ({ ...b })), grants: { ...p.grants } };
+}
+
+/**
+ * Web identities are Cloudflare Access emails, which arrive lowercased from
+ * `identityFromHeaders`. A binding typed in with capitals would never match, so
+ * the case is flattened on the way in and on every lookup.
+ */
+function normaliseBinding(b: Binding): Binding {
+  const channel = String(b.channel);
+  const identity = String(b.identity);
+  return { channel, identity: channel === 'web' ? identity.toLowerCase() : identity };
 }
 
 function normalise(p: Principal): Principal {
@@ -219,7 +280,7 @@ function normalise(p: Principal): Principal {
     role: ROLES.includes(p.role) ? p.role : 'guest',
     bindings: (Array.isArray(p.bindings) ? p.bindings : [])
       .filter(b => b && b.channel && b.identity)
-      .map(b => ({ channel: String(b.channel), identity: String(b.identity) })),
+      .map(normaliseBinding),
     grants: { ...(p.grants ?? {}) },
   };
 }

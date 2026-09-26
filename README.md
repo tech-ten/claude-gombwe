@@ -250,9 +250,16 @@ change anything.
 | telegram | the sender's user id |
 
 The dashboard on your own LAN has no Access header, so it is `local` — and
-`local` is bound to the owner that gombwe seeds on first run. Reaching the
-dashboard from outside goes through Cloudflare Access, which always stamps the
-email, so remote viewers are only ever the principal you bound that email to.
+`local` is bound to the owner gombwe seeds on first run. **Anything that can
+reach the gateway on your network is therefore trusted as the owner**: there is
+no password on the LAN, so treat access to the home network as access to
+everything gombwe can do. Reaching the dashboard from outside goes through
+Cloudflare Access, which always stamps the email, so remote viewers are only
+ever the principal you bound that email to.
+
+That also means the Access header is only meaningful when gombwe sits behind
+Cloudflare. Expose the port directly to the internet and anyone who finds it
+arrives as `local`, which is to say as the owner. Keep the tunnel in front of it.
 
 **Managing the roster** (every change is owner-only):
 
@@ -276,9 +283,9 @@ curl -X POST localhost:18790/api/principals/mag/bind \
 curl -X DELETE localhost:18790/api/principals/mag
 ```
 
-A channel identity belongs to one principal, so binding it again moves it rather
-than duplicating it. The last owner cannot be deleted — without one, the routes
-that could restore an owner would be closed.
+A channel identity belongs to one principal, so binding or re-assigning it moves
+it rather than duplicating it. The last owner can be neither deleted nor demoted
+— without an owner, the routes that could restore one would be closed.
 
 Members can also be declared up front in `~/.claude-gombwe/gombwe.json` under
 `principals`; they are upserted on every boot.

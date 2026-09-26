@@ -28,12 +28,12 @@ const person = (over: Partial<Principal> = {}): Principal => ({
 
 test('seeds an owner on first run and writes principals.json', () => {
   const d = dir();
-  const p = new Principals(d, { ownerName: 'Gombwe' });
+  const p = new Principals(d);
   const all = p.list();
   assert.equal(all.length, 1);
   assert.equal(all[0].id, 'owner');
   assert.equal(all[0].role, 'owner');
-  assert.match(all[0].name, /Gombwe/);
+  assert.equal(all[0].name, 'Owner');
   // The local/LAN dashboard has no Cloudflare Access header, so 'local' is the
   // owner rather than a guest.
   assert.deepEqual(all[0].bindings, [{ channel: 'web', identity: 'local' }]);
@@ -224,6 +224,110 @@ test('identityFromHeaders falls back to local when the Access header is absent o
   assert.equal(identityFromHeaders({}), 'local');
   assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '' }), 'local');
   assert.equal(identityFromHeaders({ 'cf-access-authenticated-user-email': '   ' }), 'local');
+});
+
+// ── The roster always has exactly one owner record ───────────────
+
+test('upsert refuses to demote the last owner', () => {
+  const p = new Principals(dir());
+  assert.throws(() => p.upsert({ ...p.get('owner')!, role: 'adult' }), /last owner/);
+  assert.equal(p.get('owner')!.role, 'owner');
+});
+
+test('upsert demotes an owner once a second owner exists', () => {
+  const p = new Principals(dir());
+  p.upsert(person({ id: 'mag', name: 'Mag', role: 'owner' }));
+  const demoted = p.upsert({ ...p.get('owner')!, role: 'adult' });
+  assert.equal(demoted.role, 'adult');
+  assert.equal(p.list().filter(x => x.role === 'owner').length, 1);
+});
+
+test('a demoted owner record is repaired in place rather than duplicated', () => {
+  const d = dir();
+  // A roster written before upsert refused the demotion: id 'owner', role child.
+  writeFileSync(join(d, 'principals.json'), JSON.stringify({
+    principals: [{ id: 'owner', name: 'Owner', role: 'child', bindings: [], grants: {} }],
+  }));
+  const p = new Principals(d);
+  assert.equal(p.list().filter(x => x.id === 'owner').length, 1, 'no duplicate owner record');
+  assert.equal(p.get('owner')!.role, 'owner');
+  assert.equal(p.resolve('web', 'local').id, 'owner');
+});
+
+test('reloading a roster that already has an owner does not touch it', () => {
+  const d = dir();
+  const first = new Principals(d);
+  first.upsert(person({ id: 'mag', name: 'Mag', role: 'owner' }));
+  first.upsert({ ...first.get('owner')!, role: 'adult', name: 'Tendai' });
+
+  const second = new Principals(d);
+  assert.equal(second.list().filter(x => x.id === 'owner').length, 1);
+  assert.equal(second.get('owner')!.role, 'adult', 'an owner exists elsewhere, so no repair');
+  assert.equal(second.get('owner')!.name, 'Tendai');
+});
+
+test('the owner repair does not steal web/local from another principal', () => {
+  const d = dir();
+  writeFileSync(join(d, 'principals.json'), JSON.stringify({
+    principals: [
+      { id: 'owner', name: 'Owner', role: 'child', bindings: [], grants: {} },
+      { id: 'mag', name: 'Mag', role: 'adult', bindings: [{ channel: 'web', identity: 'local' }], grants: {} },
+    ],
+  }));
+  const p = new Principals(d);
+  assert.equal(p.get('owner')!.role, 'owner');
+  assert.deepEqual(p.get('owner')!.bindings, []);
+  assert.equal(p.resolve('web', 'local').id, 'mag');
+});
+
+// ── A channel identity belongs to one principal ──────────────────
+
+test('upsert moves a supplied binding off whoever held it', () => {
+  const p = new Principals(dir());
+  assert.equal(p.resolve('web', 'local').id, 'owner');
+  p.upsert(person({ bindings: [{ channel: 'web', identity: 'local' }] }));
+  assert.deepEqual(p.get('owner')!.bindings, [], 'owner should lose web/local');
+  assert.equal(p.resolve('web', 'local').id, 'liam');
+  // And the reverse hands it back, still without duplicating it.
+  p.upsert({ ...p.get('owner')!, bindings: [{ channel: 'web', identity: 'local' }] });
+  assert.deepEqual(p.get('liam')!.bindings, []);
+  assert.equal(p.resolve('web', 'local').id, 'owner');
+  assert.equal(p.get('owner')!.bindings.length, 1);
+});
+
+test('a web identity bound with capitals still resolves', () => {
+  const p = new Principals(dir());
+  p.upsert(person({ id: 'mag', name: 'Mag', role: 'adult' }));
+  p.bind('mag', { channel: 'web', identity: 'Mag@Example.COM' });
+  assert.deepEqual(p.get('mag')!.bindings, [{ channel: 'web', identity: 'mag@example.com' }]);
+  assert.equal(p.resolve('web', identityFromHeaders({ 'Cf-Access-Authenticated-User-Email': 'MAG@example.com' })).id, 'mag');
+  // Chat identities are case-sensitive ids and are left alone.
+  p.bind('mag', { channel: 'discord', identity: 'AbC' });
+  assert.equal(p.resolve('discord', 'AbC').id, 'mag');
+  assert.equal(p.resolve('discord', 'abc').role, 'guest');
+});
+
+test('seedFromConfig warns about and skips an entry that would demote the owner', () => {
+  const d = dir();
+  const p = new Principals(d);
+  const warnings: string[] = [];
+  const error = console.error;
+  console.error = (m: unknown) => { warnings.push(String(m)); };
+  try {
+    p.seedFromConfig(config({
+      dataDir: d,
+      principals: [
+        { id: 'owner', name: 'Nope', role: 'child', bindings: [], grants: {} },
+        { id: 'liam', name: 'Liam', role: 'child', bindings: [], grants: { family: 'read' } },
+      ],
+    }));
+  } finally {
+    console.error = error;
+  }
+  assert.equal(p.get('owner')!.role, 'owner');
+  assert.equal(p.get('liam')!.role, 'child', 'the rest of the roster still loads');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /skipped owner: cannot demote the last owner/);
 });
 
 // ── Network route → ledger action map ────────────────────────────

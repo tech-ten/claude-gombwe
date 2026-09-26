@@ -29,7 +29,6 @@ function thirdPartyServers(config: GombweConfig): string[] {
 
 export function createServices(config: GombweConfig): Services {
   const principals = new Principals(config.dataDir, {
-    ownerName: config.identity.name,
     thirdPartyServers: thirdPartyServers(config),
   });
   principals.seedFromConfig(config);
