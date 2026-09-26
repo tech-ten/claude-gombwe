@@ -7,10 +7,11 @@
  * principal first, then asks `can()`.
  *
  * Identity per channel:
- *   web       the Cloudflare Access email, or 'local' for a LAN request with
- *             no Access header. The seeded owner is bound to web/'local', so
- *             the dashboard on the home network is the owner — Access always
- *             sets the header when the request came in from outside.
+ *   web       the Cloudflare Access email; failing that, 'local' for a request
+ *             from this machine (which is what a tunnelled request looks like
+ *             on the way in), or 'lan:<ip>' for anything else on the network.
+ *             The seeded owner is bound to web/'local', so a LAN device with no
+ *             Access header is a guest rather than the owner.
  *   discord   the author's snowflake id
  *   telegram  the from-user id
  *
@@ -56,9 +57,35 @@ const FILE = 'principals.json';
 const OWNER_ID = 'owner';
 const ACCESS_HEADER = 'cf-access-authenticated-user-email';
 
-/** The identity a web request speaks for: its Access email, else 'local'. */
+/** Socket address with the IPv6 mapping and any zone id taken off. */
+function normaliseAddress(remoteAddress?: string): string {
+  const addr = String(remoteAddress ?? '').trim().toLowerCase().split('%')[0];
+  return addr.startsWith('::ffff:') ? addr.slice('::ffff:'.length) : addr;
+}
+
+/** Is this address this machine talking to itself? */
+export function isLoopback(remoteAddress?: string): boolean {
+  const addr = normaliseAddress(remoteAddress);
+  // The whole 127.0.0.0/8 block is loopback, not just 127.0.0.1.
+  return addr === '::1' || addr === 'localhost' || /^127\./.test(addr);
+}
+
+/**
+ * The identity a web request speaks for.
+ *
+ * The Access email wins wherever the request came from. Without one, only a
+ * request from this machine is 'local' — the identity the owner is bound to —
+ * because a request off the network arrives through cloudflared on loopback and
+ * a real LAN client does not. Everything else on the network is named by its
+ * address, `lan:192.168.1.50`, which is bound to nobody and therefore a guest:
+ * a device on the home Wi-Fi must not be able to approve a payment.
+ *
+ * An address we could not read at all is `lan:unknown`, which fails closed for
+ * the same reason.
+ */
 export function identityFromHeaders(
   headers: Record<string, string | string[] | undefined>,
+  remoteAddress?: string,
 ): string {
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() !== ACCESS_HEADER) continue;
@@ -66,7 +93,8 @@ export function identityFromHeaders(
     const email = raw.trim().toLowerCase();
     if (email) return email;
   }
-  return 'local';
+  if (isLoopback(remoteAddress)) return 'local';
+  return `lan:${normaliseAddress(remoteAddress) || 'unknown'}`;
 }
 
 export class Principals {

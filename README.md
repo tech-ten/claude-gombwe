@@ -245,21 +245,28 @@ change anything.
 
 | Channel  | Identity |
 | -------- | -------- |
-| web      | the Cloudflare Access email, or `local` for a request from the home network |
+| web      | the Cloudflare Access email; `local` only for a request from this machine, `lan:<ip>` for anything else on the network |
 | discord  | the author's user id |
 | telegram | the sender's user id |
 
-The dashboard on your own LAN has no Access header, so it is `local` — and
-`local` is bound to the owner gombwe seeds on first run. **Anything that can
-reach the gateway on your network is therefore trusted as the owner**: there is
-no password on the LAN, so treat access to the home network as access to
-everything gombwe can do. Reaching the dashboard from outside goes through
-Cloudflare Access, which always stamps the email, so remote viewers are only
-ever the principal you bound that email to.
+A request with no Access header is `local` — the identity the seeded owner is
+bound to — **only when it came from this machine**. That covers gombwe's own
+internal calls and anything tunnelled in, because cloudflared runs here too.
+Every other client on the home network is `lan:192.168.1.50`, bound to nobody,
+which resolves to a guest with no grants. **A laptop or a phone on your Wi-Fi
+cannot approve a payment or change the router just by reaching the port.**
 
-That also means the Access header is only meaningful when gombwe sits behind
-Cloudflare. Expose the port directly to the internet and anyone who finds it
-arrives as `local`, which is to say as the owner. Keep the tunnel in front of it.
+So sign in: open the dashboard on the hostname you put behind Cloudflare Access,
+which stamps your email on every request, or talk to gombwe on a Discord or
+Telegram account bound to you. Either way you are the principal that identity
+belongs to, from the couch or from another country.
+
+Two things follow. Because a tunnelled request arrives on loopback, **every
+hostname routed to the gateway needs an Access policy in front of it** — one
+without a policy is the owner to whoever finds it. And because `local` is the
+owner, a shell on this Mac is owner access; a port forwarded straight to the
+internet is not (those callers arrive as `lan:<ip>` guests), though read-only
+surfaces like the ledger have no guard, so keep the tunnel in front regardless.
 
 **Managing the roster** (every change is owner-only):
 
@@ -280,6 +287,13 @@ curl -X POST localhost:18790/api/principals/mag/bind \
   -H 'content-type: application/json' \
   -d '{"channel":"telegram","identity":"123456789"}'
 
+# Recognise one device on the home network without Cloudflare Access.
+# Give it a static lease first — a DHCP address that moves hands the binding
+# to whatever picks the address up next.
+curl -X POST localhost:18790/api/principals/owner/bind \
+  -H 'content-type: application/json' \
+  -d '{"channel":"web","identity":"lan:192.168.1.42"}'
+
 curl -X DELETE localhost:18790/api/principals/mag
 ```
 
@@ -295,6 +309,74 @@ grant: `read` for a GET, `act` for anything that changes the router. Each of
 those changes writes one ledger line naming the principal, the parameters and
 the router's reply. Family mutations are recorded too, from both the dashboard
 and chat commands.
+
+## Approvals
+
+Some things must not happen without a person: paying for the groceries, emailing
+someone outside the household, deleting a calendar event, blocking an adult's
+device, running a script that changes the Mac. gombwe gates those on an **action
+class** rather than a list of permitted items, so a new action is gated the first
+time it is asked for instead of the first time somebody notices it was not.
+
+| Class                 | Default   | What it covers |
+| --------------------- | --------- | -------------- |
+| `pay`                 | `confirm` | spending money — the grocery checkout |
+| `send.external`       | `confirm` | email or a message to someone outside the household |
+| `delete`              | `confirm` | removing calendar events, files, list items |
+| `network.block.adult` | `confirm` | blocking a device that belongs to an adult |
+| `desktop.run`         | `confirm` | running something that changes this Mac |
+| `credential`          | `never`   | passwords, card numbers, CVVs, one-time codes |
+| anything else         | `auto`    | go ahead |
+
+`never` is a refusal, not a prompt: gombwe has no path to your card number, and
+no approval can open one. Everything else defaults to `auto`.
+
+A waiting approval is announced in the conversation that raised it, and to the
+owner as well when somebody else raised it:
+
+```
+Approval needed [3f9a1c0d]: Pay $84.20 at Coles (11 items)
+Reply /approve 3f9a1c0d or /deny 3f9a1c0d. Expires in 30 min.
+```
+
+Decide it from any channel with `/approve 3f9a1c0d` or `/deny 3f9a1c0d`. The
+first six characters are enough as long as they match only one waiting request;
+`/approve` on its own lists what is waiting. An **owner** decides anything, an
+**adult** decides their own request, and anyone can deny a request they raised.
+
+When the decision lands minutes later, gombwe feeds it back into the same
+conversation and the agent carries on by itself — you do not have to ask again.
+Undecided requests expire after 30 minutes, and the conversation is told.
+
+Every waiting request opens one ledger line as `pending` and closes it as `ok`,
+`denied` or `expired`, so `GET /api/ledger?outcome=denied` answers "what did we
+refuse". The requests themselves live in `~/.claude-gombwe/data/approvals.json`.
+
+```bash
+# What is waiting
+curl localhost:18790/api/approvals
+
+# Approve or refuse one (full id, or a unique prefix)
+curl -X POST localhost:18790/api/approvals/3f9a1c0d/approve
+curl -X POST localhost:18790/api/approvals/3f9a1c0d/deny
+
+# Block until it is decided, then give up and let the caller move on
+curl 'localhost:18790/api/approvals/3f9a1c0d/wait?timeout=25000'
+
+# The policy table, and changing a class (owner only)
+curl localhost:18790/api/approvals/policies
+curl -X PUT localhost:18790/api/approvals/policies \
+  -H 'content-type: application/json' \
+  -d '{"pay":"confirm","desktop.run":"auto"}'
+```
+
+The owner hears about other people's requests on the web dashboard by default.
+Point that somewhere else with `notify.ownerChannel` in
+`~/.claude-gombwe/gombwe.json`:
+
+```json
+{ "notify": { "ownerChannel": "telegram" } }
+```
 
 ## Setting Up Telegram
 
@@ -352,6 +434,8 @@ Type `/` to see all commands with autocomplete. Key ones:
 /pwd                    Show current working directory for this session
 /cd <path>              Set working directory for this session (alone resets)
 /in <path> <message>    Run one message in <path> without changing session default
+/approve <id>           Approve a waiting action (first 8 chars of the id is enough)
+/deny <id>              Refuse a waiting action
 
 # Family
 /dinner <day> <meal>    Add dinner (e.g. /dinner wed Chicken curry)
