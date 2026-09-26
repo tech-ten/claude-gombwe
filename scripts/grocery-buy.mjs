@@ -11,7 +11,14 @@
  *   4. Opens checkout
  *   5. Selects earliest delivery (ASAP / Rapid)
  *   6. Sets delivery instructions (leave at door)
- *   7. Confirms and pays
+ *   7. Asks a human to approve the payment, then confirms and pays
+ *
+ * The approval is the `pay` class: the cart, the slot and the instructions are
+ * all reversible, so they happen unattended, and the one irreversible click
+ * waits on /approve from any channel. An unreachable gateway fails closed.
+ *
+ * The CVV comes from the login Keychain:
+ *   security add-generic-password -a gombwe -s gombwe-grocery-cvv -w <cvv>
  *
  * Usage:
  *   node scripts/grocery-buy.mjs woolworths "milk 2L" "eggs 12" "bread"
@@ -32,6 +39,8 @@ import {
   connectChrome, clearBrowserCache, getPage,
   // Auth + alert
   notifyGombwe, looksLikeLoginWall, assertLoggedIn,
+  // Approvals + audit + secrets
+  requestApproval, postLedger, readKeychain,
   // Search
   woolworthsSearch, discoverColesApi, colesSearch,
   // Match
@@ -43,11 +52,46 @@ const PREFS_FILE = join(dataDir(), 'grocery-preferences.json');
 // Load config (buy-script specific — not in lib)
 let PREFS = {};
 try { PREFS = JSON.parse(readFileSync(PREFS_FILE, 'utf-8')); } catch {}
-const CVV = PREFS.payment?.cvv || null;
+const PREFS_CVV = PREFS.payment?.cvv || null;
 const DELIVERY_INSTRUCTIONS = PREFS.delivery?.instructions || 'Please leave at front door / pouch. Thank you.';
 const PRICE_LIMITS = PREFS.price_limits || {};
 const PRICE_BUFFER = 1.15; // 15% buffer above listed limits
 const CLEAR_CACHE = PREFS.clear_cache_before_order !== false; // default true
+
+/**
+ * The card's CVV: the preferences file if it is still there, else the login
+ * Keychain. Resolved on the checkout path rather than at load, so a dry run or
+ * a price comparison never touches the Keychain — and memoised, so one order
+ * reads it once.
+ */
+let cvvCache;
+async function getCvv() {
+  if (cvvCache !== undefined) return cvvCache;
+  if (PREFS_CVV) {
+    console.log('  WARNING: CVV found in grocery-preferences.json; move it to Keychain: ' +
+      'security add-generic-password -a gombwe -s gombwe-grocery-cvv -w <cvv>');
+    cvvCache = PREFS_CVV;
+  } else {
+    cvvCache = await readKeychain('gombwe-grocery-cvv');
+  }
+  return cvvCache;
+}
+
+/**
+ * One ledger line for a step of the order. Best effort: postLedger never
+ * throws, so a missing audit line cannot abort a checkout.
+ */
+function recordStep(action, { store, total, itemCount, outcome, approvalId, receipt, error }) {
+  return postLedger({
+    action,
+    target: store,
+    params: { store, total, items: itemCount },
+    outcome,
+    approvalId,
+    receipt,
+    error,
+  });
+}
 
 /** Local wrapper passes the buy-script's prefs into the lib's pickBestProduct. */
 function pickBestProductLocal(products, searchTerm) {
@@ -342,7 +386,9 @@ async function activateEverydayRewardsBoosters(page) {
   return { activated: result.clicked, skipped: false };
 }
 
-async function woolworthsCheckoutAndPay(page) {
+async function woolworthsCheckoutAndPay(page, ctx = {}) {
+  const items = Array.isArray(ctx.items) ? ctx.items : [];
+  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : items.length;
   // Activate Everyday Rewards boosters first — points multipliers apply only
   // to shops placed AFTER activation, so this must run before checkout.
   // Non-blocking: any failure here is logged and we proceed regardless.
@@ -445,6 +491,7 @@ async function woolworthsCheckoutAndPay(page) {
   await wait(2000);
 
   // Enter CVV if required
+  const CVV = await getCvv();
   if (CVV) {
     console.log('  Entering payment CVV...');
     await page.evaluate((cvv) => {
@@ -484,6 +531,30 @@ async function woolworthsCheckoutAndPay(page) {
     }, CVV);
     await wait(2000);
   }
+
+  // ── The gate ───────────────────────────────────────────────────────
+  // Everything above this line is reversible: the cart can be emptied and the
+  // slot given back. The click below spends money, so `pay` needs a person.
+  const approval = await requestApproval({
+    cls: 'pay',
+    summary: `Grocery order at woolworths: ${itemCount} items, total $${cartTotal || '?'}`,
+    params: { store: 'woolworths', total: cartTotal, items },
+  });
+  if (approval.status !== 'approved') {
+    console.log(`  Order not approved (${approval.status})`);
+    if (approval.reason) console.log(`  ${approval.reason}`);
+    console.log('  The cart is still there — approve and re-run --checkout-only to place it.');
+    await recordStep('grocery.checkout', {
+      store: 'woolworths', total: cartTotal, itemCount,
+      outcome: approval.status === 'expired' ? 'expired' : 'denied',
+      approvalId: approval.id,
+      error: approval.reason,
+    });
+    return { total: cartTotal, ordered: false, denied: true };
+  }
+  await recordStep('grocery.checkout', {
+    store: 'woolworths', total: cartTotal, itemCount, outcome: 'ok', approvalId: approval.id,
+  });
 
   // Click Place Order / Pay / Confirm
   console.log('  Placing order...');
@@ -546,11 +617,42 @@ async function woolworthsCheckoutAndPay(page) {
       console.log('  Order NOT confirmed. Check Chrome to complete.');
     }
 
+    await recordStep('grocery.order', {
+      store: 'woolworths', total: cartTotal, itemCount,
+      outcome: confirmed ? 'ok' : 'failed',
+      approvalId: approval.id,
+      receipt: { store: 'woolworths', total: cartTotal, orderNumber: await readOrderNumber(page), confirmed },
+    });
     return { total: cartTotal, ordered: confirmed };
   } else {
     console.log('  Could not find Place Order button. Check Chrome.');
     console.log('  URL:', page.url());
+    await recordStep('grocery.order', {
+      store: 'woolworths', total: cartTotal, itemCount, outcome: 'failed',
+      approvalId: approval.id,
+      error: 'no place-order button',
+      receipt: { store: 'woolworths', total: cartTotal, confirmed: false },
+    });
     return { total: cartTotal, ordered: false };
+  }
+}
+
+/**
+ * Best-effort order number off a confirmation page, for the ledger receipt.
+ * Null whenever the page does not say — it is a nicety, not a result.
+ */
+async function readOrderNumber(page) {
+  try {
+    return await page.evaluate(() => {
+      // Must contain a digit, so "Order now" and friends are not order numbers.
+      const re = /order\s*(?:number|no\.?|#)\s*:?\s*#?([A-Z0-9][A-Z0-9-]{3,})/gi;
+      for (const m of document.body.innerText.matchAll(re)) {
+        if (/\d/.test(m[1])) return m[1];
+      }
+      return null;
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -673,7 +775,9 @@ async function colesSelectDeliverySlot(page) {
   await wait(3000);
 }
 
-async function colesCheckoutAndPay(page) {
+async function colesCheckoutAndPay(page, ctx = {}) {
+  const items = Array.isArray(ctx.items) ? ctx.items : [];
+  const itemCount = Number.isFinite(ctx.itemCount) ? ctx.itemCount : items.length;
   const log = [];
   const step = (msg) => { console.log(`  ${msg}`); log.push(msg); };
 
@@ -751,6 +855,7 @@ async function colesCheckoutAndPay(page) {
   await wait(5000);
 
   // STEP 7: CVV (if payment processor shows it — Coles Plus often skips this)
+  const CVV = await getCvv();
   if (CVV) {
     step('Entering CVV if required...');
     const frames = page.frames();
@@ -775,6 +880,29 @@ async function colesCheckoutAndPay(page) {
     }
     await wait(2000);
   }
+
+  // ── The gate ───────────────────────────────────────────────────────
+  // Last reversible moment: the click below spends money, so a person decides.
+  const approval = await requestApproval({
+    cls: 'pay',
+    summary: `Grocery order at coles: ${itemCount} items, total $${total || '?'}`,
+    params: { store: 'coles', total, items },
+  });
+  if (approval.status !== 'approved') {
+    step(`Order not approved (${approval.status})`);
+    if (approval.reason) step(approval.reason);
+    step('The trolley is still there — approve and re-run --checkout-only to place it.');
+    await recordStep('grocery.checkout', {
+      store: 'coles', total, itemCount,
+      outcome: approval.status === 'expired' ? 'expired' : 'denied',
+      approvalId: approval.id,
+      error: approval.reason,
+    });
+    return { total, ordered: false, denied: true, log };
+  }
+  await recordStep('grocery.checkout', {
+    store: 'coles', total, itemCount, outcome: 'ok', approvalId: approval.id,
+  });
 
   // STEP 8: Place Order — try data-testid first (most reliable), then text fallback
   step('Placing order...');
@@ -816,6 +944,14 @@ async function colesCheckoutAndPay(page) {
     writeFileSync(join(dataDir(), 'grocery-last-run.json'), JSON.stringify(logReport, null, 2));
   } catch {}
 
+  await recordStep('grocery.order', {
+    store: 'coles', total, itemCount,
+    outcome: ordered ? 'ok' : 'failed',
+    approvalId: approval.id,
+    error: ordered ? undefined : 'no place-order button',
+    receipt: { store: 'coles', total, orderNumber: ordered ? await readOrderNumber(page) : null, confirmed: !!ordered },
+  });
+
   return { total, ordered: !!ordered, log };
 }
 
@@ -824,18 +960,32 @@ async function colesCheckoutAndPay(page) {
 // ═══════════════════════════════════════════════════════════
 
 async function checkoutOnly(store) {
+  // What buy() staged, so the approval summary names the real basket rather
+  // than "0 items". Absent or for another store, the gate still runs.
+  let staged = {};
+  try {
+    const parsed = JSON.parse(readFileSync(join(dataDir(), 'pending-order.json'), 'utf-8'));
+    if (parsed?.store === store) staged = parsed;
+  } catch {}
+
   const browser = await connectChrome();
   try {
     const page = await getPage(browser, store === 'woolworths' ? 'woolworths.com.au' : 'coles.com.au');
     await assertLoggedIn(page, store);
     const checkoutFn = store === 'woolworths' ? woolworthsCheckoutAndPay : colesCheckoutAndPay;
     console.log(`\n  ── CHECKOUT ${store.toUpperCase()} ──\n`);
-    const result = await checkoutFn(page);
+    const result = await checkoutFn(page, {
+      items: Array.isArray(staged.itemNames) ? staged.itemNames : [],
+      itemCount: typeof staged.items === 'number' ? staged.items : undefined,
+    });
     if (result.ordered) {
       console.log(`\n  ORDER CONFIRMED`);
       console.log(`  Delivery: ASAP`);
       console.log(`  Instructions: ${DELIVERY_INSTRUCTIONS}`);
       console.log(`\n  Groceries are on their way!\n`);
+    } else if (result.denied) {
+      console.log(`\n  ORDER NOT PLACED — no approval`);
+      console.log(`  The cart is untouched. Approve, then run this again.\n`);
     } else {
       console.log(`\n  ORDER NOT COMPLETED`);
       console.log(`  Open Chrome and complete checkout manually.\n`);
@@ -899,6 +1049,7 @@ async function buy(store, items, skipCheckout = false) {
     console.log(`  Adding ${items.length} items:\n`);
     let total = 0;
     let added = 0;
+    const cart = [];
 
     for (const item of items) {
       process.stdout.write(`  ${item}... `);
@@ -914,6 +1065,7 @@ async function buy(store, items, skipCheckout = false) {
         console.log(`+ $${best.price?.toFixed(2) || '?'}  ${best.name}`);
         total += best.price || 0;
         added++;
+        cart.push({ query: item, name: best.name, price: best.price ?? null });
       } else {
         console.log(`! could not add  ${best.name}`);
       }
@@ -921,6 +1073,14 @@ async function buy(store, items, skipCheckout = false) {
     }
 
     console.log(`\n  ${added}/${items.length} items added. Estimated: $${total.toFixed(2)}\n`);
+
+    await recordStep('grocery.cart', {
+      store,
+      total: Number(total.toFixed(2)),
+      itemCount: added,
+      outcome: added > 0 ? 'ok' : 'failed',
+      receipt: { store, requested: items.length, added, items: cart },
+    });
 
     if (added === 0) {
       console.log('  No items added. Aborting checkout.');
@@ -965,11 +1125,14 @@ async function buy(store, items, skipCheckout = false) {
       const { join } = await import('path');
       writeFileSync(
         join(dataDir(), 'pending-order.json'),
-        JSON.stringify({ store, items: added, total, priceComparison, timestamp: new Date().toISOString() }, null, 2)
+        JSON.stringify({
+          store, items: added, itemNames: cart.map(c => c.name),
+          total, priceComparison, timestamp: new Date().toISOString(),
+        }, null, 2)
       );
     } else {
       console.log('  ── CHECKOUT ──\n');
-      const result = await checkoutFn(page);
+      const result = await checkoutFn(page, { items: cart, itemCount: added });
 
       if (result.ordered) {
         console.log(`\n  ORDER CONFIRMED`);
@@ -979,6 +1142,10 @@ async function buy(store, items, skipCheckout = false) {
         console.log(`  Delivery: ASAP`);
         console.log(`  Instructions: ${DELIVERY_INSTRUCTIONS}`);
         console.log(`\n  Groceries are on their way!\n`);
+      } else if (result.denied) {
+        console.log(`\n  ORDER NOT PLACED — no approval`);
+        console.log(`  Items are still in your ${store} cart (${added} items, ~$${total.toFixed(2)})`);
+        console.log(`  Approve it, then: node scripts/grocery-buy.mjs --checkout-only ${store}\n`);
       } else {
         console.log(`\n  ORDER NOT COMPLETED`);
         console.log(`  Items are in your ${store} cart (${added} items, ~$${total.toFixed(2)})`);

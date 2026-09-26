@@ -30,7 +30,7 @@ import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
-import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, isLoopback, matchNetworkAction } from './permissions.js';
 import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
 function localMacAddresses(): string[] {
@@ -1740,6 +1740,78 @@ export class Gateway {
     this.app.get('/api/approvals/:id', (req: Request, res: Response) => {
       const found = this.approvalFromRequest(req, res);
       if (found) res.json(found);
+    });
+
+    // ── Script-side approvals and ledger (loopback only) ──────────
+    // The grocery flow is a set of ESM scripts under scripts/, not in-process
+    // code, so it asks for its approval and writes its audit line over HTTP.
+    // Both routes are refused off this machine: a LAN client is a guest, and a
+    // guest must not be able to open a `pay` request or forge a ledger entry.
+    const loopbackOnly = (req: Request, res: Response): boolean => {
+      if (isLoopback(req.socket?.remoteAddress)) return true;
+      res.status(403).json({ error: 'this route is only served to this machine' });
+      return false;
+    };
+
+    // POST { class, summary, params?, action?, principal? } → RequestResult.
+    // A `confirm` class comes back with the pending approval, whose id the
+    // caller then long-polls on /api/approvals/:id/wait.
+    this.app.post('/api/approvals/request', (req: Request, res: Response) => {
+      if (!loopbackOnly(req, res)) return;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const cls = typeof body.class === 'string' ? body.class.trim() : '';
+      const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
+      if (!cls || !summary) {
+        res.status(400).json({ error: 'class and summary required' }); return;
+      }
+      const principal = typeof body.principal === 'string' && body.principal.trim()
+        ? body.principal.trim()
+        // A script runs on the household's behalf, and only the owner can
+        // approve a payment, so an unattributed run is the owner's.
+        : 'owner';
+      try {
+        res.json(this.services.approvals.request({
+          class: cls,
+          summary,
+          params: plainObject(body.params),
+          action: typeof body.action === 'string' && body.action.trim() ? body.action.trim() : undefined,
+          principal,
+          channel: 'script',
+        }));
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // POST a ledger entry (no id, no time — both are assigned here, so a script
+    // cannot supersede a line somebody else wrote).
+    this.app.post('/api/ledger', (req: Request, res: Response) => {
+      if (!loopbackOnly(req, res)) return;
+      const { id: _id, time: _time, ...body } = (req.body ?? {}) as Record<string, unknown>;
+      const action = typeof body.action === 'string' ? body.action.trim() : '';
+      if (!action) {
+        res.status(400).json({ error: 'action required' }); return;
+      }
+      const outcome = (body.outcome ?? 'ok') as LedgerOutcome;
+      if (!LEDGER_OUTCOMES.includes(outcome)) {
+        res.status(400).json({ error: `outcome must be one of ${LEDGER_OUTCOMES.join(', ')}` }); return;
+      }
+      const actor = (body.actor ?? 'script') as LedgerActor;
+      if (!LEDGER_ACTORS.includes(actor)) {
+        res.status(400).json({ error: `actor must be one of ${LEDGER_ACTORS.join(', ')}` }); return;
+      }
+      const params = plainObject(body.params);
+      const receipt = plainObject(body.receipt);
+      res.json(this.services.ledger.record({
+        ...body,
+        action,
+        outcome,
+        actor,
+        principal: typeof body.principal === 'string' && body.principal.trim() ? body.principal.trim() : 'owner',
+        target: typeof body.target === 'string' ? body.target : undefined,
+        params: params ? truncateDeep(params) as Record<string, unknown> : undefined,
+        receipt: receipt ? truncateDeep(receipt) as Record<string, unknown> : undefined,
+      }));
     });
 
     // ── Agentsform lead form receiver ─────────────────────────────
@@ -3935,6 +4007,25 @@ function asReceipt(payload: unknown): Record<string, unknown> | undefined {
   if (Array.isArray(payload)) return { items: truncateDeep(payload) };
   if (typeof payload === 'object') return truncateDeep(payload) as Record<string, unknown>;
   return { value: payload };
+}
+
+/** Ledger outcomes a caller may name. Keeps a typo out of the audit trail. */
+const LEDGER_OUTCOMES: LedgerOutcome[] = ['ok', 'failed', 'denied', 'pending', 'expired'];
+
+/** Actors a caller may name, for the same reason. */
+const LEDGER_ACTORS: LedgerActor[] = [
+  'chat', 'task', 'cron', 'trigger', 'goal', 'monitor',
+  'dashboard', 'skill', 'script', 'remote', 'system',
+];
+
+/**
+ * The value if it is a plain object, else undefined — so an array, a string or
+ * a null from an HTTP body cannot land in a field typed as a record.
+ */
+function plainObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 const MAX_LEDGER_STRING = 2000;
