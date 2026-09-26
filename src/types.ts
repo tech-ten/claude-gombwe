@@ -53,6 +53,10 @@ export interface AgentTask {
   maxContinuations: number;
   verified: boolean;
   conversationId?: string;
+  /** The session's own `--mcp-config` files, so retries reach the same tools. */
+  mcpConfigs?: string[];
+  /** Whether this task's agent is confined to those servers alone. */
+  strictMcp?: boolean;
 }
 
 export interface Session {
