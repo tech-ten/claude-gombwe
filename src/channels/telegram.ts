@@ -61,7 +61,8 @@ export class TelegramChannel implements ChannelAdapter {
           channel: 'telegram',
           sessionKey: taskSessionKey,
           text,
-          sender: ctx.from?.username || ctx.from?.first_name || String(chatId),
+          sender: String(ctx.from?.id ?? chatId),
+          senderName: ctx.from?.first_name || ctx.from?.username || undefined,
           timestamp: new Date().toISOString(),
         };
 
@@ -77,7 +78,8 @@ export class TelegramChannel implements ChannelAdapter {
         channel: 'telegram',
         sessionKey,
         text,
-        sender: ctx.from?.username || ctx.from?.first_name || String(chatId),
+        sender: String(ctx.from?.id ?? chatId),
+        senderName: ctx.from?.first_name || ctx.from?.username || undefined,
         timestamp: new Date().toISOString(),
       };
 

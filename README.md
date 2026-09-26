@@ -226,6 +226,76 @@ Then from Discord: `/buy` or "order the groceries". See [docs/GROCERY.md](docs/G
 
 ---
 
+## Household members and permissions
+
+Everyone who talks to gombwe resolves to a **principal**: a household member
+with a role, the channel accounts that identify them, and per-connector grants.
+The roster lives in `~/.claude-gombwe/data/principals.json` and every action it
+allows is written to the ledger, so `GET /api/ledger?principal=liam` answers
+"what did Liam do".
+
+**Roles** are `owner`, `adult`, `child`, `guest`. An owner may do everything.
+Everyone else needs a grant per connector — `family`, `network`, `grocery`,
+`desktop`, `email`, `calendar`, `memory`, `goals`, `monitors` — at level `read`
+or `act`. `act` includes `read`. Anyone with no binding at all resolves to a
+guest with no grants, so an unknown Discord account can be talked to but cannot
+change anything.
+
+**How gombwe recognises you** depends on the channel:
+
+| Channel  | Identity |
+| -------- | -------- |
+| web      | the Cloudflare Access email, or `local` for a request from the home network |
+| discord  | the author's user id |
+| telegram | the sender's user id |
+
+The dashboard on your own LAN has no Access header, so it is `local` — and
+`local` is bound to the owner gombwe seeds on first run. **Anything that can
+reach the gateway on your network is therefore trusted as the owner**: there is
+no password on the LAN, so treat access to the home network as access to
+everything gombwe can do. Reaching the dashboard from outside goes through
+Cloudflare Access, which always stamps the email, so remote viewers are only
+ever the principal you bound that email to.
+
+That also means the Access header is only meaningful when gombwe sits behind
+Cloudflare. Expose the port directly to the internet and anyone who finds it
+arrives as `local`, which is to say as the owner. Keep the tunnel in front of it.
+
+**Managing the roster** (every change is owner-only):
+
+```bash
+# Who am I, on this request?
+curl localhost:18790/api/me
+
+# The whole household
+curl localhost:18790/api/principals
+
+# Add an adult who can run the groceries but only read the network
+curl -X PUT localhost:18790/api/principals/mag \
+  -H 'content-type: application/json' \
+  -d '{"name":"Mag","role":"adult","grants":{"family":"act","grocery":"act","network":"read"}}'
+
+# Teach gombwe her Telegram account
+curl -X POST localhost:18790/api/principals/mag/bind \
+  -H 'content-type: application/json' \
+  -d '{"channel":"telegram","identity":"123456789"}'
+
+curl -X DELETE localhost:18790/api/principals/mag
+```
+
+A channel identity belongs to one principal, so binding or re-assigning it moves
+it rather than duplicating it. The last owner can be neither deleted nor demoted
+— without an owner, the routes that could restore one would be closed.
+
+Members can also be declared up front in `~/.claude-gombwe/gombwe.json` under
+`principals`; they are upserted on every boot.
+
+**What the guards cover today.** Every `/api/network/*` route needs a `network`
+grant: `read` for a GET, `act` for anything that changes the router. Each of
+those changes writes one ledger line naming the principal, the parameters and
+the router's reply. Family mutations are recorded too, from both the dashboard
+and chat commands.
+
 ## Setting Up Telegram
 
 1. Message [@BotFather](https://t.me/botfather) on Telegram and send `/newbot`

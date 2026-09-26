@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import { createServer } from 'node:http';
 import { freePort } from './daemon-lock.js';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -28,6 +28,8 @@ import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
+import { CONNECTORS, LEVELS, ROLES, identityFromHeaders, matchNetworkAction } from './permissions.js';
+import type { Binding, Connector, Level, Principal, Role } from './permissions.js';
 
 function localMacAddresses(): string[] {
   const macs = new Set<string>();
@@ -202,6 +204,10 @@ export class Gateway {
                 this.logFamilyAction(family, 'gombwe', 'order completed',
                   `${groceryItems.length + nonFoodItems.length} items moved to pantry (${task.channel})`);
                 this.saveFamilyData(family);
+                this.ledgerFamily('family.grocery.order-completed',
+                  { channel: task.channel, taskId: task.id },
+                  { moved_to_pantry: [...groceryItems, ...nonFoodItems] },
+                  'task');
               } catch (err: any) {
                 console.error(`[gateway] post-order cleanup failed: ${err.message}`);
               }
@@ -217,8 +223,12 @@ export class Gateway {
   }
 
   private setupWebSocket(): void {
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: WebSocket, upgrade) => {
       this.wsClients.add(ws);
+      // Cloudflare Access stamps the viewer's email on the upgrade request.
+      // It never reaches the individual frames, so capture it once per client.
+      // A LAN request has no header and is 'local', which is bound to the owner.
+      const identity = identityFromHeaders(upgrade.headers as Record<string, string | string[] | undefined>);
 
       ws.on('message', async (raw: Buffer) => {
         try {
@@ -231,7 +241,7 @@ export class Gateway {
                 channel: 'web',
                 sessionKey: msg.sessionKey || `web:${Date.now()}`,
                 text: msg.text,
-                sender: 'web-user',
+                sender: identity,
                 timestamp: new Date().toISOString(),
               });
             }
@@ -351,6 +361,7 @@ export class Gateway {
     msg: IncomingMessage,
     opts: { suppressLog?: boolean } = {},
   ): Promise<void> {
+    msg.principal = this.resolvePrincipal(msg).id;
     const session = this.sessions.getOrCreate(msg.sessionKey, msg.channel);
     if (!opts.suppressLog) {
       this.sessions.addEntry(msg.sessionKey, {
@@ -752,8 +763,10 @@ export class Gateway {
         if (!family.meals) family.meals = {};
         if (!family.meals[dk]) family.meals[dk] = {};
         family.meals[dk][mealSlot] = mealName;
-        this.logFamilyAction(family, msg.sender || 'user', 'meal added', `${mealSlot} on ${dk}: ${mealName}`);
+        this.logFamilyAction(family, msg.senderName || msg.sender || 'user', 'meal added', `${mealSlot} on ${dk}: ${mealName}`);
         this.saveFamilyData(family);
+        this.ledgerFamily('family.meal.set', { slot: mealSlot, date: dk, meal: mealName },
+          { meals: family.meals[dk] }, 'chat', msg.principal);
 
         const dayLabel = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(dk + 'T00:00:00').getDay()];
         await reply(`Got it — **${mealSlot}** ${dayLabel}: ${mealName}`);
@@ -778,6 +791,8 @@ export class Gateway {
             }
             this.logFamilyAction(updated, 'gombwe', 'ingredients added', `${ingData.ingredients.length} items for ${mealName}`);
             this.saveFamilyData(updated);
+            this.ledgerFamily('family.grocery.ingredients-added', { meal: mealName },
+              { added: ingData.ingredients }, 'chat', msg.principal);
             await reply(`Added to shopping list: ${ingData.ingredients.join(', ')}`);
           }
         } catch (err: any) {
@@ -827,8 +842,9 @@ export class Gateway {
           added.push(name);
         }
         if (added.length > 0) {
-          this.logFamilyAction(family, msg.sender || 'user', 'added to list', added.join(', '));
+          this.logFamilyAction(family, msg.senderName || msg.sender || 'user', 'added to list', added.join(', '));
           this.saveFamilyData(family);
+          this.ledgerFamily('family.grocery.add', { items: newItems }, { added }, 'chat', msg.principal);
           await reply(`Added: ${added.join(', ')}`);
         } else {
           await reply('Those items are already on the list.');
@@ -863,8 +879,9 @@ export class Gateway {
             newItems.push(item);
           }
           if (newItems.length > 0) {
-            this.logFamilyAction(family, msg.sender || 'user', 'added to list (buy)', newItems.join(', '));
+            this.logFamilyAction(family, msg.senderName || msg.sender || 'user', 'added to list (buy)', newItems.join(', '));
             this.saveFamilyData(family);
+            this.ledgerFamily('family.grocery.add', { items: itemsToOrder, via: 'buy' }, { added: newItems }, 'chat', msg.principal);
           }
         } else {
           const groceries = (family.groceryList || []).map((i: any) => i.name);
@@ -933,8 +950,9 @@ export class Gateway {
           const member: any = { name, type };
           if (dietary) member.dietary = dietary;
           family.members.push(member);
-          this.logFamilyAction(family, msg.sender || 'user', 'member added', `${name} (${type})`);
+          this.logFamilyAction(family, msg.senderName || msg.sender || 'user', 'member added', `${name} (${type})`);
           this.saveFamilyData(family);
+          this.ledgerFamily('family.member.add', { name, type, dietary }, { member }, 'chat', msg.principal);
           await reply(`Added **${name}** (${type})${dietary ? ` — ${dietary}` : ''}. Family size: ${family.members.length}`);
           return true;
         }
@@ -947,8 +965,9 @@ export class Gateway {
             return true;
           }
           const removed = family.members.splice(idx, 1)[0];
-          this.logFamilyAction(family, msg.sender || 'user', 'member removed', removed.name);
+          this.logFamilyAction(family, msg.senderName || msg.sender || 'user', 'member removed', removed.name);
           this.saveFamilyData(family);
+          this.ledgerFamily('family.member.remove', { name: removed.name }, { removed }, 'chat', msg.principal);
           await reply(`Removed **${removed.name}**. Family size: ${family.members.length}`);
           return true;
         }
@@ -1128,6 +1147,149 @@ export class Gateway {
     if (data.actions.length > 100) data.actions.length = 100;
   }
 
+  // ── Principals: who is asking, and may they ───────────────────
+
+  /**
+   * The principal behind an incoming chat message. Web identity comes from the
+   * Access email captured at WS upgrade ('local' on the LAN, which is bound to
+   * the owner); Discord and Telegram send a stable numeric user id as `sender`.
+   */
+  private resolvePrincipal(msg: IncomingMessage): Principal {
+    const identity = msg.sender || (msg.channel === 'web' ? 'local' : 'unknown');
+    return this.services.principals.resolve(msg.channel, identity);
+  }
+
+  /**
+   * Who to credit an HTTP action to. A request with an Access email or a browser
+   * Origin/Referer came from a person at the dashboard; a bare curl or an
+   * internal call is gombwe acting on its own, so it is recorded as 'system'.
+   */
+  private webActor(req: Request): LedgerActor {
+    const h = req.headers;
+    const fromBrowser = !!(h['cf-access-authenticated-user-email'] || h.origin || h.referer);
+    return fromBrowser ? 'dashboard' : 'system';
+  }
+
+  /** The principal behind an HTTP request: its Access email, else 'local'. */
+  private principalFromRequest(req: Request): Principal {
+    const identity = identityFromHeaders(req.headers as Record<string, string | string[] | undefined>);
+    return this.services.principals.resolve('web', identity);
+  }
+
+  /** Guard: 403s and returns false when this request may not act. */
+  private requireGrant(req: Request, res: Response, connector: Connector, level: Level): boolean {
+    const p = this.principalFromRequest(req);
+    if (this.services.principals.can(p, connector, level)) return true;
+    res.status(403).json({ error: `${p.name} may not ${level} ${connector}` });
+    return false;
+  }
+
+  /** Guard: 403s and returns false for anyone but an owner. */
+  private requireOwner(req: Request, res: Response): boolean {
+    const p = this.principalFromRequest(req);
+    if (p.role === 'owner') return true;
+    res.status(403).json({ error: `${p.name} is not an owner` });
+    return false;
+  }
+
+  /**
+   * Guard + audit every `/api/network/*` route in one place: a GET needs
+   * `network: read`, anything else needs `network: act` and writes exactly one
+   * ledger entry. Done as mounted middleware rather than per-route wrappers so
+   * a route added later cannot quietly land outside the guard.
+   *
+   * The response body is captured by wrapping `res.json` for the life of the
+   * request, and the entry is written on `finish` so the recorded outcome is
+   * the status the caller actually got — including a 500 from a thrown handler.
+   */
+  private guardNetworkRoutes(): void {
+    this.app.use('/api/network', (req: Request, res: Response, next: NextFunction) => {
+      const level: Level = req.method === 'GET' ? 'read' : 'act';
+      // req.path is the mount-relative path only while this handler runs —
+      // express restores req.url before 'finish' — so match it now.
+      const matched = level === 'act' ? matchNetworkAction(req.method, req.path) : undefined;
+      const principal = this.principalFromRequest(req);
+      const params = () => truncateDeep({
+        ...(matched?.params ?? {}),
+        ...(req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}),
+      }) as Record<string, unknown>;
+
+      if (!this.services.principals.can(principal, 'network', level)) {
+        // A refused attempt on a real router action is worth a line of its own.
+        if (matched) {
+          this.services.ledger.record({
+            actor: this.webActor(req), principal: principal.id, action: matched.action,
+            target: matched.params.mac ?? matched.params.id ?? matched.params.date,
+            params: params(), outcome: 'denied',
+          });
+        }
+        this.requireGrant(req, res, 'network', level);
+        return;
+      }
+      if (level === 'read') { next(); return; }
+
+      const sent = res.json.bind(res);
+      let payload: unknown;
+      res.json = (body: unknown) => { payload = body; return sent(body); };
+
+      res.on('finish', () => {
+        // An unrecognised mutating path is a 404 from the router below, not an
+        // action gombwe took, so it gets no ledger line.
+        if (!matched) return;
+        const failed = res.statusCode >= 400;
+        const receipt = asReceipt(payload);
+        this.services.ledger.record({
+          actor: this.webActor(req),
+          principal: principal.id,
+          action: matched.action,
+          target: matched.params.mac ?? matched.params.id ?? matched.params.date,
+          params: params(),
+          outcome: failed ? 'failed' : 'ok',
+          receipt,
+          error: failed ? String(receipt?.error ?? `HTTP ${res.statusCode}`) : undefined,
+        });
+      });
+
+      next();
+    });
+  }
+
+  /** One ledger line per change to the roster itself. */
+  private recordPrincipalChange(req: Request, action: string, target: string, receipt: Record<string, unknown>): void {
+    this.services.ledger.record({
+      actor: this.webActor(req),
+      principal: this.principalFromRequest(req).id,
+      action,
+      target,
+      params: truncateDeep({
+        ...req.params,
+        ...(req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}),
+      }) as Record<string, unknown>,
+      outcome: 'ok',
+      receipt: truncateDeep(receipt) as Record<string, unknown>,
+    });
+  }
+
+  /** One ledger line for a mutation of family.json. */
+  private ledgerFamily(
+    action: string,
+    params: Record<string, unknown>,
+    receipt: Record<string, unknown> | undefined,
+    actor: LedgerActor,
+    // gombwe's own follow-up work (a completed order tidying the pantry) has no
+    // human behind it, so it is attributed to the system rather than the owner.
+    principal = 'system',
+  ): void {
+    this.services.ledger.record({
+      actor,
+      principal,
+      action,
+      params: truncateDeep(params) as Record<string, unknown>,
+      outcome: 'ok',
+      receipt: receipt ? truncateDeep(receipt) as Record<string, unknown> : undefined,
+    });
+  }
+
   private setupRoutes(): void {
     // Serve control panel UI
     this.app.use('/ui', express.static(join(__dirname, '..', 'ui')));
@@ -1166,6 +1328,98 @@ export class Gateway {
         principal,
         limit,
       }));
+    });
+
+    // ── Principals (household members + permissions) ──────────────
+    // Reading the roster is open to any authenticated viewer; every change is
+    // owner-only. Web identity is the Cloudflare Access email, or 'local' for a
+    // LAN request — and 'local' is bound to the owner.
+    this.app.get('/api/principals', (_req: Request, res: Response) => {
+      res.json(this.services.principals.list());
+    });
+
+    // Who am I, as this request? Used by the dashboard to hide what it may not do.
+    this.app.get('/api/me', (req: Request, res: Response) => {
+      const principal = this.principalFromRequest(req);
+      res.json({
+        ...principal,
+        connectors: CONNECTORS.filter(c => this.services.principals.can(principal, c, 'read')),
+        mcpServers: this.services.principals.mcpServersFor(principal),
+      });
+    });
+
+    // PUT body: { name?, role, grants?, bindings? } — creates or replaces :id.
+    this.app.put('/api/principals/:id', (req: Request, res: Response) => {
+      if (!this.requireOwner(req, res)) return;
+      const id = String(req.params.id);
+      const { name, role, grants, bindings } = req.body ?? {};
+      if (!ROLES.includes(role)) {
+        res.status(400).json({ error: `role must be one of ${ROLES.join(', ')}` }); return;
+      }
+      if (grants != null && (typeof grants !== 'object' || Array.isArray(grants))) {
+        res.status(400).json({ error: 'grants must be an object' }); return;
+      }
+      for (const [connector, level] of Object.entries(grants ?? {})) {
+        if (!CONNECTORS.includes(connector as Connector)) {
+          res.status(400).json({ error: `unknown connector: ${connector}` }); return;
+        }
+        if (!LEVELS.includes(level as Level)) {
+          res.status(400).json({ error: `grant for ${connector} must be one of ${LEVELS.join(', ')}` }); return;
+        }
+      }
+      if (bindings != null && !Array.isArray(bindings)) {
+        res.status(400).json({ error: 'bindings must be an array' }); return;
+      }
+      for (const b of bindings ?? []) {
+        if (!b?.channel || !b?.identity) {
+          res.status(400).json({ error: 'each binding needs channel and identity' }); return;
+        }
+      }
+      try {
+        const saved = this.services.principals.upsert({
+          id,
+          name: name ? String(name) : id,
+          role: role as Role,
+          bindings: bindings as Binding[] | undefined,
+          grants: (grants ?? {}) as Principal['grants'],
+        } as Principal);
+        this.recordPrincipalChange(req, 'principals.upsert', id, { ...saved });
+        res.json(saved);
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    this.app.delete('/api/principals/:id', (req: Request, res: Response) => {
+      if (!this.requireOwner(req, res)) return;
+      const id = String(req.params.id);
+      try {
+        const removed = this.services.principals.remove(id);
+        if (!removed) { res.status(404).json({ error: 'not found' }); return; }
+        this.recordPrincipalChange(req, 'principals.remove', id, { removed: true });
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // POST body: { channel, identity } — teaches gombwe to recognise someone
+    // on a channel. The pair is unique, so binding it here moves it off whoever
+    // held it before.
+    this.app.post('/api/principals/:id/bind', (req: Request, res: Response) => {
+      if (!this.requireOwner(req, res)) return;
+      const id = String(req.params.id);
+      const { channel, identity } = req.body ?? {};
+      if (!channel || !identity) {
+        res.status(400).json({ error: 'channel and identity required' }); return;
+      }
+      try {
+        const bound = this.services.principals.bind(id, { channel: String(channel), identity: String(identity) });
+        this.recordPrincipalChange(req, 'principals.bind', id, { bindings: bound.bindings });
+        res.json(bound);
+      } catch (err) {
+        res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+      }
     });
 
     // ── Agentsform lead form receiver ─────────────────────────────
@@ -1251,6 +1505,8 @@ export class Gateway {
     });
 
     // ── Network monitoring + control ─────────────────────────────
+    this.guardNetworkRoutes();
+
     this.app.get('/api/network/status', async (_req: Request, res: Response) => {
       if (!mikrotik.configured) { res.status(503).json({ error: 'MikroTik not configured' }); return; }
       try { res.json(await getNetworkService().status()); }
@@ -2294,6 +2550,8 @@ export class Gateway {
 
     this.app.put('/api/family', (req: Request, res: Response) => {
       this.saveFamilyData(req.body);
+      this.ledgerFamily('family.data.replace', { keys: Object.keys(req.body ?? {}) }, undefined,
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true });
     });
 
@@ -2301,6 +2559,8 @@ export class Gateway {
       const data = this.loadFamilyData();
       Object.assign(data, req.body);
       this.saveFamilyData(data);
+      this.ledgerFamily('family.data.patch', { keys: Object.keys(req.body ?? {}) }, undefined,
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json(data);
     });
 
@@ -2520,6 +2780,8 @@ The ingredients should be grocery item names with quantities scaled for ${family
         applied++;
       }
       this.saveFamilyData(family);
+      this.ledgerFamily('family.meal.plan-apply', { force }, { applied, skipped },
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true, applied, skipped });
     });
 
@@ -2539,6 +2801,8 @@ The ingredients should be grocery item names with quantities scaled for ${family
         added++;
       }
       this.saveFamilyData(family);
+      this.ledgerFamily('family.grocery.import-deals', { names }, { added },
+        this.webActor(req), this.principalFromRequest(req).id);
       res.json({ ok: true, added });
     });
 
@@ -3343,4 +3607,29 @@ The ingredients should be grocery item names with quantities scaled for ${family
     }
     this.server.close();
   }
+}
+
+/** Ledger receipts are objects; wrap anything else so the shape stays stable. */
+function asReceipt(payload: unknown): Record<string, unknown> | undefined {
+  if (payload == null) return undefined;
+  if (Array.isArray(payload)) return { items: truncateDeep(payload) };
+  if (typeof payload === 'object') return truncateDeep(payload) as Record<string, unknown>;
+  return { value: payload };
+}
+
+const MAX_LEDGER_STRING = 2000;
+
+/**
+ * Trim long strings out of ledger params and receipts. A raw RouterOS reply or
+ * a 24x7 schedule grid would otherwise dominate the file.
+ */
+function truncateDeep(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return value.length > MAX_LEDGER_STRING ? `${value.slice(0, MAX_LEDGER_STRING)}…[truncated]` : value;
+  }
+  if (depth >= 6 || value == null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(v => truncateDeep(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = truncateDeep(v, depth + 1);
+  return out;
 }
