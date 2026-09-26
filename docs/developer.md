@@ -91,8 +91,9 @@ Anything that changes the world writes one line, and there are four ways in:
   this machine: background scripts via `postLedger` in
   `scripts/grocery-lib.mjs`, and the family MCP server via
   `src/mcp/family-ledger.ts`. The MCP server is a child of the Claude CLI, so
-  it cannot reach the in-process ledger; its posts never throw, because a
-  family tool that already wrote `family.json` must not fail over a missed line.
+  it cannot reach the in-process ledger; its posts never throw and give up
+  after two seconds, because a family tool that already wrote `family.json`
+  must not fail — or hang — over a missed line.
 
 `Ledger` is an `EventEmitter` and emits `'record'` from both `record()` and
 `update()`. The gateway subscribes once and rebroadcasts each entry to the

@@ -82,6 +82,49 @@ test('a thrown fetch — gateway down — is swallowed and reported as null', as
   assert.match(logged.join('\n'), /ECONNREFUSED/);
 });
 
+/**
+ * A gateway that never answers, but does respect the abort signal — what real
+ * `fetch` does. Resolves after 5 s if nothing aborts it, which is far longer
+ * than any of these tests are allowed to take.
+ */
+const wedgedGateway = (async (_url: any, init: any) => new Promise((resolve, reject) => {
+  const slow = setTimeout(() => resolve({ ok: true, status: 200, json: async () => ({}) }), 5000);
+  init?.signal?.addEventListener('abort', () => {
+    clearTimeout(slow);
+    reject(init.signal.reason ?? new Error('aborted'));
+  });
+})) as unknown as typeof fetch;
+
+test('a gateway that never answers is abandoned, not waited on', async () => {
+  const started = Date.now();
+  const { value, logged } = await quietly(() =>
+    postLedger({ action: 'family.grocery.add' }, { port: 1, fetchImpl: wedgedGateway, timeoutMs: 100 }));
+  const elapsed = Date.now() - started;
+
+  assert.equal(value, null, 'the tool call gets its answer, just without a ledger line');
+  assert.ok(elapsed < 1000, `should give up in ~100ms, took ${elapsed}ms`);
+  assert.match(logged.join('\n'), /did not answer within 100ms/);
+});
+
+test('the default gives the gateway two seconds and no more', async () => {
+  const started = Date.now();
+  const { value } = await quietly(() =>
+    postLedger({ action: 'family.grocery.add' }, { port: 1, fetchImpl: wedgedGateway }));
+  const elapsed = Date.now() - started;
+
+  assert.equal(value, null);
+  assert.ok(elapsed >= 1900, `should actually wait the default out, took only ${elapsed}ms`);
+  assert.ok(elapsed < 3000, `should give up well before the 5s reply, took ${elapsed}ms`);
+});
+
+test('the request carries an abort signal for the real fetch to honour', async () => {
+  const { impl, calls } = fakeFetch({ ok: true });
+  await postLedger({ action: 'family.grocery.add' }, { port: 1, fetchImpl: impl });
+  const signal = (calls[0].init as any).signal;
+  assert.ok(signal, 'a signal is always passed, not only when a timeout is asked for');
+  assert.equal(signal.aborted, false);
+});
+
 test('the principal comes from the environment and falls back to the owner', () => {
   assert.equal(ledgerPrincipal({ GOMBWE_PRINCIPAL: 'liam' } as NodeJS.ProcessEnv), 'liam');
   assert.equal(ledgerPrincipal({} as NodeJS.ProcessEnv), 'owner');
