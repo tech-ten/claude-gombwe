@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Workflow, WorkflowStep, TriggerSource, GombweConfig } from './types.js';
+import { reportEvent, type LedgerEventSink } from './ledger.js';
 import { AgentRuntime } from './agent.js';
 
 /**
@@ -27,18 +28,26 @@ export class WorkflowEngine extends EventEmitter {
   private agent: AgentRuntime;
   private config: GombweConfig;
   private notifyFn: (channels: string[], message: string) => void;
+  /** Set by the gateway so every step lands in the action ledger. */
+  private onEvent?: LedgerEventSink;
 
   constructor(
     config: GombweConfig,
     agent: AgentRuntime,
     notifyFn: (channels: string[], message: string) => void,
+    opts: { onEvent?: LedgerEventSink } = {},
   ) {
     super();
     this.config = config;
     this.agent = agent;
     this.notifyFn = notifyFn;
+    this.onEvent = opts.onEvent;
     this.workflowsFile = join(config.dataDir, 'workflows.json');
     this.loadWorkflows();
+  }
+
+  setEventSink(onEvent: LedgerEventSink | undefined): void {
+    this.onEvent = onEvent;
   }
 
   private loadWorkflows(): void {
@@ -125,6 +134,8 @@ export class WorkflowEngine extends EventEmitter {
         if (conditionCheck.response.trim().toUpperCase().startsWith('NO')) {
           console.log(`[workflow] Skipping step ${i + 1} "${step.name}" — condition not met`);
           outputs.push(`[skipped: ${step.name}]`);
+          // A step that did not run is still part of the run's story.
+          this.reportStep(workflow, step, i, 'ok', { skipped: true, condition: step.condition });
           continue;
         }
       }
@@ -135,9 +146,16 @@ export class WorkflowEngine extends EventEmitter {
       console.log(`[workflow] Step ${i + 1}/${workflow.steps.length}: ${step.name}`);
       this.emit('workflow:step', { workflow, step, index: i });
 
-      const result = await this.agent.chat(prompt, this.config.agents.workingDir);
+      let result: Awaited<ReturnType<AgentRuntime['chat']>>;
+      try {
+        result = await this.agent.chat(prompt, this.config.agents.workingDir);
+      } catch (err: any) {
+        this.reportStep(workflow, step, i, 'failed', undefined, err?.message ?? String(err));
+        throw err;
+      }
       previousOutput = result.response;
       outputs.push(previousOutput);
+      this.reportStep(workflow, step, i, 'ok', { outputHead: previousOutput.slice(0, 500) });
 
       // Notify if configured
       if (step.notify && step.notify.length > 0) {
@@ -150,6 +168,26 @@ export class WorkflowEngine extends EventEmitter {
     console.log(`[workflow] Completed: ${workflow.name}`);
 
     return outputs;
+  }
+
+  /** One ledger line per step, named for the workflow rather than the step. */
+  private reportStep(
+    workflow: Workflow,
+    step: WorkflowStep,
+    index: number,
+    outcome: 'ok' | 'failed',
+    receipt?: Record<string, unknown>,
+    error?: string,
+  ): void {
+    reportEvent(this.onEvent, 'workflow', {
+      actor: 'trigger',
+      action: `workflow.${workflow.name}.step`,
+      target: workflow.id,
+      params: { step: step.name, index, of: workflow.steps.length, run: workflow.runCount },
+      outcome,
+      receipt,
+      error,
+    });
   }
 
   /** Find workflows matching a webhook path and run them */

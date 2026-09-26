@@ -4,6 +4,7 @@ import { execSync, spawn } from 'node:child_process';
 import { globSync } from 'glob';
 import matter from 'gray-matter';
 import type { Skill, SkillTool } from './types.js';
+import type { LedgerInput } from './ledger.js';
 
 export class SkillLoader {
   private skills: Map<string, Skill> = new Map();
@@ -99,9 +100,57 @@ export class SkillLoader {
 }
 
 /**
- * Execute a skill tool directly — no AI needed for the mechanical part.
+ * Just enough of `Ledger` for this module to record with, so a skill tool can
+ * be executed in a test without a data directory behind it.
  */
-export async function executeSkillTool(tool: SkillTool, skillDir: string): Promise<string> {
+export interface SkillToolLedger {
+  record(input: LedgerInput): unknown;
+}
+
+export interface SkillToolMeta {
+  /** The skill the tool belongs to — the middle part of `skill.<name>.<tool>`. */
+  skillName?: string;
+  /** Who asked. Defaults to the owner, since a skill runs at someone's request. */
+  principal?: string;
+}
+
+/**
+ * Execute a skill tool directly — no AI needed for the mechanical part.
+ *
+ * Given a ledger, the run gets one line: `skill.<skillName>.<toolName>`, with
+ * the head of the output as its receipt. A skill tool shells out or hits the
+ * network, so it is a side effect like any other and belongs in the audit trail.
+ */
+export async function executeSkillTool(
+  tool: SkillTool,
+  skillDir: string,
+  ledger?: SkillToolLedger,
+  meta: SkillToolMeta = {},
+): Promise<string> {
+  const output = await runSkillTool(tool, skillDir);
+  if (ledger) {
+    // The runner reports every failure as a string rather than throwing, so the
+    // prefix is the only signal of how it went.
+    const failed = output.startsWith('Error:');
+    try {
+      ledger.record({
+        actor: 'skill',
+        principal: meta.principal ?? 'owner',
+        action: `skill.${meta.skillName ?? 'unknown'}.${tool.name}`,
+        target: tool.name,
+        params: { type: tool.type, skillDir },
+        outcome: failed ? 'failed' : 'ok',
+        receipt: { outputHead: output.slice(0, 500) },
+        error: failed ? output.slice(0, 500) : undefined,
+      });
+    } catch (err: any) {
+      console.error(`[skills] could not record ${tool.name}: ${err?.message}`);
+    }
+  }
+  return output;
+}
+
+async function runSkillTool(tool: SkillTool, skillDir: string): Promise<string> {
   switch (tool.type) {
     case 'shell': {
       if (!tool.command) return 'Error: no command specified';

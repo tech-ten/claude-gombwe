@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utim
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.js';
+import type { LedgerEntry } from './ledger.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'gombwe-ledger-'));
 
@@ -138,4 +139,43 @@ test('reloads the rotated file with the newest mtime, not the newest name', () =
   const l = new Ledger(d);
   assert.ok(l.get('in-suffixed-name'), 'the rotated file with the newest mtime should be reloaded');
   assert.equal(l.get('in-base-name'), undefined);
+});
+
+test("record and update both emit 'record' with the stored entry", () => {
+  const d = dir(); const l = new Ledger(d);
+  const seen: LedgerEntry[] = [];
+  l.on('record', (e: LedgerEntry) => seen.push(e));
+
+  const e = l.record({ actor: 'chat', principal: 'tendai', action: 'grocery.checkout', outcome: 'pending' });
+  l.update(e.id, { outcome: 'ok', receipt: { order: '123' } });
+
+  assert.equal(seen.length, 2, 'a fresh line and a superseding line are both news');
+  assert.equal(seen[0].id, e.id);
+  assert.equal(seen[0].outcome, 'pending');
+  assert.ok(seen[0].time, 'the emitted entry carries the stamped id and time, not the input');
+  assert.equal(seen[1].id, e.id);
+  assert.equal(seen[1].outcome, 'ok');
+  assert.equal(seen[1].receipt?.order, '123');
+});
+
+test("an update to an unknown id emits nothing", () => {
+  const d = dir(); const l = new Ledger(d);
+  let count = 0;
+  l.on('record', () => count++);
+  assert.equal(l.update('no-such-id', { outcome: 'ok' }), undefined);
+  assert.equal(count, 0);
+});
+
+test("a throwing 'record' listener does not unwind the writer", () => {
+  const d = dir(); const l = new Ledger(d);
+  l.on('record', () => { throw new Error('bad subscriber'); });
+  const original = console.error;
+  console.error = () => {};
+  try {
+    const e = l.record({ actor: 'cron', principal: 'system', action: 'reflection.run', outcome: 'ok' });
+    assert.ok(e.id);
+    assert.equal(l.list().length, 1);
+  } finally {
+    console.error = original;
+  }
 });

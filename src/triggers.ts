@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { EventTrigger, TriggerSource, TriggerAction, GombweConfig } from './types.js';
+import { reportEvent, type LedgerEventSink } from './ledger.js';
 import { AgentRuntime } from './agent.js';
 
 /**
@@ -31,18 +32,34 @@ export class TriggerEngine extends EventEmitter {
   private agent: AgentRuntime;
   private config: GombweConfig;
   private notifyFn: (channels: string[], message: string) => void;
+  /** Set by the gateway so every firing lands in the action ledger. */
+  private onEvent?: LedgerEventSink;
 
   constructor(
     config: GombweConfig,
     agent: AgentRuntime,
     notifyFn: (channels: string[], message: string) => void,
+    opts: { onEvent?: LedgerEventSink } = {},
   ) {
     super();
     this.config = config;
     this.agent = agent;
     this.notifyFn = notifyFn;
+    this.onEvent = opts.onEvent;
     this.triggersFile = join(config.dataDir, 'triggers.json');
     this.loadTriggers();
+  }
+
+  setEventSink(onEvent: LedgerEventSink | undefined): void {
+    this.onEvent = onEvent;
+  }
+
+  /**
+   * Test seam: drive the fire path without a timer, a webhook or a live poll
+   * source. Production code fires through the source handlers above.
+   */
+  async fireForTest(trigger: EventTrigger, context = ''): Promise<void> {
+    await this.fireTrigger(trigger, context);
   }
 
   private loadTriggers(): void {
@@ -264,8 +281,24 @@ If nothing significant changed, respond with "NO_CHANGE".`;
 
     console.log(`[triggers] Fired: ${trigger.name} (${trigger.triggerCount} times)`);
 
-    // Execute the action
-    await this.executeAction(trigger.action, context, trigger.name);
+    // One ledger line per firing, whichever way the action goes. Reported in a
+    // `finally` so a thrown action still gets its line before it propagates.
+    let error: string | undefined;
+    try {
+      await this.executeAction(trigger.action, context, trigger.name);
+    } catch (err: any) {
+      error = err?.message ?? String(err);
+      throw err;
+    } finally {
+      reportEvent(this.onEvent, 'triggers', {
+        actor: 'trigger',
+        action: `trigger.${trigger.name}.fired`,
+        target: trigger.id,
+        params: { source: trigger.source.type, count: trigger.triggerCount },
+        outcome: error ? 'failed' : 'ok',
+        error,
+      });
+    }
   }
 
   private async executeAction(action: TriggerAction, context: string, triggerName: string): Promise<void> {
