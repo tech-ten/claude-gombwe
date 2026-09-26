@@ -21,7 +21,6 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { shortId } from './approvals.js';
 import { MEMORY_KINDS, mayWriteSubject } from './memory.js';
-import { isLoopback } from './permissions.js';
 import type { LedgerActor, LedgerOutcome } from './ledger.js';
 import type { MemoryKind, MemoryRecord, MemorySource } from './memory.js';
 import type { Connector, Level, Principal } from './permissions.js';
@@ -79,37 +78,6 @@ export function allowsConnector(p: Principal, connector: Connector, level: Level
   const grant = p?.grants?.[connector];
   if (!grant) return false;
   return level === 'read' ? true : grant === 'act';
-}
-
-/**
- * Is this request a process on this machine rather than someone at the tunnel?
- *
- * The session token is handed to a child process through its environment, so a
- * request carrying one should have come from that child. Loopback alone is not
- * enough: a request off the network arrives through cloudflared on loopback
- * too, and it arrives with Cloudflare's headers on it. Any of those headers
- * disqualifies the request even though the socket looks local.
- *
- * Note: task 6 defines this here because `permissions.ts` had no such helper
- * when this branch was cut. If one lands there, this should delegate to it.
- */
-const PROXY_HEADERS = [
-  'cf-access-authenticated-user-email',
-  'cf-access-jwt-assertion',
-  'cf-connecting-ip',
-  'cf-ray',
-  'x-forwarded-for',
-];
-
-export function isLocalProcessRequest(
-  headers: Record<string, string | string[] | undefined>,
-  remoteAddress?: string,
-): boolean {
-  if (!isLoopback(remoteAddress)) return false;
-  for (const key of Object.keys(headers ?? {})) {
-    if (PROXY_HEADERS.includes(key.toLowerCase())) return false;
-  }
-  return true;
 }
 
 /** Long strings and deep objects clipped, so one call cannot bloat the ledger. */

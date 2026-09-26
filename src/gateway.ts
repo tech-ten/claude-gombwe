@@ -30,7 +30,7 @@ import { policyScanner } from './policy-scanner.js';
 import { netflowCollector } from './netflow-collector.js';
 import { AgentsformSdr } from './agentsform-sdr.js';
 import { createServices, type Services } from './services.js';
-import { callTool, isLocalProcessRequest, toolManifestFor } from './gombwe-tools.js';
+import { callTool, toolManifestFor } from './gombwe-tools.js';
 import { writeSessionMcpConfig } from './mcp-config.js';
 import { ApprovalError, LOCKED_POLICIES, MIN_PREFIX, POLICIES, matchApprovalId, shortId } from './approvals.js';
 import type { ApprovalRequest, Policy } from './approvals.js';
@@ -1609,9 +1609,14 @@ export class Gateway {
    * The session behind a tool call, or undefined if there is not one.
    *
    * Two things must both hold. The request came from a process on this machine —
-   * a request off the network arrives through cloudflared on loopback too, which
-   * is why the Cloudflare headers disqualify it. And it carries a token this
-   * gateway minted, which only ever reached the environment of one CLI child.
+   * `isLocalProcessRequest`, the same test the script routes below use, because a
+   * request off the network arrives through cloudflared on loopback too. And it
+   * carries a token this gateway minted, which only ever reached the environment
+   * of one CLI child.
+   *
+   * Both failures are answered as one 401 rather than split into a 403 for the
+   * address and a 401 for the token: for these routes there is either a session
+   * or there is not, and saying which half failed only helps someone guessing.
    *
    * The principal is re-read from the roster on every call, so a demotion lands
    * on the next tool call rather than the next session. A guest was never in the

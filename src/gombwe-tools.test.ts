@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import {
   APPROVAL_WAIT_MS,
   callTool,
-  isLocalProcessRequest,
   listToolsFor,
   pendingApprovalResult,
   toolManifestFor,
@@ -398,35 +397,4 @@ test('ledger_recent honours a limit and writes nothing itself', async () => {
   const result = await callTool('ledger_recent', { limit: 2 }, ctxFor(services, who(principals, 'owner')));
   assert.equal((result as { data: { entries: unknown[] } }).data.entries.length, 2);
   assert.equal(ledger.list().length, 5);
-});
-
-// ── Local-process guard ───────────────────────────────────────
-
-test('isLocalProcessRequest accepts a bare loopback request', () => {
-  assert.equal(isLocalProcessRequest({}, '127.0.0.1'), true);
-  assert.equal(isLocalProcessRequest({}, '::1'), true);
-  assert.equal(isLocalProcessRequest({}, '::ffff:127.0.0.1'), true);
-});
-
-test('isLocalProcessRequest refuses anything off this machine', () => {
-  assert.equal(isLocalProcessRequest({}, '192.168.1.50'), false);
-  assert.equal(isLocalProcessRequest({}, undefined), false);
-});
-
-test('isLocalProcessRequest refuses a tunnelled request even on loopback', () => {
-  for (const header of [
-    'cf-access-authenticated-user-email',
-    'cf-access-jwt-assertion',
-    'cf-connecting-ip',
-    'cf-ray',
-    'x-forwarded-for',
-  ]) {
-    assert.equal(
-      isLocalProcessRequest({ [header]: 'anything' }, '127.0.0.1'),
-      false,
-      `${header} should disqualify a loopback request`,
-    );
-  }
-  // Header casing arrives however the proxy sent it.
-  assert.equal(isLocalProcessRequest({ 'CF-Ray': 'abc' }, '127.0.0.1'), false);
 });
