@@ -72,6 +72,33 @@ request was just approved would lose their memory tools and the family server
 for exactly the turn that was supposed to carry on, and their live token would be
 thrown away. The session records its principal for this reason.
 
+### Who writes ledger lines
+
+Anything that changes the world writes one line, and there are four ways in:
+
+- **In process.** The gateway's routes, `approvals`, and the agent's own tools
+  call `services.ledger.record` directly.
+- **Through a background engine.** `Scheduler`, `TriggerEngine` and
+  `WorkflowEngine` know nothing about the ledger. Each takes an optional
+  `onEvent` sink (or `setEventSink`) and reports a `LedgerEvent`; the gateway
+  wires all three to `record` with principal `system`. So a cron tick is
+  `cron.<id>.run`, a trigger firing is `trigger.<name>.fired`, and each
+  workflow step is `workflow.<name>.step`. A sink that throws is logged and
+  swallowed — the side effect already happened.
+- **From a skill tool.** `executeSkillTool(tool, skillDir, ledger, meta)`
+  records `skill.<skill>.<tool>` with the head of the output as its receipt.
+- **Over loopback.** `POST /api/ledger` takes a `LedgerEntry` from a process on
+  this machine: background scripts via `postLedger` in
+  `scripts/grocery-lib.mjs`, and the family MCP server via
+  `src/mcp/family-ledger.ts`. The MCP server is a child of the Claude CLI, so
+  it cannot reach the in-process ledger; its posts never throw, because a
+  family tool that already wrote `family.json` must not fail over a missed line.
+
+`Ledger` is an `EventEmitter` and emits `'record'` from both `record()` and
+`update()`. The gateway subscribes once and rebroadcasts each entry to the
+dashboard as a `ledger:record` WebSocket event, so a new writer cannot forget to
+tell the activity feed.
+
 ## Running in dev
 
 **Never start a second gateway on this machine without an isolated config dir.**
